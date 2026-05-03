@@ -19,7 +19,8 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Verify tag matches package.json#version
+      - name: Verify tag matches package.json#version + classify release
+        id: meta
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
           pkg=$(node -p "require('./package.json').version")
@@ -27,10 +28,25 @@ jobs:
             echo "::error::tag v$tag does not match package.json version $pkg"
             exit 1
           fi
+          # SemVer pre-release tags contain a hyphen after MAJOR.MINOR.PATCH
+          # (e.g. 0.6.0-beta.1, 0.6.0-rc.2, 0.6.0-test.20260503).
+          # Stable tags do not (e.g. 0.6.0).
+          if [[ "$tag" == *-* ]]; then
+            # Use the segment immediately after the first hyphen as the dist-tag
+            # (e.g. 0.6.0-beta.1 -> beta, 0.6.0-rc.2 -> rc).
+            dist_tag="${tag#*-}"; dist_tag="${dist_tag%%.*}"
+            echo "npm-tag=$dist_tag" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Pre-release detected (npm dist-tag: $dist_tag, GitHub prerelease: true)"
+          else
+            echo "npm-tag=latest" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Stable release (npm dist-tag: latest)"
+          fi
       - run: bun install --frozen-lockfile
       - run: bun run validate
       - run: bun run build
-      - run: npm publish --provenance --access public
+      - run: npm publish --provenance --access public --tag ${{ steps.meta.outputs.npm-tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Create GitHub Release with auto-generated notes
@@ -38,3 +54,4 @@ jobs:
         with:
           generate_release_notes: true
           fail_on_unmatched_files: false
+          prerelease: ${{ steps.meta.outputs.prerelease }}
