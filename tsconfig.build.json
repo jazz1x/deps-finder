@@ -4,5 +4,5 @@
     "noEmit": false,
     "outDir": "./dist"
   },
-  "exclude": ["./dist", "**/*.test.ts", "**/*.spec.ts"]
+  "exclude": ["./dist", "**/*.test.ts", "**/*.spec.ts", "**/test-utils/**"]
 }

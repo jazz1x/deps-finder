@@ -6,14 +6,33 @@ import { isString } from '../utils/type-guards.js';
 
 const isOption = (arg: string | undefined): boolean => isString(arg) && S.startsWith(arg, '-');
 
-/**
- * 인자를 옵션으로 파싱
- */
+type ParseStep = {
+  readonly options: CliOptions;
+  readonly skipCount: number;
+  readonly warnings: ReadonlyArray<string>;
+};
+
+const requireValue = (
+  flag: string,
+  nextArg: string | undefined,
+  options: CliOptions,
+  apply: (value: string) => CliOptions,
+): ParseStep => {
+  if (!isString(nextArg) || isOption(nextArg)) {
+    return {
+      options,
+      skipCount: 0,
+      warnings: [`${flag} requires a value but none was provided; flag ignored.`],
+    };
+  }
+  return { options: apply(nextArg), skipCount: 1, warnings: [] };
+};
+
 const parseArgument = (
   allArgs: ReadonlyArray<string>,
   index: number,
   options: CliOptions,
-): { options: CliOptions; skipCount: number } => {
+): ParseStep => {
   const arg = allArgs[index];
   const nextArg = allArgs[index + 1];
 
@@ -21,89 +40,99 @@ const parseArgument = (
     .with('-t', '--text', () => ({
       options: { ...options, format: 'text' as const },
       skipCount: 0,
+      warnings: [],
     }))
     .with('-j', '--json', () => ({
       options: { ...options, format: 'json' as const },
       skipCount: 0,
+      warnings: [],
     }))
     .with('-a', '--all', () => ({
       options: { ...options, checkAll: true },
       skipCount: 0,
+      warnings: [],
+    }))
+    .with('-p', '--check-peer', () => ({
+      options: { ...options, checkPeer: true },
+      skipCount: 0,
+      warnings: [],
     }))
     .with('-h', '--help', () => ({
       options: { ...options, showHelp: true },
       skipCount: 0,
+      warnings: [],
     }))
-    .with('-i', '--ignore', () => {
-      if (!isString(nextArg) || isOption(nextArg)) {
-        return { options, skipCount: 0 };
-      }
-      const newIgnored = pipe(nextArg, S.split(','), A.map(S.trim));
-      return {
-        options: {
-          ...options,
-          ignoredPackages: [...options.ignoredPackages, ...newIgnored],
-        },
-        skipCount: 1, // Skip next argument
-      };
-    })
-    .with('-e', '--exclude', () => {
-      if (!isString(nextArg) || isOption(nextArg)) {
-        return { options, skipCount: 0 };
-      }
-      const newExcluded = pipe(nextArg, S.split(','), A.map(S.trim));
-      return {
-        options: {
-          ...options,
-          excludePatterns: [...options.excludePatterns, ...newExcluded],
-        },
-        skipCount: 1,
-      };
-    })
+    .with('-i', '--ignore', () =>
+      requireValue('--ignore', nextArg, options, (value) => ({
+        ...options,
+        ignoredPackages: [
+          ...options.ignoredPackages,
+          ...pipe(value, S.split(','), A.map(S.trim), A.filter(S.isNotEmpty)),
+        ],
+      })),
+    )
+    .with('-e', '--exclude', () =>
+      requireValue('--exclude', nextArg, options, (value) => ({
+        ...options,
+        excludePatterns: [
+          ...options.excludePatterns,
+          ...pipe(value, S.split(','), A.map(S.trim), A.filter(S.isNotEmpty)),
+        ],
+      })),
+    )
     .with('--no-auto-detect', () => ({
       options: { ...options, noAutoDetect: true },
       skipCount: 0,
+      warnings: [],
     }))
-    .otherwise(() => ({ options, skipCount: 0 }));
+    .otherwise(() => {
+      if (isString(arg) && S.startsWith(arg, '-')) {
+        return {
+          options,
+          skipCount: 0,
+          warnings: [`Unknown option ${arg} ignored. Run with --help to see supported flags.`],
+        };
+      }
+      return { options, skipCount: 0, warnings: [] };
+    });
 };
 
-/**
- * CLI 인자 파싱
- */
-export const parseCliOptions = (args: string[]): CliOptions => {
+export const parseCliOptions = (args: ReadonlyArray<string>): CliOptions => {
   const defaultOptions: CliOptions = {
     format: 'text',
     checkAll: false,
+    checkPeer: false,
     ignoredPackages: [],
     excludePatterns: [],
     noAutoDetect: false,
     showHelp: false,
     rootDir: '.',
     packageJsonPath: './package.json',
+    warnings: [],
   };
 
-  const finalOptions = pipe(
+  const finalAcc = pipe(
     args,
-    A.reduceWithIndex({ options: defaultOptions, skippedUntil: -1 }, (acc, _arg, index) => {
-      if (index <= acc.skippedUntil) {
-        return acc;
-      }
+    A.reduceWithIndex(
+      { options: defaultOptions, skippedUntil: -1, warnings: [] as ReadonlyArray<string> },
+      (acc, _arg, index) => {
+        if (index <= acc.skippedUntil) {
+          return acc;
+        }
 
-      const result = parseArgument(args, index, acc.options);
-      return {
-        options: result.options,
-        skippedUntil: index + result.skipCount,
-      };
-    }),
-    (finalAcc) => finalAcc.options,
+        const result = parseArgument(args, index, acc.options);
+        return {
+          options: result.options,
+          skippedUntil: index + result.skipCount,
+          warnings: [...acc.warnings, ...result.warnings],
+        };
+      },
+    ),
   );
 
-  return finalOptions;
+  return { ...finalAcc.options, warnings: finalAcc.warnings };
 };
 
-/**
- * 도움말 출력
- */
 export const printHelp = (): void => {
   console.log(HELP_TEXT);
 };

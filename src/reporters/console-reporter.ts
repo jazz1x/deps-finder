@@ -132,13 +132,6 @@ const formatSummary = (totalIssues: number): string[] => [
   formatSeparator(),
 ];
 
-export const reportToConsole = (
-  result: AnalysisResult,
-  ignoredPackages: ReadonlyArray<string> = [],
-): void => {
-  console.log(report(result, 'text', ignoredPackages));
-};
-
 export const report = (
   result: AnalysisResult,
   format: OutputFormat,
@@ -149,6 +142,7 @@ export const report = (
       JSON.stringify(
         {
           unused: result.unused,
+          unusedPeer: result.unusedPeer,
           misplaced: result.misplaced,
           typeOnly: result.typeOnly,
           ignored: ignoredPackages,
@@ -183,6 +177,11 @@ export const report = (
             formatSeparator(),
             ...formatIgnored(ignoredPackages),
             ...formatIssueSection(MESSAGES.UNUSED_TITLE, MESSAGES.UNUSED_SUBTITLE, result.unused),
+            ...formatIssueSection(
+              MESSAGES.UNUSED_PEER_TITLE,
+              MESSAGES.UNUSED_PEER_SUBTITLE,
+              result.unusedPeer,
+            ),
             ...formatMisplacedSection(
               MESSAGES.MISPLACED_TITLE,
               MESSAGES.MISPLACED_SUBTITLE,
@@ -200,6 +199,4 @@ export const report = (
     .exhaustive();
 };
 
-export function hasIssues(result: AnalysisResult): boolean {
-  return result.totalIssues > 0;
-}
+export const hasIssues = (result: AnalysisResult): boolean => result.totalIssues > 0;

@@ -40,8 +40,11 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .DS_Store
 Thumbs.db
 
-# test directories
-test-*
+# test fixture directories (created at project root by file-system tests)
+/test-*
 
 # bun
 bun.lockb
+
+# harnish (autonomous-impl session state)
+.harnish/

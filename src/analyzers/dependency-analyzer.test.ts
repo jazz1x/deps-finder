@@ -328,3 +328,121 @@ describe('dependency-analyzer', () => {
     expect(viteUsage?.locations[0]!.file).toContain('index.ts');
   });
 });
+
+describe('dependency-analyzer: peerDependencies', () => {
+  const baseTestDir = './test-analyze-peer';
+  const getTestDir = () => `${baseTestDir}-${Math.random().toString(36).slice(2)}`;
+  let testDir = '';
+
+  beforeEach(async () => {
+    testDir = getTestDir();
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    if (testDir) await rm(testDir, { recursive: true, force: true });
+  });
+
+  const peerOnlyPkg: PackageJson = {
+    name: O.Some('lib'),
+    version: O.Some('1.0.0'),
+    dependencies: O.None,
+    devDependencies: O.None,
+    peerDependencies: O.Some({
+      typescript: '^5.0.0',
+      react: '^18.0.0',
+    }),
+  };
+
+  test('default: peerDependencies are not flagged as unused', async () => {
+    await writeFile(`${testDir}/index.ts`, 'export const x = 1;');
+    const files = findFiles(testDir);
+    const imports = parseMultipleFiles(files);
+
+    const result = analyzeDependencies(peerOnlyPkg, imports, {
+      checkAll: false,
+      checkPeer: false,
+      ignoredPackages: [],
+    });
+
+    expect(result.unused).not.toContain('typescript');
+    expect(result.unused).not.toContain('react');
+    expect(result.unusedPeer).toEqual([]);
+    expect(result.totalIssues).toBe(0);
+  });
+
+  test('--check-peer: peerDeps not imported are reported in unusedPeer (not in unused)', async () => {
+    await writeFile(`${testDir}/index.ts`, "import React from 'react'; export default React;");
+    const files = findFiles(testDir);
+    const imports = parseMultipleFiles(files);
+
+    const result = analyzeDependencies(peerOnlyPkg, imports, {
+      checkAll: false,
+      checkPeer: true,
+      ignoredPackages: [],
+    });
+
+    expect(result.unusedPeer).toContain('typescript');
+    expect(result.unusedPeer).not.toContain('react');
+    expect(result.unused).not.toContain('typescript');
+    expect(result.totalIssues).toBe(1);
+  });
+
+  test('--all implies --check-peer (peerDeps reported when not imported)', async () => {
+    await writeFile(`${testDir}/index.ts`, 'export const x = 1;');
+    const files = findFiles(testDir);
+    const imports = parseMultipleFiles(files);
+
+    const result = analyzeDependencies(peerOnlyPkg, imports, {
+      checkAll: true,
+      checkPeer: false,
+      ignoredPackages: [],
+    });
+
+    expect(result.unusedPeer).toContain('typescript');
+    expect(result.unusedPeer).toContain('react');
+  });
+
+  test('peerDep imported as type-only counts as used (not in unusedPeer)', async () => {
+    await writeFile(`${testDir}/index.ts`, "import type { Component } from 'react'; export type C = Component;");
+    const files = findFiles(testDir);
+    const imports = parseMultipleFiles(files);
+
+    const result = analyzeDependencies(peerOnlyPkg, imports, {
+      checkAll: false,
+      checkPeer: true,
+      ignoredPackages: [],
+    });
+
+    expect(result.unusedPeer).not.toContain('react');
+  });
+
+  test('--ignore filters peerDeps too', async () => {
+    await writeFile(`${testDir}/index.ts`, 'export const x = 1;');
+    const files = findFiles(testDir);
+    const imports = parseMultipleFiles(files);
+
+    const result = analyzeDependencies(peerOnlyPkg, imports, {
+      checkAll: false,
+      checkPeer: true,
+      ignoredPackages: ['typescript'],
+    });
+
+    expect(result.unusedPeer).not.toContain('typescript');
+    expect(result.unusedPeer).toContain('react');
+  });
+
+  test('peerDep is never reported as misplaced (peerDeps are a consumer contract)', async () => {
+    await writeFile(`${testDir}/index.ts`, "import React from 'react'; export default React;");
+    const files = findFiles(testDir);
+    const imports = parseMultipleFiles(files);
+
+    const result = analyzeDependencies(peerOnlyPkg, imports, {
+      checkAll: false,
+      checkPeer: true,
+      ignoredPackages: [],
+    });
+
+    expect(result.misplaced.some((d) => d.packageName === 'react')).toBe(false);
+  });
+});

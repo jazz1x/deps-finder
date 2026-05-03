@@ -1,4 +1,4 @@
-import { O, R } from '@mobily/ts-belt';
+import { O } from '@mobily/ts-belt';
 
 export type PackageName = string;
 export type FilePath = string;
@@ -38,8 +38,9 @@ export type ImportDetails = {
 
 export type AnalysisResult = {
   readonly unused: ReadonlyArray<PackageName>;
+  readonly unusedPeer: ReadonlyArray<PackageName>;
   readonly misplaced: ReadonlyArray<DependencyUsage>;
-  readonly typeOnly: ReadonlyArray<PackageName>; // New field for type-only imports
+  readonly typeOnly: ReadonlyArray<PackageName>;
   readonly totalIssues: number;
 };
 
@@ -49,12 +50,12 @@ export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 export type CliOptions = {
   readonly format: OutputFormat;
   readonly checkAll: boolean;
+  readonly checkPeer: boolean;
   readonly ignoredPackages: ReadonlyArray<string>;
   readonly excludePatterns: ReadonlyArray<string>;
   readonly noAutoDetect: boolean;
   readonly showHelp: boolean;
   readonly rootDir: string;
   readonly packageJsonPath: string;
+  readonly warnings: ReadonlyArray<string>;
 };
-
-export type AppResult<T> = R.Result<T, string>;

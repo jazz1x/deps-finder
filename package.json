@@ -11,6 +11,7 @@
   "scripts": {
     "test": "bun test",
     "test:coverage": "bun test --coverage",
+    "bench": "bun bench/import-parser.bench.ts",
     "typecheck": "tsc --noEmit",
     "lint": "bunx biome lint src/",
     "format": "bunx biome format --write src/",
