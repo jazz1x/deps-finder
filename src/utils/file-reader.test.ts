@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { R } from '@mobily/ts-belt';
-import { readFile, readFileAsync, readJSONFile, readJSONFileAsync } from './file-reader';
+import { readFile, readJSONFile } from './file-reader';
 
 describe('file-reader', () => {
   const testDir = './test-file-reader';
@@ -14,8 +14,8 @@ describe('file-reader', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  describe('Sync API', () => {
-    test('readFile - returns Ok for valid file', async () => {
+  describe('readFile', () => {
+    test('returns Ok for valid file', async () => {
       const filePath = `${testDir}/test.txt`;
       await writeFile(filePath, 'hello world');
 
@@ -24,7 +24,7 @@ describe('file-reader', () => {
       expect(R.getExn(result)).toBe('hello world');
     });
 
-    test('readFile - returns Error for non-existent file', () => {
+    test('returns FILE_NOT_FOUND for non-existent file', () => {
       const result = readFile(`${testDir}/non-existent.txt`);
       expect(R.isError(result)).toBe(true);
       R.match(
@@ -34,12 +34,35 @@ describe('file-reader', () => {
         },
         (error) => {
           expect(error.type).toBe('FILE_NOT_FOUND');
-          expect(error.path).toContain('non-existent.txt');
+          if (error.type === 'FILE_NOT_FOUND') {
+            expect(error.path).toContain('non-existent.txt');
+          }
         },
       );
     });
 
-    test('readJSONFile - parses valid JSON', async () => {
+    test('returns READ_ERROR for non-ENOENT failures (e.g. directory passed as file)', () => {
+      // 디렉토리를 readFileSync로 읽으면 EISDIR (ENOENT 아님) → READ_ERROR로 매핑돼야 함
+      const result = readFile(testDir);
+      expect(R.isError(result)).toBe(true);
+      R.match(
+        result,
+        () => {
+          throw new Error('Should not be Ok');
+        },
+        (error) => {
+          expect(error.type).toBe('READ_ERROR');
+          if (error.type === 'READ_ERROR') {
+            expect(error.path).toBe(testDir);
+            expect(error.error).toBeInstanceOf(Error);
+          }
+        },
+      );
+    });
+  });
+
+  describe('readJSONFile', () => {
+    test('parses valid JSON', async () => {
       const filePath = `${testDir}/test.json`;
       await writeFile(filePath, JSON.stringify({ name: 'test' }));
 
@@ -48,63 +71,11 @@ describe('file-reader', () => {
       expect(R.getExn(result).name).toBe('test');
     });
 
-    test('readJSONFile - returns PARSE_ERROR for invalid JSON', async () => {
+    test('returns PARSE_ERROR for invalid JSON', async () => {
       const filePath = `${testDir}/invalid.json`;
       await writeFile(filePath, '{ invalid }');
 
       const result = readJSONFile(filePath);
-      expect(R.isError(result)).toBe(true);
-      R.match(
-        result,
-        () => {
-          throw new Error('Should not be Ok');
-        },
-        (error) => {
-          expect(error.type).toBe('PARSE_ERROR');
-        },
-      );
-    });
-  });
-
-  describe('Async API', () => {
-    test('readFileAsync - returns Ok for valid file', async () => {
-      const filePath = `${testDir}/test-async.txt`;
-      await writeFile(filePath, 'hello async world');
-
-      const result = await readFileAsync(filePath);
-      expect(R.isOk(result)).toBe(true);
-      expect(R.getExn(result)).toBe('hello async world');
-    });
-
-    test('readFileAsync - returns Error for non-existent file', async () => {
-      const result = await readFileAsync(`${testDir}/non-existent-async.txt`);
-      expect(R.isError(result)).toBe(true);
-
-      R.match(
-        result,
-        () => {
-          throw new Error('Should not be Ok');
-        },
-        (error) => {
-          expect(error.type).toBe('FILE_NOT_FOUND');
-        },
-      );
-    });
-
-    test('readJSONFileAsync - parses valid JSON', async () => {
-      const filePath = `${testDir}/test-async.json`;
-      await writeFile(filePath, JSON.stringify({ name: 'async-test' }));
-
-      const result = await readJSONFileAsync<{ name: string }>(filePath);
-      expect(R.isOk(result)).toBe(true);
-      expect(R.getExn(result).name).toBe('async-test');
-    });
-
-    test('readJSONFileAsync - returns PARSE_ERROR for invalid JSON', async () => {
-      const filePath = `${testDir}/invalid-async.json`;
-      await writeFile(filePath, '{ invalid }');
-
-      const result = await readJSONFileAsync(filePath);
       expect(R.isError(result)).toBe(true);
       R.match(
         result,

@@ -1,5 +1,7 @@
 ---
 
+# Runtime: Bun
+
 Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
@@ -9,99 +11,57 @@ Default to using Bun instead of Node.js.
 - Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
 - Bun automatically loads .env, so don't use dotenv.
 
-## APIs
+## Bun APIs
 
 - `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
 - `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
 - `Bun.redis` for Redis. Don't use `ioredis`.
 - `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
 - `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile.
+- `Bun.$`ls`` instead of execa.
 
-## Testing
+For more, read `node_modules/bun-types/docs/**.md`.
 
-Use `bun test` to run tests.
+---
 
-```ts#index.test.ts
-import { test, expect } from "bun:test";
+# Project contracts (deps-finder)
 
-test("hello world", () => {
-  expect(1).toBe(1);
-});
-```
+This is a CLI dependency analyzer. The codebase follows a strict functional style backed by `@mobily/ts-belt` and `ts-pattern`. New code MUST follow these contracts — they are enforced by review, not the type system.
 
-## Frontend
+## C1. Errors are values, never thrown
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+- Every fallible function returns `R.Result<T, E>` from `@mobily/ts-belt`. **Do not throw**, do not return `null`/`undefined` to signal failure, do not use try/catch at call sites. (If async ever shows up in this codebase, mirror the pattern with `AR.AsyncResult<T, E>` — but don't add async helpers speculatively, see C5.)
+- `E` is a **tagged union** discriminated by a literal `type` field. Canonical errors live in [src/domain/errors.ts](src/domain/errors.ts) (`FileError`, `AnalysisError`, `AppError`). Add new variants there rather than inventing local error shapes.
+- Wrap throwing APIs (e.g. `node:fs`, `JSON.parse`) with `R.fromExecution(...)` and immediately `R.mapError(...)` into a domain error variant. See [src/utils/file-reader.ts](src/utils/file-reader.ts) for the canonical pattern.
+- Consume Results with `R.match(result, onOk, onError)`, `R.map`, `R.flatMap`, `pipe`. The only place that converts a Result back into side effects (process exit, console output) is the entry in [src/index.ts](src/index.ts).
 
-Server:
+## C2. Pattern matching is exhaustive
 
-```ts#index.ts
-import index from "./index.html"
+- Use `match(...)` from `ts-pattern` for any branching on union types, format flags, or shape-dependent values.
+- Every `match` chain MUST end with `.exhaustive()` when the input is a closed union, or `.otherwise(...)` when there is a meaningful default. Open-ended `if/else` ladders for the same purpose are not accepted.
+- Examples: discriminating `OutputFormat` in [src/reporters/console-reporter.ts](src/reporters/console-reporter.ts) (`.exhaustive()`), CLI flag dispatch in [src/cli/options.ts](src/cli/options.ts) (`.otherwise()`).
 
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
+## C3. Functional style only
 
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
+- Arrow-function `const` exports. **No `class` declarations** in `src/`.
+- Compose with `pipe(...)` from `@mobily/ts-belt`; reach for `A.*`, `S.*`, `R.*`, `AR.*` namespaces before reimplementing array/string/result helpers. If a ts-belt helper exists, use it.
+- Inputs are `ReadonlyArray<T>` / `readonly` shapes; produce new values rather than mutating. Reducers (`A.reduce`, `A.reduceWithIndex`) are preferred over imperative loops with accumulators.
 
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
+## C4. Tests are co-located, use `bun:test`
 
-With the following `frontend.tsx`:
+- Each source file `foo.ts` has its tests at `foo.test.ts` in the same directory. Cross-cutting end-to-end tests go in [src/integration.test.ts](src/integration.test.ts).
+- Use `describe` / `test` from `bun:test`. Assert on Results with `R.isOk`, `R.isError`, `R.getExn`, or `R.match` — do **not** unwrap by destructuring internal fields.
+- File-system tests create a fixture directory in `beforeEach` and `rm`/`-rf` it in `afterEach`. See [src/utils/file-reader.test.ts](src/utils/file-reader.test.ts) for the pattern.
+- Run `bun run validate` (typecheck + lint + tests) before declaring work done.
 
-```tsx#frontend.tsx
-import React from "react";
+## C5. No speculative exports
 
-// import .css files directly and it works
-import './index.css';
+- Do not add functions, types, or modules "for future use." If nothing in `src/` calls it today, delete it.
+- Type guards live in [src/utils/type-guards.ts](src/utils/type-guards.ts) and are added on demand. Same rule for sync/async pairs in `file-reader.ts`: only ship the variant the codebase actually consumes.
 
-import { createRoot } from "react-dom/client";
+## C6. Path & import conventions
 
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.md`.
+- TypeScript sources use ESM with explicit `.js` suffixes on relative imports (`./foo.js`) so the emitted output runs without a bundler.
+- Tests use the `@/` alias (see `tsconfig.json` paths) for cross-directory imports; sibling-file imports stay relative (`./foo`) and drop the `.js` suffix because tests run via `bun test` and don't go through the build.
+- User-facing strings (CLI help, report headers) are centralised in [src/constants/messages.ts](src/constants/messages.ts) — do not hardcode them in reporters or analyzers.

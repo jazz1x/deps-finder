@@ -1,6 +1,5 @@
-import { readFile as fsReadFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { AR, R, pipe } from '@mobily/ts-belt';
+import { R, pipe } from '@mobily/ts-belt';
 import type { FileError } from '../domain/errors.js';
 
 /**
@@ -30,39 +29,5 @@ export const readJSONFile = <T>(path: string): R.Result<T, FileError> => {
         R.mapError((error) => ({ type: 'PARSE_ERROR', path, error: error as Error }) as const),
       ),
     ),
-  );
-};
-
-/**
- * 비동기로 파일 읽기 (향후 대량 처리나 외부 API 연동 시 활용)
- */
-export const readFileAsync = (path: string): AR.AsyncResult<string, FileError> => {
-  return pipe(
-    AR.make(fsReadFile(path, 'utf-8')),
-    AR.mapError((error) => {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return { type: 'FILE_NOT_FOUND', path } as const;
-      }
-      return { type: 'READ_ERROR', path, error: error as Error } as const;
-    }),
-  );
-};
-
-/**
- * 비동기로 JSON 파일 읽기 (향후 대량 처리나 외부 API 연동 시 활용)
- */
-export const readJSONFileAsync = <T>(path: string): AR.AsyncResult<T, FileError> => {
-  return pipe(
-    readFileAsync(path),
-    AR.flatMap((content) => {
-      return AR.make(Promise.resolve().then(() => JSON.parse(content) as T));
-    }),
-    AR.mapError((error) => {
-      // If it's already a FileError from readFileAsync, just return it
-      if (typeof error === 'object' && error !== null && 'type' in error) {
-        return error as FileError;
-      }
-      return { type: 'PARSE_ERROR', path, error: error as Error } as const;
-    }),
   );
 };

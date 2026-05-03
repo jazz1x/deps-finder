@@ -1,185 +1,167 @@
-<div align="center">
+# deps-finder
 
-# deps-finder 🕵️
+> Catch unused, misplaced, and orphan-peer dependencies in TypeScript projects.
 
-**A TypeScript dependency analyzer that detects unused and misplaced dependencies in your project**
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![npm version](https://img.shields.io/npm/v/deps-finder.svg)](https://www.npmjs.com/package/deps-finder)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Node ≥20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
+[![Bun](https://img.shields.io/badge/runtime-bun-black.svg)](https://bun.sh)
+[![CI](https://github.com/marketboro/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/marketboro/deps-finder/actions/workflows/ci.yml)
 
-[Installation](#installation) • [Usage](#usage) • [Features](#features) • [Architecture](#architecture) • [Contributing](#contributing)
+deps-finder reads your `package.json`, walks `src/**`, and tells you which declared packages no source file actually imports — and which packages your code does import that live in the wrong section. It runs entirely on your machine, never phones home, and treats `peerDependencies` as a consumer contract by default (since real peers like `typescript` are intentionally never imported by the library itself). Opt in with `--check-peer` when you want orphan-peer detection.
 
-> [한국어](./README.ko.md) | English
+[한국어](./README.ko.md) · English
 
 ---
 
-</div>
-
-## Table of Contents
+## Table of contents
 
 - [Features](#features)
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Options](#options)
-  - [Examples](#examples)
-  - [Example Output](#example-output)
-- [How It Works](#how-it-works)
-- [Architecture](#architecture)
-- [Technologies](#technologies)
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Options](#options)
+- [How it works](#how-it-works)
+- [Output](#output)
+- [CI integration](#ci-integration)
+- [Honest-use notice](#honest-use-notice)
 - [Development](#development)
-  - [Testing](#testing)
-  - [Scripts](#scripts)
-- [CI Integration](#ci-integration)
-- [Contributing](#contributing)
 - [License](#license)
 
 ---
 
 ## Features
 
-- 🔍 **Unused Dependencies** - Detects packages declared in package.json but not imported in source code
-- ⚠️ **Misplaced Dependencies** - Identifies packages in devDependencies but used in production code
-- 🚀 **Fast** - Powered by Bun for high performance
-- 🎨 **Clean Output** - Colorized console output or JSON format
-- 📦 **Zero Config** - Works out of the box
-- 🔒 **Type Safe** - Built with TypeScript using ADT patterns
-- 💬 **Comment Aware** - Ignores commented-out imports
-- ⚙️ **Config Smart** - Checks production configs only
+- Detects **unused** dependencies — declared in `package.json`, never imported.
+- Detects **misplaced** dependencies — used in source but living in `devDependencies`.
+- Detects **orphan peers** — declared as `peerDependencies` but never imported (opt-in via `--check-peer`).
+- Reports **type-only** imports separately so they don't pollute the unused list.
+- Auto-detects build output directories (`dist`, `build`, etc.) and excludes them.
+- Outputs colorized text or machine-readable JSON.
 
 ---
 
-## Installation
+## Install
 
-```bash
+```sh
 npm install -D deps-finder
 ```
 
-Or use with npx:
+Or run once without installing:
 
-```bash
+```sh
 npx deps-finder
 ```
+
+Requires Node.js ≥ 20.
 
 ---
 
-## Usage
+## Quickstart
 
-Run in your project root:
+```sh
+# from the project root (where package.json lives)
+deps-finder
 
-```bash
-npx deps-finder
+# JSON output for CI / scripts
+deps-finder --json
+
+# also check peerDependencies and devDependencies
+deps-finder --all
 ```
 
-### Options
+Expected output (truncated):
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--text` | `-t` | Output as text (default) |
-| `--json` | `-j` | Output as JSON |
-| `--all` | `-a` | Check all dependencies including devDependencies |
-| `--ignore <packages>` | `-i` | Ignore specific packages (comma-separated) |
-| `--exclude <globs>` | `-e` | Exclude specific files/dirs (comma-separated globs) |
-| `--no-auto-detect` | | Disable automatic build directory detection |
-| `--help` | `-h` | Show help message |
-
-### Examples
-
-```bash
-# Text output (default)
-npx deps-finder
-
-# JSON output
-npx deps-finder -j
-npx deps-finder --json
-
-# Check all dependencies including devDependencies
-npx deps-finder --all
-npx deps-finder -a
-
-# Ignore specific packages
-npx deps-finder --ignore storybook,@storybook/nextjs-vite
-npx deps-finder -i eslint,prettier --all
-
-# Exclude custom directories
-npx deps-finder --exclude "custom-dist/**,.cache/**"
-
-# Combine options
-npx deps-finder -j --all
-
-# Show help
-npx deps-finder -h
-```
-
-### Example Output
-
-**Text Format:**
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Dependency Analysis Report
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-✓ Used Dependencies:
+⚠ Unused Dependencies:
+  • moment
 
-  • react
-  • lodash
-  • axios
+⚠ Misplaced Dependencies:
+  • zod (used in 1 file)
+    └─ src/api/schema.ts:5
+```
+
+---
+
+## Options
+
+> If `--help` and this table disagree, `--help` wins — please open an issue. The source of truth is [`src/constants/messages.ts:HELP_TEXT`](src/constants/messages.ts).
+
+| Option | Alias | Description |
+|--------|-------|-------------|
+| `--text` | `-t` | Output as text (default) |
+| `--json` | `-j` | Output as JSON |
+| `--all` | `-a` | Check `dependencies`, `peerDependencies`, and `devDependencies` |
+| `--check-peer` | `-p` | Also check `peerDependencies` (off by default; on with `--all`) — see [peerDependencies note](#peerdependencies-note) |
+| `--ignore <pkgs>` | `-i` | Ignore specific packages (comma-separated) |
+| `--exclude <globs>` | `-e` | Exclude specific files/dirs (comma-separated globs) |
+| `--no-auto-detect` | — | Disable automatic build directory detection |
+| `--help` | `-h` | Show help message |
+
+---
+
+## How it works
+
+```
+package.json ──┐
+               ├─→  declared deps  ──┐
+glob src/**  ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
+               └─→  parsed imports  ─┘
+```
+
+1. Read `package.json` to get declared `dependencies`, `peerDependencies`, and `devDependencies`.
+2. Glob `src/**` for `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, while skipping comments and auto-detected build outputs.
+3. Parse `import` / `require` / dynamic `import()` statements; resolve to package roots (e.g. `lodash/fp` → `lodash`).
+4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**.
+
+---
+
+## Output
+
+**Text format** (default):
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Dependency Analysis Report
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⚠ Unused Dependencies:
   (declared but not imported in source code)
-
   • moment
 
 ⚠ Misplaced Dependencies:
   (in devDependencies but used in source code)
-
   • zod (used in 1 file)
     └─ src/api/schema.ts:5
        import { z } from 'zod'
 
-───────────────────────────────────────────────────────────
-  Ignored Dependencies
-───────────────────────────────────────────────────────────
-
   Type Imports Only (TypeScript)
-  (imported via "import type" syntax)
-
   ○ typescript
   ○ @types/react
-
-  Ignored by --ignore option
-  (explicitly ignored via CLI)
-
-  ○ eslint
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Total Issues: 2
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-**JSON Format:**
+**JSON format** (`--json`, truncated):
+
 ```json
 {
-  "used": [
-    { "name": "react", "count": 23 },
-    { "name": "lodash", "count": 5 },
-    { "name": "axios", "count": 3 }
-  ],
   "unused": ["moment"],
   "misplaced": [
     {
       "packageName": "zod",
       "locations": [
-        {
-          "file": "/absolute/path/to/src/api/schema.ts",
-          "line": 5,
-          "importStatement": "import { z } from 'zod'"
-        }
+        { "file": "src/api/schema.ts", "line": 5, "importStatement": "import { z } from 'zod'" }
       ]
     }
   ],
   "ignored": {
     "typeOnly": ["typescript", "@types/react"],
-    "byDefault": [],
     "byOption": ["eslint"]
   },
   "totalIssues": 2
@@ -188,236 +170,45 @@ npx deps-finder -h
 
 ---
 
-## How It Works
+## CI integration
 
-1. **Parse package.json** - Extracts all declared dependencies
-2. **Scan source code** - Parses import statements in TypeScript/JavaScript files
-3. **Analyze dependencies**:
-   - Detects packages declared but not used
-   - Identifies packages in devDependencies but used in production code
-4. **Generate report** - Outputs results in text or JSON format
+Add deps-finder as a non-blocking lint step, or fail the build on any finding:
 
-### Scope
-
-- **Default mode**: Checks `dependencies` and `peerDependencies` only
-- **All mode (`--all`)**: Includes `devDependencies` in the analysis
-
-### Supported Import Patterns
-
-All import styles are correctly parsed, including deep imports from sub-paths:
-
-- ES6 import: `import React from 'react'`
-- Named import: `import { useState } from 'react'`
-- Namespace import: `import * as React from 'react'`
-- CommonJS require: `require('express')`
-- Type import: `import type { User } from '@/types'`
-- Mixed import: `import { type User, createUser } from 'user-lib'`
-- **Deep imports**: `import map from 'lodash/map'` → detects `lodash`
-- **Side-effect imports**: `import 'core-js/actual'` → detects `core-js`
-- **Sub-path exports**: `import { signIn } from 'next-auth/react'` → detects `next-auth`
-- **Scoped packages**: `import { pipe } from '@mobily/ts-belt'` → detects `@mobily/ts-belt`
-- **Scoped deep imports**: `import { Button } from '@mui/material/Button'` → detects `@mui/material`
-- Config files: CommonJS `require()` in `*.config.js`, `*.config.ts`, etc.
-
-### Comment Handling
-
-Comments are properly ignored during analysis:
-- Single-line comments: `// import React from 'react'`
-- Multi-line comments: `/* import axios from 'axios' */`
-- JSDoc comments: `/** @example import { test } from 'test' */`
-
-Example:
-```javascript
-// import unused from 'unused-package';  // ← Ignored
-/* 
-import also from 'also-unused';  // ← Ignored
-*/
-import axios from 'axios';  // ← Detected
+```yaml
+# .github/workflows/lint.yml
+- run: npx deps-finder --json > deps-report.json
+- run: |
+    issues=$(jq '.totalIssues' deps-report.json)
+    if [ "$issues" -gt 0 ]; then
+      echo "::error::deps-finder found $issues issues"
+      exit 1
+    fi
 ```
-
-### Configuration Files
-
-Only production-related config files are checked for dependencies:
-
-**Checked (Production Configs)**:
-- `next.config.*` - Next.js runtime configuration
-- `next-*.config.*` - Next.js plugins (next-logger, next-pwa, next-auth, etc.)
-- `webpack.config.*` - Webpack build configuration
-- `vite.config.*` - Vite build configuration
-- `rollup.config.*` - Rollup build configuration
-- `postcss.config.*` - PostCSS build configuration
-
-**Note**: Production config files are detected regardless of their location in the project (root, subdirectories, etc.). Dependencies used in these files are NOT flagged as 'Misplaced' even if they are in `devDependencies`.
-
-**Not Checked (Development Configs)**:
-- `jest.config.*` - Test configuration (devDependencies)
-- `vitest.config.*` - Test configuration (devDependencies)
-- `babel.config.*` - Build tool (devDependencies)
-- `eslint.config.*` - Linter (devDependencies)
-- `prettier.config.*` - Formatter (devDependencies)
-- `tsup.config.*` - Build tool (devDependencies)
-
-Example detection:
-```javascript
-// ✓ Detected: next.config.js
-const withBundleAnalyzer = require(' @next/bundle-analyzer')
-
-// ✓ Detected: next-logger.config.js (in root or any subdirectory)
-const winston = require('winston')
-
-// ✓ Detected: webpack.config.js
-const HtmlWebpackPlugin = require('html-webpack-plugin')
-
-// ✗ Ignored: jest.config.js (devDependency tool)
-const nextJest = require('next/jest')
-```
-
-### Automatic Exclusions
-
-#### File Patterns
-The following files are automatically excluded from analysis:
-- `**/*.d.ts` (TypeScript declaration files)
-- `node_modules/**`, `dist/**`, `build/**`, `out/**`
-- `**/*.test.*`, `**/*.spec.*`
-- `**/*.stories.*`, `**/*.story.*`
-- `**/test/**`, `**/tests/**`, `**/__tests__/**`, `**/__mocks__/**`
-- `**/stories/**`, `**/.storybook/**`
-- `**/coverage/**`
-- `**/e2e/**`, `**/cypress/**`, `**/playwright/**`
-
-**Note:** Configuration files like `webpack.config.js`, `next.config.js`, etc. are analyzed separately to detect CommonJS `require()` statements.
-
-#### Build Output Directories (Auto-Detected)
-The tool automatically detects and excludes build output directories based on:
-- Framework defaults (`.next`, `.nuxt`, `storybook-static`, `dist`, `build`, etc.)
-- `tsconfig.json` (`compilerOptions.outDir`)
-- `package.json` scripts (`--outDir` flags)
-- Heuristic directory names (`*-static`, `*-dist`, `*-build`)
-
-You can disable this behavior with `--no-auto-detect` or assume manual control with `--exclude`.
-
-#### Import Types
-The following imports are automatically excluded:
-- **Type-only imports**: `import type { User } from 'user-types'` (no runtime code)
-  - **Exception**: If a package is also used with runtime imports (e.g., `import { type User, createUser } from 'user-lib'`), it's counted as used
-- **Node.js built-in modules**: `fs`, `path`, `http`, `node:fs`, etc.
-- **Bun built-in modules**: `bun`, `bun:test`, `bun:sqlite`, etc.
 
 ---
 
-## Architecture
+## peerDependencies note
 
-Built with clean architecture principles and Separation of Concerns (SoC):
-
-```
-src/
-├── domain/          # Type definitions (ADT patterns)
-├── parsers/         # Package.json and import parsers
-├── analyzers/       # Dependency analysis logic
-├── reporters/       # Output formatters
-└── cli/            # CLI options and help
-```
-
-### Key Principles
-
-- **ADT (Algebraic Data Types)** - Type-safe domain modeling
-- **SoC (Separation of Concerns)** - Each module has a single responsibility
-- **No Type Assertions** - Proper type inference without `as`
-- **Union Types** - Using const arrays for type safety
-- **Functional Patterns** - Using ts-pattern and ts-belt
+`peerDependencies` are a contract with consumers, not a usage indicator — many real peers (e.g. `typescript`, ESLint plugin peers) are intentionally never imported by the library itself. By default deps-finder skips them. Opt in with `--check-peer` and they appear in a separate **Unused peerDependencies** section.
 
 ---
 
-## Technologies
+## Honest-use notice
 
-- **[Bun](https://bun.sh)** - Fast JavaScript runtime and toolkit
-- **[TypeScript](https://www.typescriptlang.org/)** - Type-safe development
-- **[ts-pattern](https://github.com/gvergnaud/ts-pattern)** - Pattern matching for clean control flow
-- **[ts-belt](https://mobily.github.io/ts-belt/)** - Functional programming utilities
-- **[Biome](https://biomejs.dev/)** - Fast linter and formatter
+deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages loaded only via config files outside `src/`. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
 
 ---
 
 ## Development
 
-```bash
-# Install dependencies
+```sh
+git clone https://github.com/marketboro/deps-finder.git
+cd deps-finder
 bun install
-
-# Run tests
-bun test
-
-# Run tests with coverage
-bun test --coverage
-
-# Type check
-bun run typecheck
-
-# Lint
-bun run lint
-
-# Format
-bun run format
-
-# Full validation (type check + lint + test)
-bun run validate
-
-# Build
-bun run build
+bun run validate   # typecheck + lint + tests
 ```
 
-### Testing
-
-The project includes comprehensive tests with 100% code coverage:
-
-```bash
-# Run all tests
-bun test
-
-# Run with coverage
-bun test --coverage
-```
-
-Tests include:
-- **Unit tests** - Verify individual function behavior
-- **Integration tests** - Validate complete workflows
-- **Edge case tests** - Handle boundary conditions and exceptions
-- **Type tests** - Verify ADT types (Option, Result, etc.)
-
-### Scripts
-
-| Script | Description |
-|--------|-------------|
-| `bun test` | Run tests |
-| `bun test --coverage` | Run tests with coverage |
-| `bun run typecheck` | Type check without emitting files |
-| `bun run lint` | Lint source code |
-| `bun run format` | Format source code |
-| `bun run format:check` | Check code formatting |
-| `bun run check` | Run Biome checks |
-| `bun run validate` | Run all validations (typecheck + lint + test) |
-| `bun run build` | Build for production |
-
----
-
-## CI Integration
-
-Add to your CI pipeline:
-
-```yaml
-- name: Check dependencies
-  run: npx deps-finder
-```
-
-The command exits with code 1 if issues are found, making it perfect for CI/CD workflows.
-
----
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-For bugs and feature requests, please [create an issue](https://github.com/plz-salad-not-here/dep-detective/issues).
+The project uses Bun for tests and tsc for the published build. See [package.json](package.json) for the full script list.
 
 ---
 

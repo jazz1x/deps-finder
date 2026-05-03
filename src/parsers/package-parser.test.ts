@@ -394,4 +394,115 @@ describe('package-parser', () => {
       expect(R.isError(result)).toBe(true);
     });
   });
+
+  describe('edge cases', () => {
+    test('extractAllDependencies handles empty dep object alongside None ones', () => {
+      const pkg: PackageJson = {
+        name: O.None,
+        version: O.None,
+        dependencies: O.Some({}),
+        devDependencies: O.None,
+        peerDependencies: O.Some({}),
+      };
+      expect(extractAllDependencies(pkg)).toEqual([]);
+    });
+
+    test('extractAllDependencies preserves insertion order across types (dep > devDep > peerDep)', () => {
+      const pkg: PackageJson = {
+        name: O.None,
+        version: O.None,
+        dependencies: O.Some({ a: '1', b: '1' }),
+        devDependencies: O.Some({ c: '1' }),
+        peerDependencies: O.Some({ d: '1' }),
+      };
+      const result = extractAllDependencies(pkg);
+      expect(result).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    test('extractAllDependencies scales to large dep lists without throwing', () => {
+      const big = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`pkg-${i}`, '1.0.0']));
+      const pkg: PackageJson = {
+        name: O.None,
+        version: O.None,
+        dependencies: O.Some(big),
+        devDependencies: O.None,
+        peerDependencies: O.None,
+      };
+      const result = extractAllDependencies(pkg);
+      expect(result.length).toBe(1000);
+      expect(new Set(result).size).toBe(1000);
+    });
+  });
+
+  describe('readPackageJson defensive parsing', () => {
+    const testDir = './test-pkg-defensive';
+    const testFile = `${testDir}/package.json`;
+
+    beforeEach(async () => {
+      await mkdir(testDir, { recursive: true });
+    });
+
+    afterEach(async () => {
+      await rm(testDir, { recursive: true, force: true });
+    });
+
+    test('returns Ok with all-None when content is an empty object', async () => {
+      await writeFile(testFile, '{}');
+      const result = readPackageJson(testFile);
+      expect(R.isOk(result)).toBe(true);
+      if (R.isOk(result)) {
+        const pkg = R.getExn(result);
+        expect(O.isNone(pkg.name)).toBe(true);
+        expect(O.isNone(pkg.dependencies)).toBe(true);
+      }
+    });
+
+    test('returns PARSE_ERROR for empty file (JSON.parse fails)', async () => {
+      await writeFile(testFile, '');
+      const result = readPackageJson(testFile);
+      expect(R.isError(result)).toBe(true);
+      R.match(
+        result,
+        () => {
+          throw new Error('Should not be Ok');
+        },
+        (err) => {
+          expect(err.type).toBe('PARSE_ERROR');
+        },
+      );
+    });
+
+    test('rejects array as top-level JSON with PARSE_ERROR (not a plain object)', async () => {
+      await writeFile(testFile, '[1, 2, 3]');
+      const result = readPackageJson(testFile);
+      expect(R.isError(result)).toBe(true);
+      R.match(
+        result,
+        () => {
+          throw new Error('Should not be Ok');
+        },
+        (err) => {
+          expect(err.type).toBe('PARSE_ERROR');
+        },
+      );
+    });
+
+    test('rejects null as top-level JSON with PARSE_ERROR', async () => {
+      await writeFile(testFile, 'null');
+      const result = readPackageJson(testFile);
+      expect(R.isError(result)).toBe(true);
+    });
+
+    test('rejects primitive top-level JSON with PARSE_ERROR', async () => {
+      await writeFile(testFile, '"just a string"');
+      const result = readPackageJson(testFile);
+      expect(R.isError(result)).toBe(true);
+    });
+
+    test('returns PARSE_ERROR for json with trailing garbage', async () => {
+      await writeFile(testFile, '{"name":"x"}garbage');
+      const result = readPackageJson(testFile);
+      expect(R.isError(result)).toBe(true);
+    });
+  });
 });

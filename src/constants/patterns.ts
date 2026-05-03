@@ -238,6 +238,16 @@ export const NODE_BUILTIN_MODULES = [
 export const BUN_BUILTIN_MODULES = ['bun', 'bun:test', 'bun:sqlite', 'bun:ffi', 'bun:jsc'] as const;
 
 /**
+ * Pre-computed lookup set for built-in modules — O(1) membership check.
+ * Includes `node:`-prefixed forms of every Node builtin.
+ */
+export const BUILTIN_MODULE_SET: ReadonlySet<string> = new Set([
+  ...NODE_BUILTIN_MODULES,
+  ...NODE_BUILTIN_MODULES.map((m) => `node:${m}`),
+  ...BUN_BUILTIN_MODULES,
+]);
+
+/**
  * Regex for matching runtime imports and require statements
  */
 export const IMPORT_REGEX =

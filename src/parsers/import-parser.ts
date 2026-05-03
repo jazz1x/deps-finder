@@ -4,14 +4,13 @@ import { globSync } from 'glob';
 import { P, match } from 'ts-pattern';
 import {
   ANALYZABLE_EXTENSIONS,
-  BUN_BUILTIN_MODULES,
+  BUILTIN_MODULE_SET,
   DEV_CONFIG_PATTERNS,
   EXCLUDED_DIRECTORY_PATTERNS,
   EXCLUDED_FILENAME_PATTERNS,
   IMPORT_REGEX,
   MIXED_TYPE_IMPORT_REGEX,
   MULTILINE_COMMENT_REGEX,
-  NODE_BUILTIN_MODULES,
   PRODUCTION_CONFIG_PATTERNS,
   REQUIRE_REGEX,
   SINGLE_LINE_COMMENT_REGEX,
@@ -21,6 +20,7 @@ import {
 import type { FileError } from '../domain/errors.js';
 import type { ImportDetails } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
+import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { isNotNullable, isString } from '../utils/type-guards.js';
 
 /**
@@ -34,13 +34,6 @@ export const removeComments = (code: string): string => {
       return newlines;
     })
     .replace(SINGLE_LINE_COMMENT_REGEX, '');
-};
-
-/**
- * 줄 번호 계산
- */
-const getLineNumber = (content: string, index: number): number => {
-  return content.substring(0, index).split('\n').length;
 };
 
 /**
@@ -74,17 +67,10 @@ export const extractPackageName = (importPath: string | undefined | null): strin
 };
 
 /**
- * 내장 모듈 여부 확인
+ * 내장 모듈 여부 확인 — 모듈 로드 시 한 번 만든 Set으로 O(1) 룩업.
  */
-export const isBuiltinModule = (packageName: string): boolean => {
-  const nodeBuiltins = [...NODE_BUILTIN_MODULES];
-  const bunBuiltins = [...BUN_BUILTIN_MODULES];
-  const prefixedNodeBuiltins = A.map(nodeBuiltins, (m) => `node:${m}`);
-
-  const allBuiltins = [...nodeBuiltins, ...bunBuiltins, ...prefixedNodeBuiltins];
-
-  return A.some(allBuiltins, (builtin) => packageName === builtin);
-};
+export const isBuiltinModule = (packageName: string): boolean =>
+  BUILTIN_MODULE_SET.has(packageName);
 
 /**
  * 정규식 매칭 결과를 배열로 변환
@@ -170,6 +156,10 @@ export const shouldAnalyzeFile = (filePath: string): boolean => {
 
 export const extractImports = (fileContent: string, filePath: string): ImportDetails[] => {
   const content = removeComments(fileContent);
+  // 라인 인덱스를 한 번만 만들어두고 매치마다 O(log L) 룩업으로 줄 번호를 구한다.
+  const lineStarts = buildLineStarts(content);
+  const lineOf = (offset: number): number => lineNumberAt(lineStarts, offset);
+
   const findings: ImportDetails[] = [];
 
   // Pass 1: Initialize packages. Assume runtime initially for all general imports.
@@ -185,7 +175,7 @@ export const extractImports = (fileContent: string, filePath: string): ImportDet
         packageName,
         importType: 'runtime',
         file: filePath,
-        line: getLineNumber(content, match.index),
+        line: lineOf(match.index),
         importStatement: match[0].trim(),
       });
     }
@@ -200,7 +190,7 @@ export const extractImports = (fileContent: string, filePath: string): ImportDet
         packageName,
         importType: 'type-only',
         file: filePath,
-        line: getLineNumber(content, match.index),
+        line: lineOf(match.index),
         importStatement: match[0].trim(),
       });
     }
@@ -227,7 +217,7 @@ export const extractImports = (fileContent: string, filePath: string): ImportDet
       packageName,
       importType: hasRuntimeSpecifier ? 'runtime' : 'type-only',
       file: filePath,
-      line: getLineNumber(content, match.index),
+      line: lineOf(match.index),
       importStatement: match[0].trim(),
     });
   });
@@ -246,30 +236,6 @@ export const parseMultipleFiles = (
   filePaths: ReadonlyArray<string>,
 ): ReadonlyArray<ImportDetails> => {
   return pipe(filePaths, A.map(parseFile), A.filter(R.isOk), A.map(R.getExn), A.flat);
-};
-
-/**
- * 파일에서 import/require 파싱 및 타입 분류
- */
-export const parseImportsWithType = (filePath: string): Set<ImportDetails> => {
-  if (!shouldAnalyzeFile(filePath)) {
-    return new Set();
-  }
-
-  // Legacy behavior: swallow errors
-  return R.match(
-    parseFile(filePath),
-    (imports) => new Set(imports),
-    () => new Set(),
-  );
-};
-
-/**
- * Files from `findFiles` will be consumed by `parseImportsWithType`
- */
-export const parseImports = (filePath: string): Set<string> => {
-  const details = parseImportsWithType(filePath);
-  return new Set(A.map([...details], (d) => d.packageName));
 };
 
 /**
