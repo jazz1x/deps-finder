@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-03
+
+This is a feature + hardening release. Headline change: a new `--check-peer / -p` flag separates orphan-`peerDependencies` into their own bucket. The release also lands the project's first CI/CD pipelines (PR validation, tag-triggered npm publish with provenance, GitHub Release with auto-generated notes), and adopts the TypeScript 7 native preview compiler (`tsgo`) for typecheck + build.
+
+### ⚠ BREAKING
+
+- **Minimum Node.js raised from `>=20` to `>=22`** via `package.json#engines`. Node 20 entered security-only maintenance in Apr 2026; the test matrix is now `[22, 24]` (active LTS pair).
+- **`peerDependencies.typescript` raised from `^5.9.3` to `^6.0.0`**. TypeScript 6 is the current stable. Consumers on TS 5 should pin `deps-finder` to `0.5.x`.
+- **`unusedPeer` field added to JSON output**. Strict consumers that fail on unknown JSON keys would need to update their schema — but it is always present (empty array when `--check-peer` is off), so it is parseable as a fixed shape.
+
+### Added
+
+- **`--check-peer / -p` flag**: detects orphan `peerDependencies` (declared but never imported in source). Implied by `--all`. Off by default — `peerDependencies` are a consumer contract and many real peers (e.g. `typescript`, ESLint plugin peers) are intentionally never imported by the library itself. Output shows a dedicated **Unused peerDependencies** section in text mode and a `unusedPeer` array in JSON mode.
+- **CLI argument warnings**: `--ignore` / `--exclude` (or any flag requiring a value) given without a value now print `warning: <flag> requires a value but none was provided; flag ignored.` to stderr instead of silently dropping the flag.
+- **User-friendly error messages**: missing `package.json`, malformed JSON, and read errors are now reported as actionable single-line messages (e.g. `package.json not found at <path>. Run deps-finder from a directory containing package.json.`) instead of leaking the internal `FileError` tagged-union shape.
+- **End-to-end CLI test suite** (`src/cli.e2e.test.ts`): exercises the published `bin/cli.js` directly across exit codes, stdout/stderr formats, and `--all` / `--check-peer` / `--ignore` / `--exclude` interactions.
+- **Chaos / fuzz coverage**: a seeded `mulberry32` PRNG fuzzes `extractPackageName`, `extractImports`, `extractDependencies`, `analyzeDependencies`, and the file-reader on 200 random inputs each per run, asserting no throws and contract-shaped returns.
+
+### Changed
+
+- **Performance**: `extractImports` rewritten from O(N·L) to O(N + M·log L) (precomputed newline offsets + binary search per match — the canonical compiler pattern). `isBuiltinModule` switched from per-call array build + linear scan to a module-load-time `Set` lookup. Microbench results (`bun run bench`):
+
+  | input                           | before    | after    | speedup |
+  |---------------------------------|----------:|---------:|--------:|
+  | 100 lines / 5 imports           | 47.5 µs   | 31.5 µs  |   1.5×  |
+  | 1k lines / 97 imports           | 1.31 ms   | 167 µs   |   7.8×  |
+  | 10k lines / 968 imports         | 98.9 ms   | 1.90 ms  |  52×    |
+  | 1k lines, density 100%          | 15.2 ms   | 1.52 ms  |  10×    |
+  | `isBuiltinModule` ×6 mixed      | 3.04 µs   | 30 ns    | 101×    |
+
+- **Build & typecheck switched to `tsgo`** (TypeScript 7 native preview compiler, via `@typescript/native-preview`). `bun run typecheck` and `bun run build` now invoke `tsgo`. `tsc` (TypeScript 6) remains installed for editor TypeScript Server, type-definition resolution, and contributor cross-check.
+- **`tsconfig.json` migrated for TypeScript 7 removals**: `moduleResolution: "Node"` → `"bundler"`; `baseUrl: "."` removed (paths now resolve relative to tsconfig); `typeRoots` replaced with explicit `types: ["bun"]`; `incremental: true` removed (was causing emit cache mismatches).
+- **`tsconfig.build.json`**: explicit `include: ["./src/**/*.ts"]` and `rootDir: "./src"` (TS 6 no longer auto-infers rootDir or inherits include from extended config).
+- **README rewritten** in honne-style structure (12 H2 sections: Features → Install → Quickstart → Options → How it works → Output → CI integration → peerDependencies note → Honest-use → Development → License). Both English and Korean. Options table is derived from `src/constants/messages.ts:HELP_TEXT`. ASCII pipeline diagram added under "How it works".
+- **`main()` simplified to a sync arrow `const`**; remaining redundant Korean JSDoc dropped (CLAUDE.md C3 — let identifiers document intent).
+- **`O.Some<T>(...)` wrapping dropped** in `src/parsers/import-parser.ts`. `@mobily/ts-belt`'s `O.Option<A>` is structurally `A | null | undefined` and `O.Some(x)` is the identity, so values are returned directly with the callback's return type annotated as `O.Option<ImportDetails>`.
+
+### Fixed
+
+- **Duplicate `require()` findings**: `IMPORT_REGEX` already includes a `require()` alternation, so the separate `REQUIRE_REGEX` pass produced duplicates. Removed the redundant pass and added a regression test in `src/parsers/import-parser.test.ts`.
+- **`readPackageJson` threw on `JSON.parse('null')`**: `content.name` dereferenced `null`. Now guarded with `isPlainObject` and mapped to `PARSE_ERROR`, restoring the C1 promise that the function returns a `Result`.
+
+### Removed
+
+- `parseImports` and `parseImportsWithType` (dead since the contracts pass; no caller in `src/`).
+- `REQUIRE_REGEX` from `src/constants/patterns.ts` (duplicate of the `require()` alternation already inside `IMPORT_REGEX`).
+- `tsconfig.build.tsbuildinfo` is no longer in the published tarball — `package.json#files` tightened from `["dist", "bin"]` to `["dist/**/*.js", "dist/**/*.d.ts", "bin"]`. **Tarball: 72.3 kB → 52.3 kB (-28 %), 40 → 39 files.**
+
+### Infrastructure
+
+- **CI** (`.github/workflows/ci.yml`): runs `bun install --frozen-lockfile && bun run validate && bun run build` on every PR and `main` push. Bun (latest) + Node matrix `[22, 24]`, `fail-fast: false`, Bun-cache, PR-only concurrency cancellation.
+- **Release** (`.github/workflows/release.yml`): tag-push `v*.*.*` triggers a verify-tag-vs-`package.json#version` step, then `bun run validate && bun run build && npm publish --provenance --access public`, then a `softprops/action-gh-release@v2` step that creates the GitHub Release with auto-generated notes (`generate_release_notes: true`). `permissions` block is minimal: `contents: write` (Release) + `id-token: write` (npm provenance). `NPM_TOKEN` is referenced only via `${{ secrets.NPM_TOKEN }}`.
+- **`prepublishOnly`** upgraded from `bun run build` to `bun run validate && bun run build` so a manual local `npm publish` runs the same gate as CI.
+- **`.github/dependabot.yml`** added: weekly bumps for `github-actions` and `npm` (patch + minor grouped to reduce PR noise).
+- **`SECURITY.md`** added: vulnerability reporting via GitHub private advisories; scope (CLI / static analysis / no network).
+- **`CONTRIBUTING.md`** added: setup, development loop, project conventions linking to `CLAUDE.md` C1–C6, PR checklist.
+- **`.nvmrc`** added: pins Node 22 for contributors.
+- Repository URLs corrected in `package.json` and READMEs from `plz-salad-not-here/deps-finder` to `jazz1x/deps-finder` (canonical owner).
+- `glob` 11.x → 13.x, `@biomejs/biome` 2.3.11 → 2.4.14 (`biome.json#$schema` URL pinned to match), `@types/bun` floating `latest` → pinned `^1.3.13`.
+
+### Quality
+
+- Tests **145 → 226**. Coverage stays at **99.26 / 99.86** (statements / functions). Tarball size **-28 %**. Project Contracts (`CLAUDE.md` §C1–C6) enforced across the codebase: Result-typed errors, exhaustive `ts-pattern`, arrow-`const` style, co-located `bun:test`, no speculative exports, ESM with explicit `.js` suffixes.
+
+### Upgrade notes
+
+If you depend on deps-finder:
+
+1. Ensure your CI runs **Node ≥ 22** and **TypeScript ≥ 6** if you import deps-finder programmatically.
+2. If you parse the JSON output, expect a new `unusedPeer: string[]` field. It is always present (`[]` when `--check-peer` is off).
+3. To use the new orphan-peer detection, add `--check-peer` (or `--all`, which implies it) to your invocation.
+4. CLI text output adds an `Unused peerDependencies:` section *only* when `--check-peer` is active and there are findings.
+
+If you cannot upgrade Node or TypeScript: pin to `deps-finder@~0.5.0`.
+
 ## [0.5.0] - 2026-01-13
 
 ### Added
