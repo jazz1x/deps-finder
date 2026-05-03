@@ -37,6 +37,7 @@ deps-finder reads your `package.json`, walks `src/**`, and tells you which decla
 - Reports **type-only** imports separately so they don't pollute the unused list.
 - Auto-detects build output directories (`dist`, `build`, etc.) and excludes them.
 - Outputs colorized text or machine-readable JSON.
+- **Friendly errors and warnings** — actionable messages when files are missing, JSON is malformed, or a flag is given without its required value.
 
 ---
 
@@ -147,11 +148,20 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
+With `--check-peer` (or `--all`), an additional section appears for declared peers that no source file imports:
+
+```
+⚠ Unused peerDependencies:
+  (declared as a consumer contract but not imported in source code)
+  • react
+```
+
 **JSON format** (`--json`, truncated):
 
 ```json
 {
   "unused": ["moment"],
+  "unusedPeer": ["react"],
   "misplaced": [
     {
       "packageName": "zod",
@@ -164,9 +174,11 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
     "typeOnly": ["typescript", "@types/react"],
     "byOption": ["eslint"]
   },
-  "totalIssues": 2
+  "totalIssues": 3
 }
 ```
+
+`unusedPeer` is `[]` when `--check-peer` is off (default).
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "deps-finder",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A TypeScript dependency analyzer that detects unused and misplaced dependencies",
   "main": "dist/index.js",
   "module": "dist/index.js",
