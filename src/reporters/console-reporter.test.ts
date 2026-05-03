@@ -137,7 +137,7 @@ describe('console-reporter', () => {
     });
 
     test('should display type-only imports in text report', () => {
-      const result: AnalysisResult = { ...empty, typeOnly: ['hotscript', 'type-fest'] };
+      const result: AnalysisResult = { ...empty, typeOnly: ['hotscript', 'type-fest'], totalIssues: 2 };
       const output = report(result, 'text');
       expect(output).toContain('Type-Only Imports:');
       expect(output).toContain('hotscript');
@@ -145,7 +145,7 @@ describe('console-reporter', () => {
     });
 
     test('should include type-only imports in JSON report', () => {
-      const result: AnalysisResult = { ...empty, typeOnly: ['hotscript', 'type-fest'] };
+      const result: AnalysisResult = { ...empty, typeOnly: ['hotscript', 'type-fest'], totalIssues: 2 };
       const output = report(result, 'json');
       const parsed = JSON.parse(output);
       expect(parsed.typeOnly).toEqual(['hotscript', 'type-fest']);

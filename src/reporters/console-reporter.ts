@@ -4,9 +4,6 @@ import { P, match } from 'ts-pattern';
 import { MESSAGES } from '../constants/messages.js';
 import type { AnalysisResult, DependencyUsage, OutputFormat } from '../domain/types.js';
 
-/**
- * 색상 코드
- */
 const colors = {
   reset: '\x1b[0m',
   yellow: '\x1b[33m',
@@ -17,15 +14,9 @@ const colors = {
   blue: '\x1b[34m', // Added blue for type-only
 } as const;
 
-/**
- * 색상 적용
- */
 const colorize = (text: string, color: keyof typeof colors): string =>
   `${colors[color]}${text}${colors.reset}`;
 
-/**
- * 섹션 헤더 출력 (for Unused)
- */
 const formatIssueSection = (
   title: string,
   subtitle: string,
@@ -42,9 +33,6 @@ const formatIssueSection = (
     ]);
 };
 
-/**
- * 섹션 헤더 출력 (for Misplaced with details)
- */
 const formatMisplacedSection = (
   title: string,
   subtitle: string,
@@ -57,27 +45,23 @@ const formatMisplacedSection = (
       `${colorize('⚠', 'yellow')}  ${colorize(title, 'yellow')}`,
       `  ${colorize(subtitle, 'gray')}`,
       '',
-      ...A.reduce(it, [] as string[], (acc, item) => {
+      ...A.flatMap(it, (item) => {
         const locationCount = item.locations.length;
         const usageText = locationCount === 1 ? 'used in 1 file' : `used in ${locationCount} files`;
-
-        acc.push(
+        return [
           `  ${colorize('•', 'yellow')} ${item.packageName} ${colorize(`(${usageText})`, 'gray')}`,
-        );
-
-        A.forEach(item.locations, (loc) => {
-          const relativePath = path.relative(process.cwd(), loc.file);
-          acc.push(`    └─ ${relativePath}:${loc.line}`);
-          acc.push(`       ${colorize(loc.importStatement, 'gray')}`);
-        });
-        return acc;
+          ...A.flatMap(item.locations, (loc) => {
+            const relativePath = path.relative(process.cwd(), loc.file);
+            return [
+              `    └─ ${relativePath}:${loc.line}`,
+              `       ${colorize(loc.importStatement, 'gray')}`,
+            ];
+          }),
+        ];
       }),
     ]);
 };
 
-/**
- * 섹션 헤더 출력 (for Type-Only)
- */
 const formatTypeOnlySection = (
   title: string,
   subtitle: string,
@@ -94,9 +78,6 @@ const formatTypeOnlySection = (
     ]);
 };
 
-/**
- * 무시된 패키지 출력
- */
 const formatIgnored = (packages: ReadonlyArray<string>): string[] => {
   return match(packages)
     .with([], () => [])
@@ -106,14 +87,8 @@ const formatIgnored = (packages: ReadonlyArray<string>): string[] => {
     });
 };
 
-/**
- * 구분선 출력
- */
 const formatSeparator = (): string => colorize(MESSAGES.SEPARATOR, 'gray');
 
-/**
- * 이슈 없음 메시지 출력
- */
 const formatNoIssues = (): string[] => [
   formatSeparator(),
   '',
@@ -122,9 +97,6 @@ const formatNoIssues = (): string[] => [
   formatSeparator(),
 ];
 
-/**
- * 이슈 요약 출력
- */
 const formatSummary = (totalIssues: number): string[] => [
   '',
   formatSeparator(),
@@ -156,7 +128,7 @@ export const report = (
       return match({ result, ignoredPackages })
         .with(
           {
-            result: { totalIssues: 0, typeOnly: [] },
+            result: { totalIssues: 0 },
             ignoredPackages: P.any,
           },
           ({ ignoredPackages }) =>

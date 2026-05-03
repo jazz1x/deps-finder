@@ -4,9 +4,9 @@
 
 [![npm version](https://img.shields.io/npm/v/deps-finder.svg)](https://www.npmjs.com/package/deps-finder)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node ≥20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
+[![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](https://nodejs.org)
 [![Bun](https://img.shields.io/badge/runtime-bun-black.svg)](https://bun.sh)
-[![CI](https://github.com/marketboro/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/marketboro/deps-finder/actions/workflows/ci.yml)
+[![CI](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml)
 
 deps-finder reads your `package.json`, walks `src/**`, and tells you which declared packages no source file actually imports — and which packages your code does import that live in the wrong section. It runs entirely on your machine, never phones home, and treats `peerDependencies` as a consumer contract by default (since real peers like `typescript` are intentionally never imported by the library itself). Opt in with `--check-peer` when you want orphan-peer detection.
 
@@ -52,7 +52,7 @@ Or run once without installing:
 npx deps-finder
 ```
 
-Requires Node.js ≥ 20.
+Requires Node.js ≥ 22.
 
 ---
 
@@ -202,7 +202,7 @@ deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `
 ## Development
 
 ```sh
-git clone https://github.com/marketboro/deps-finder.git
+git clone https://github.com/jazz1x/deps-finder.git
 cd deps-finder
 bun install
 bun run validate   # typecheck + lint + tests

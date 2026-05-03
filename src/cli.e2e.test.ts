@@ -192,4 +192,40 @@ describe('CLI e2e (bin/cli.js)', () => {
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unused).toContain('lodash');
   });
+
+  test('--all includes devDependencies in unused check', async () => {
+    await writeFile(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({
+        name: 't',
+        version: '1.0.0',
+        devDependencies: { 'unused-dev': '^1.0.0' },
+      }),
+    );
+    await mkdir(path.join(tmpDir, 'src'), { recursive: true });
+    await writeFile(path.join(tmpDir, 'src/index.ts'), 'export const x = 1;');
+
+    const r = runCli(['--json', '--all'], tmpDir);
+    expect(r.status).toBe(1);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.unused).toContain('unused-dev');
+  });
+
+  test('reports misplaced dependency (devDep used in production source)', async () => {
+    await writeFile(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({
+        name: 't',
+        version: '1.0.0',
+        devDependencies: { lodash: '^4.0.0' },
+      }),
+    );
+    await mkdir(path.join(tmpDir, 'src'), { recursive: true });
+    await writeFile(path.join(tmpDir, 'src/index.ts'), `import _ from 'lodash'; export default _;`);
+
+    const r = runCli(['--json'], tmpDir);
+    expect(r.status).toBe(1);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.misplaced.some((d: { packageName: string }) => d.packageName === 'lodash')).toBe(true);
+  });
 });

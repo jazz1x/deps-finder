@@ -12,7 +12,6 @@ import {
   MIXED_TYPE_IMPORT_REGEX,
   MULTILINE_COMMENT_REGEX,
   PRODUCTION_CONFIG_PATTERNS,
-  REQUIRE_REGEX,
   SINGLE_LINE_COMMENT_REGEX,
   TYPE_ONLY_IMPORT_REGEX,
   getAllExcludedPatterns,
@@ -23,22 +22,16 @@ import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { isNotNullable, isString } from '../utils/type-guards.js';
 
-/**
- * 주석 제거 (줄바꿈 보존)
- */
 export const removeComments = (code: string): string => {
   return code
-    .replace(MULTILINE_COMMENT_REGEX, (match) => {
+    .replace(MULTILINE_COMMENT_REGEX, (matchedStr) => {
       // 매치된 문자열 내의 줄바꿈 개수만큼 줄바꿈 문자 유지
-      const newlines = (match.match(/\n/g) || []).join('');
+      const newlines = (matchedStr.match(/\n/g) || []).join('');
       return newlines;
     })
     .replace(SINGLE_LINE_COMMENT_REGEX, '');
 };
 
-/**
- * 패키지명 추출
- */
 export const extractPackageName = (importPath: string | undefined | null): string | null => {
   return match(importPath)
     .with(P.nullish, () => null)
@@ -72,9 +65,6 @@ export const extractPackageName = (importPath: string | undefined | null): strin
 export const isBuiltinModule = (packageName: string): boolean =>
   BUILTIN_MODULE_SET.has(packageName);
 
-/**
- * 정규식 매칭 결과를 배열로 변환
- */
 const execAll = (regex: RegExp, text: string): RegExpExecArray[] => {
   const matches: RegExpExecArray[] = [];
   regex.lastIndex = 0;
@@ -87,25 +77,16 @@ const execAll = (regex: RegExp, text: string): RegExpExecArray[] => {
   return matches;
 };
 
-/**
- * 파일 확장자 확인
- */
 const hasAnalyzableExtension = (filePath: string): boolean =>
   pipe(filePath, path.extname, (ext) =>
     A.some(ANALYZABLE_EXTENSIONS, (allowed) => allowed === ext),
   );
 
-/**
- * 프로덕션 config 파일 여부
- */
 export const isProductionConfigFile = (filePath: string): boolean =>
   pipe(filePath, path.basename, (filename) =>
     A.some(PRODUCTION_CONFIG_PATTERNS, (pattern) => pattern.test(filename)),
   );
 
-/**
- * 제외 대상 경로 여부
- */
 export const isExcludedPath = (filePath: string): boolean => {
   const rawNormalized = S.replaceByRe(filePath, /\\/g, '/');
   const normalizedPath = S.startsWith(rawNormalized, '/') ? rawNormalized : `/${rawNormalized}`;
@@ -136,9 +117,6 @@ export const isExcludedPath = (filePath: string): boolean => {
     .otherwise(() => false);
 };
 
-/**
- * 분석 대상 파일 여부
- */
 export const shouldAnalyzeFile = (filePath: string): boolean => {
   return match(filePath)
     .with(
@@ -160,69 +138,64 @@ export const extractImports = (fileContent: string, filePath: string): ImportDet
   const lineStarts = buildLineStarts(content);
   const lineOf = (offset: number): number => lineNumberAt(lineStarts, offset);
 
-  const findings: ImportDetails[] = [];
-
   // Pass 1: Initialize packages. Assume runtime initially for all general imports.
-  const allGeneralImportMatches = [
-    ...execAll(IMPORT_REGEX, content),
-    ...execAll(REQUIRE_REGEX, content),
-  ];
-
-  A.forEach(allGeneralImportMatches, (match) => {
-    const packageName = extractPackageName(match[1] ?? match[2]);
-    if (isNotNullable(packageName) && !isBuiltinModule(packageName)) {
-      findings.push({
-        packageName,
-        importType: 'runtime',
-        file: filePath,
-        line: lineOf(match.index),
-        importStatement: match[0].trim(),
-      });
-    }
-  });
+  // IMPORT_REGEX already includes a require() alternation, so no separate REQUIRE_REGEX pass is needed.
+  const fromGeneral = pipe(
+    execAll(IMPORT_REGEX, content),
+    A.filterMap((m): O.Option<ImportDetails> => {
+      const packageName = extractPackageName(m[1] ?? m[2]);
+      return isNotNullable(packageName) && !isBuiltinModule(packageName)
+        ? {
+            packageName,
+            importType: 'runtime',
+            file: filePath,
+            line: lineOf(m.index),
+            importStatement: m[0].trim(),
+          }
+        : O.None;
+    }),
+  );
 
   // Pass 2: Refine for explicit `import type X from 'pkg'` statements.
-  const typeOnlyMatches = execAll(TYPE_ONLY_IMPORT_REGEX, content);
-  A.forEach(typeOnlyMatches, (match) => {
-    const packageName = extractPackageName(match[1]);
-    if (isNotNullable(packageName) && !isBuiltinModule(packageName)) {
-      findings.push({
-        packageName,
-        importType: 'type-only',
-        file: filePath,
-        line: lineOf(match.index),
-        importStatement: match[0].trim(),
-      });
-    }
-  });
+  const fromTypeOnly = pipe(
+    execAll(TYPE_ONLY_IMPORT_REGEX, content),
+    A.filterMap((m): O.Option<ImportDetails> => {
+      const packageName = extractPackageName(m[1]);
+      return isNotNullable(packageName) && !isBuiltinModule(packageName)
+        ? {
+            packageName,
+            importType: 'type-only',
+            file: filePath,
+            line: lineOf(m.index),
+            importStatement: m[0].trim(),
+          }
+        : O.None;
+    }),
+  );
 
   // Pass 3: Refine for `import { type X, Y } from 'pkg'` or `import { type X } from 'pkg'` statements.
-  const mixedTypeMatches = execAll(MIXED_TYPE_IMPORT_REGEX, content);
-  A.forEach(mixedTypeMatches, (match) => {
-    const fullImportStr = match[1];
-    const pkgPath = match[2];
-    const packageName = extractPackageName(pkgPath);
+  const fromMixed = pipe(
+    execAll(MIXED_TYPE_IMPORT_REGEX, content),
+    A.filterMap((m): O.Option<ImportDetails> => {
+      const fullImportStr = m[1];
+      const packageName = extractPackageName(m[2]);
+      if (!isNotNullable(packageName) || isBuiltinModule(packageName)) return O.None;
+      if (!isNotNullable(fullImportStr) || !fullImportStr.includes('type ')) return O.None;
+      const hasRuntimeSpecifier = pipe(
+        S.split(fullImportStr, ','),
+        A.some((spec) => !S.includes(spec.trim(), 'type ')),
+      );
+      return {
+        packageName,
+        importType: hasRuntimeSpecifier ? 'runtime' : 'type-only',
+        file: filePath,
+        line: lineOf(m.index),
+        importStatement: m[0].trim(),
+      };
+    }),
+  );
 
-    if (!isNotNullable(packageName) || isBuiltinModule(packageName)) return;
-    if (!isNotNullable(fullImportStr)) return;
-
-    if (!fullImportStr.includes('type ')) return;
-
-    const hasRuntimeSpecifier = pipe(
-      S.split(fullImportStr, ','),
-      A.some((spec) => !S.includes(spec.trim(), 'type ')),
-    );
-
-    findings.push({
-      packageName,
-      importType: hasRuntimeSpecifier ? 'runtime' : 'type-only',
-      file: filePath,
-      line: lineOf(match.index),
-      importStatement: match[0].trim(),
-    });
-  });
-
-  return findings;
+  return [...fromGeneral, ...fromTypeOnly, ...fromMixed];
 };
 
 export const parseFile = (filePath: string): R.Result<ImportDetails[], FileError> => {
@@ -238,9 +211,6 @@ export const parseMultipleFiles = (
   return pipe(filePaths, A.map(parseFile), A.filter(R.isOk), A.map(R.getExn), A.flat);
 };
 
-/**
- * Find all analyzable files in the directory
- */
 export const findFiles = (
   rootDir: string,
   options: {
