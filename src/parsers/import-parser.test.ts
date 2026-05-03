@@ -410,6 +410,13 @@ describe('extractImports edge cases', () => {
     const findings = extractImports(content, 'test.ts');
     expect(findings.map((f) => f.packageName)).toContain('real-pkg');
   });
+
+  test('require() counts as exactly one runtime finding (no duplicate from REQUIRE_REGEX)', () => {
+    const result = extractImports("const m = require('lodash');", 'src/index.ts');
+    const lodashEntries = result.filter((f) => f.packageName === 'lodash');
+    expect(lodashEntries).toHaveLength(1);
+    expect(lodashEntries[0]!.importType).toBe('runtime');
+  });
 });
 
 describe('removeComments', () => {

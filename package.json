@@ -19,13 +19,17 @@
     "check": "bunx biome check --write src/",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "validate": "bun run typecheck && bun run lint && bun test",
-    "prepublishOnly": "bun run build",
+    "prepublishOnly": "bun run validate && bun run build",
     "prepare": "husky"
   },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
     "bin"
   ],
+  "engines": {
+    "node": ">=22"
+  },
   "keywords": [
     "dependency",
     "analyzer",
@@ -40,11 +44,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/plz-salad-not-here/deps-finder.git"
+    "url": "https://github.com/jazz1x/deps-finder.git"
   },
-  "homepage": "https://github.com/plz-salad-not-here/deps-finder#readme",
+  "homepage": "https://github.com/jazz1x/deps-finder#readme",
   "bugs": {
-    "url": "https://github.com/plz-salad-not-here/deps-finder/issues"
+    "url": "https://github.com/jazz1x/deps-finder/issues"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.11",

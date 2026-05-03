@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # Keep GitHub Actions third-party action versions current
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+
+  # Keep npm dependencies current (groups patch + minor to reduce PR noise)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+    groups:
+      patch-and-minor:
+        update-types:
+          - patch
+          - minor
