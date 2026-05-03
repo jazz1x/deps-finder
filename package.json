@@ -60,7 +60,7 @@
   },
   "dependencies": {
     "@mobily/ts-belt": "4.0.0-rc.5",
-    "glob": "^11.1.0",
+    "glob": "^13.0.6",
     "ts-pattern": "^5.9.0"
   }
 }
