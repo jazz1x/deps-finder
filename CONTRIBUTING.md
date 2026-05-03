@@ -19,12 +19,14 @@ Requires Node.js ≥ 22 (use `.nvmrc`) and [Bun](https://bun.sh).
 |---------|---------|
 | `bun test`            | Run the test suite |
 | `bun test --watch`    | Re-run tests on file change |
-| `bun run typecheck`   | `tsc --noEmit` |
+| `bun run typecheck`   | `tsgo --noEmit` (TypeScript 7 native preview, via `@typescript/native-preview`) |
 | `bun run lint`        | Biome lint over `src/` |
 | `bun run format`      | Biome format `src/` (writes) |
 | `bun run validate`    | typecheck + lint + tests (the canonical gate) |
 | `bun run bench`       | Run the parser micro-benchmark |
-| `bun run build`       | Emit `dist/` via `tsc -p tsconfig.build.json` |
+| `bun run build`       | Emit `dist/` via `tsgo -p tsconfig.build.json` |
+
+The project uses `tsgo` (the Go-based TypeScript compiler distributed as `@typescript/native-preview`, targeting TS 7) for both typecheck and emit. It is significantly faster than `tsc` and accepts the same `tsconfig.json` syntax. The `typescript` (≥ 6) package is kept as a `peerDependency` and `devDependency` so editor TypeScript Server, type definitions, and any contributor that prefers `tsc --noEmit` for cross-checking still work.
 
 ## Project conventions
 

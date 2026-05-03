@@ -3,7 +3,7 @@
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "module": "ESNext",
     "target": "ESNext",
-    "moduleResolution": "Node",
+    "moduleResolution": "bundler",
 
     "allowJs": true,
     "checkJs": true,
@@ -13,7 +13,6 @@
 
     "inlineSources": true,
     "inlineSourceMap": true,
-    "incremental": true,
 
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
@@ -48,8 +47,7 @@
     "isolatedModules": false,
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
-    "typeRoots": ["./node_modules/@types"],
-    "baseUrl": ".",
+    "types": ["bun"],
     "paths": {
       "@/*": ["./src/*"]
     }

@@ -208,7 +208,7 @@ bun install
 bun run validate   # typecheck + lint + tests
 ```
 
-The project uses Bun for tests and tsc for the published build. See [package.json](package.json) for the full script list.
+The project uses Bun for tests and `tsgo` (the TypeScript 7 native preview compiler) for typecheck and the published build. See [package.json](package.json) for the full script list.
 
 ---
 

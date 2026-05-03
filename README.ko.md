@@ -209,7 +209,7 @@ bun install
 bun run validate   # typecheck + lint + tests
 ```
 
-테스트는 Bun을, 배포 빌드는 tsc를 사용합니다. 전체 스크립트 목록은 [package.json](package.json)을 참고하세요.
+테스트는 Bun을, 타입체크와 배포 빌드는 `tsgo` (TypeScript 7 native preview 컴파일러)를 사용합니다. 전체 스크립트 목록은 [package.json](package.json)을 참고하세요.
 
 ---
 
