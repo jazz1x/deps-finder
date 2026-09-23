@@ -101,6 +101,23 @@ describe('walkProject', () => {
     expect(walked()).toEqual(['packages/b/test/pkg/index.ts']);
   });
 
+  test('npm: a later positive re-includes a negated member, and a leading slash is stripped', async () => {
+    await put('package.json', '{"workspaces":["packages/*","!packages/b","packages/b","/tools/x"]}');
+    await put('packages/a/package.json', '{"name":"a"}');
+    await put('packages/b/package.json', '{"name":"b"}');
+    await put('tools/x/package.json', '{"name":"x"}');
+
+    expect(packagesOf()).toEqual(['packages/a', 'packages/b', 'tools/x']);
+  });
+
+  test('pnpm: a negation wins wherever it sits', async () => {
+    await put('pnpm-workspace.yaml', "packages:\n  - 'packages/*'\n  - '!packages/b'\n  - 'packages/b'\n");
+    await put('packages/a/package.json', '{"name":"a"}');
+    await put('packages/b/package.json', '{"name":"b"}');
+
+    expect(packagesOf()).toEqual(['packages/a']);
+  });
+
   test('a null workspaces field declares no members', async () => {
     await put('package.json', '{"workspaces":null}');
     await put('packages/a/package.json', '{"name":"a"}');

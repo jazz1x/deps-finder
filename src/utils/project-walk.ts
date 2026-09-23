@@ -93,7 +93,20 @@ const roleOf = (signals: Signals): Role =>
 
 type WorkspaceGlob = { readonly negated: boolean; readonly pattern: string };
 
-const workspaceGlobOf = (glob: string): WorkspaceGlob => {
+type Membership = {
+  readonly positives: ReadonlyArray<string>;
+  readonly negations: ReadonlyArray<string>;
+};
+
+const npmGlobOf = (glob: string): WorkspaceGlob => {
+  const unbanged = String.replace(/^!+/, '')(glob);
+  return {
+    negated: (glob.length - unbanged.length) % 2 === 1,
+    pattern: String.replace(/^\.?\/+/, '')(unbanged),
+  };
+};
+
+const pnpmGlobOf = (glob: string): WorkspaceGlob => {
   const negated = String.startsWith('!')(glob);
   return {
     negated,
@@ -101,17 +114,43 @@ const workspaceGlobOf = (glob: string): WorkspaceGlob => {
   };
 };
 
-// npm and pnpm glob `${pattern}/package.json`, so `libs/**` also claims libs itself.
-// A negation excludes wherever it sits in the list (npm 11, pnpm 11).
-const isMemberOf = (globs: ReadonlyArray<WorkspaceGlob>) => {
-  const negations = Array.filter(globs, ({ negated }) => negated);
-  const positives = Array.filter(globs, ({ negated }) => !negated);
-  return (dir: string): boolean => {
-    const matches = ({ pattern }: WorkspaceGlob) =>
-      minimatch(`${dir}/package.json`, `${pattern}/package.json`);
-    return Array.some(positives, matches) && !Array.some(negations, matches);
-  };
+// @npmcli/map-workspaces: a positive cancels the earlier negations its own pattern matches.
+const npmMembership = (globs: ReadonlyArray<string>): Membership =>
+  Array.reduce(
+    Array.map(globs, npmGlobOf),
+    { positives: [], negations: [] },
+    ({ positives, negations }: Membership, glob): Membership =>
+      Match.value(glob).pipe(
+        Match.when({ negated: true }, ({ pattern }) => ({
+          positives,
+          negations: [...negations, pattern],
+        })),
+        Match.orElse(({ pattern }) => ({
+          positives: [...positives, pattern],
+          negations: Array.filter(negations, (negation) => !minimatch(pattern, negation)),
+        })),
+      ),
+  );
+
+// pnpm hands its negations to the glob's ignore list, so they win wherever they sit.
+const pnpmMembership = (globs: ReadonlyArray<string>): Membership => {
+  const [positives, negations] = Array.partition(
+    Array.map(globs, pnpmGlobOf),
+    ({ negated, pattern }) => (negated ? Result.succeed(pattern) : Result.fail(pattern)),
+  );
+  return { positives, negations };
 };
+
+// Both tools glob `${pattern}/package.json`, so `libs/**` also claims libs itself.
+const isMemberOf =
+  (memberships: ReadonlyArray<Membership>) =>
+  (dir: string): boolean => {
+    const claims = (pattern: string) => minimatch(`${dir}/package.json`, `${pattern}/package.json`);
+    return Array.some(
+      memberships,
+      ({ positives, negations }) => Array.some(positives, claims) && !Array.some(negations, claims),
+    );
+  };
 
 const workspacesOf = (manifest: typeof RootManifest.Type): ReadonlyArray<string> =>
   Match.value(manifest.workspaces).pipe(
@@ -132,17 +171,14 @@ const workspacesError = (error: FileError): FileError => ({
   path: `${error.path}#workspaces`,
 });
 
-const workspaceGlobsIn = (
-  rootDir: string,
-  entries: ReadonlyArray<Dirent>,
-): Gathered<WorkspaceGlob> => {
+const membershipsIn = (rootDir: string, entries: ReadonlyArray<Dirent>): Gathered<Membership> => {
   const npm = readPresent(rootDir, entries, 'package.json', readJsonFile(RootManifest));
   const pnpm = readPresent(rootDir, entries, 'pnpm-workspace.yaml', readYamlFile(PnpmWorkspace));
   return {
-    found: Array.map(
-      [...Array.flatMap(npm.found, workspacesOf), ...Array.flatMap(pnpm.found, pnpmPackagesOf)],
-      workspaceGlobOf,
-    ),
+    found: [
+      ...Array.map(npm.found, (manifest) => npmMembership(workspacesOf(manifest))),
+      ...Array.map(pnpm.found, (workspace) => pnpmMembership(pnpmPackagesOf(workspace))),
+    ],
     skipped: [...Array.map(npm.skipped, workspacesError), ...pnpm.skipped],
   };
 };
@@ -351,7 +387,7 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
     onSuccess: (entries) => {
       const own = gitignoresIn(rootDir, '', entries);
       const gitignores = [...inherited.gitignores.found, ...own.found];
-      const workspaces = workspaceGlobsIn(rootDir, entries);
+      const workspaces = membershipsIn(rootDir, entries);
       const walk: Walk = {
         rootDir,
         excluded: rulesOf(rules.always),
