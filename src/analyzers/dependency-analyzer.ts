@@ -9,7 +9,6 @@ import type {
   PackageJson,
   PackageName,
 } from '../domain/types.js';
-import { isProductionConfigFile } from '../parsers/import-parser.js';
 import { deduplicateLocations } from '../utils/deduplicate.js';
 
 type UsageIndex = Readonly<Record<PackageName, ReadonlyArray<ImportLocation>>>;
@@ -20,13 +19,17 @@ const locationOf = (detail: ImportDetails): ImportLocation => ({
   importStatement: detail.importStatement,
 });
 
-const indexUsage = (imports: ReadonlyArray<ImportDetails>, importType: ImportType): UsageIndex =>
+const indexUsage = (imports: ReadonlyArray<ImportDetails>): UsageIndex =>
   pipe(
     imports,
-    Array.filter((detail) => detail.importType === importType),
     Array.groupBy((detail) => detail.packageName),
     Record.map(Array.map(locationOf)),
   );
+
+const ofType =
+  (importType: ImportType) =>
+  (detail: ImportDetails): boolean =>
+    detail.importType === importType;
 
 const bySourcePosition = Order.combine(
   Order.mapInput(Order.String, (loc: ImportLocation) => loc.file),
@@ -34,13 +37,13 @@ const bySourcePosition = Order.combine(
 );
 
 const isUnused =
-  (runtime: UsageIndex, typeOnly: UsageIndex) =>
+  (used: UsageIndex) =>
   (dep: PackageName): boolean =>
-    !Record.has(runtime, dep) && !Record.has(typeOnly, dep);
+    !Record.has(used, dep);
 
 const findMisplaced = (
   packageJson: PackageJson,
-  runtime: UsageIndex,
+  productionRuntime: UsageIndex,
 ): ReadonlyArray<DependencyUsage> =>
   pipe(
     packageJson.devDependencies,
@@ -51,17 +54,11 @@ const findMisplaced = (
     ),
     Array.map((dep) =>
       pipe(
-        Record.get(runtime, dep),
-        Option.map((locations) =>
-          pipe(
-            locations,
-            Array.filter((loc) => !isProductionConfigFile(loc.file)),
-            deduplicateLocations,
-            (unique) => Array.sort(unique, bySourcePosition),
-          ),
-        ),
-        Option.filter((locations) => Array.isReadonlyArrayNonEmpty(locations)),
-        Option.map((locations): DependencyUsage => ({ packageName: dep, locations })),
+        Record.get(productionRuntime, dep),
+        Option.map((locations): DependencyUsage => ({
+          packageName: dep,
+          locations: Array.sort(deduplicateLocations(locations), bySourcePosition),
+        })),
       ),
     ),
     Array.getSomes,
@@ -87,8 +84,10 @@ export const analyzeDependencies = (
   allImports: ReadonlyArray<ImportDetails>,
   options: AnalyzeOptions,
 ): AnalysisResult => {
-  const runtime = indexUsage(allImports, 'runtime');
-  const typeOnly = indexUsage(allImports, 'type-only');
+  const used = indexUsage(allImports);
+  const production = Array.filter(allImports, (detail) => detail.context === 'production');
+  const productionRuntime = indexUsage(Array.filter(production, ofType('runtime')));
+  const productionTypeOnly = indexUsage(Array.filter(production, ofType('type-only')));
   const notIgnored = (name: PackageName): boolean => !Array.contains(options.ignoredPackages, name);
   const declared = declaredIn(packageJson, options.sections);
 
@@ -100,24 +99,22 @@ export const analyzeDependencies = (
   const unused = pipe(
     declared('dependencies', 'devDependencies'),
     Array.filter((dep) => !Array.contains(peers, dep)),
-    Array.filter(isUnused(runtime, typeOnly)),
+    Array.filter(isUnused(used)),
     Array.filter(notIgnored),
   );
 
-  const unusedPeer = pipe(
-    peers,
-    Array.filter(isUnused(runtime, typeOnly)),
-    Array.filter(notIgnored),
-  );
+  const unusedPeer = pipe(peers, Array.filter(isUnused(used)), Array.filter(notIgnored));
 
   const typeOnlyUsed = pipe(
     packageJson.dependencies,
-    Array.filter((dep) => Record.has(typeOnly, dep) && !Record.has(runtime, dep)),
+    Array.filter(
+      (dep) => Record.has(productionTypeOnly, dep) && !Record.has(productionRuntime, dep),
+    ),
     Array.filter(notIgnored),
   );
 
   const misplaced = pipe(
-    findMisplaced(packageJson, runtime),
+    findMisplaced(packageJson, productionRuntime),
     Array.filter((usage) => notIgnored(usage.packageName)),
   );
 

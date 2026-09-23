@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { Result, Schema } from 'effect';
 import { FileError } from '@/domain/errors';
-import { readFile, readJsonFile } from './file-reader';
+import { gatherOptional, readFile, readJsonFile } from './file-reader';
 
 describe('file-reader', () => {
   const testDir = './test-file-reader';
@@ -83,6 +83,16 @@ describe('file-reader', () => {
           expect(FileError.$is('ParseFailed')(error)).toBe(true);
         },
       });
+    });
+  });
+
+  describe('gatherOptional', () => {
+    test('treats a missing file as absent and keeps other failures', () => {
+      const missing = FileError.FileNotFound({ path: 'a' });
+      const broken = FileError.ParseFailed({ path: 'b', reason: 'bad' });
+
+      expect(gatherOptional(Result.fail(missing))).toEqual({ found: [], skipped: [] });
+      expect(gatherOptional(Result.fail(broken))).toEqual({ found: [], skipped: [broken] });
     });
   });
 });

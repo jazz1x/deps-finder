@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { FileError } from '@/domain/errors';
-import { formatFileError } from './error-reporter';
+import { formatFileError, formatSkippedInput } from './error-reporter';
 
 describe('formatFileError', () => {
   test('FileNotFound renders human-readable message with path', () => {
@@ -31,5 +31,13 @@ describe('formatFileError', () => {
     );
     expect(msg).toContain('EACCES');
     expect(msg).toContain('/etc/secret');
+  });
+});
+
+describe('formatSkippedInput', () => {
+  test('names the input, the reason, and that the scan went on', () => {
+    expect(formatSkippedInput(FileError.ParseFailed({ path: 'pkgs/bad/package.json', reason: 'Unexpected end of JSON input' }))).toBe(
+      'warning: could not use pkgs/bad/package.json (Unexpected end of JSON input); the scan went on without it.',
+    );
   });
 });

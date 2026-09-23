@@ -5,8 +5,7 @@ import type {
   Program,
   TSImportEqualsDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Result, pipe } from 'effect';
-import { globSync } from 'glob';
+import { Array, Match, Option, Result, String, pipe } from 'effect';
 import {
   type DynamicImport,
   type StaticExport,
@@ -15,19 +14,33 @@ import {
   parseSync,
 } from 'oxc-parser';
 import {
+  ALWAYS_EXCLUDED,
   ANALYZABLE_EXTENSIONS,
+  BUILD_OUTPUT_DIRECTORIES,
   DECLARATION_FILE_PATTERN,
-  EXCLUDED_DIRECTORY_PATTERNS,
-  EXCLUDED_FILENAME_PATTERNS,
-  PRODUCTION_CONFIG_PATTERNS,
+  DEVELOPMENT_DIRECTORIES,
+  DEVELOPMENT_FILENAME_PATTERNS,
+  EXCLUDED_WITHOUT_GITIGNORE,
   ROOT_TOOLING_DIRECTORIES,
-  TOOL_CONFIG_PATTERN,
-  getAllExcludedPatterns,
+  ROOT_TOOL_CONFIG_PATTERN,
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
-import type { ImportDetails, ImportType } from '../domain/types.js';
-import { readFile } from '../utils/file-reader.js';
+import {
+  type DependencyType,
+  type FileContext,
+  type Gathered,
+  type ImportDetails,
+  type ImportType,
+  type PackageJson,
+  type PackageName,
+  type SourceFile,
+} from '../domain/types.js';
+import { readPackageJson } from './package-parser.js';
+import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
+import { gatherAll, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
+import { type LeftOut, walkProject } from '../utils/project-walk.js';
+import { readRootTsConfigs } from '../utils/tsconfig-reader.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
@@ -37,27 +50,54 @@ export const extractPackageName = (specifier: string): Option.Option<string> =>
 const hasAnalyzableExtension = (filePath: string): boolean =>
   Array.contains(ANALYZABLE_EXTENSIONS, path.extname(filePath));
 
-export const isProductionConfigFile = (filePath: string): boolean =>
-  Array.some(PRODUCTION_CONFIG_PATTERNS, (pattern) => pattern.test(path.basename(filePath)));
+export const shouldAnalyzeFile = (filePath: string): boolean =>
+  !DECLARATION_FILE_PATTERN.test(filePath) && hasAnalyzableExtension(filePath);
 
-export const isExcludedPath = (filePath: string): boolean => {
-  const normalizedPath = `/${filePath.replaceAll('\\', '/').replace(/^\//, '')}`;
-  const filename = path.basename(filePath);
+type PathSegments = Array.NonEmptyReadonlyArray<string>;
 
-  return (
-    Array.some(EXCLUDED_DIRECTORY_PATTERNS, (pattern) =>
-      normalizedPath.includes(pattern.startsWith('/') ? pattern : `/${pattern}`),
-    ) ||
-    Array.some(ROOT_TOOLING_DIRECTORIES, (dir) => normalizedPath.startsWith(`/${dir}`)) ||
-    Array.some(EXCLUDED_FILENAME_PATTERNS, (pattern) => filename.includes(pattern)) ||
-    TOOL_CONFIG_PATTERN.test(filename)
-  );
+type Placement = {
+  readonly segments: PathSegments;
+  readonly fromLayoutRoots: ReadonlyArray<PathSegments>;
 };
 
-export const shouldAnalyzeFile = (filePath: string): boolean =>
-  !DECLARATION_FILE_PATTERN.test(filePath) &&
-  hasAnalyzableExtension(filePath) &&
-  (isProductionConfigFile(filePath) || !isExcludedPath(filePath));
+const segmentsOf = (relativePath: string): PathSegments => String.split(relativePath, /[\\/]/);
+
+const isHidden = String.startsWith('.');
+
+const isRootToolDirectory = (name: string): boolean =>
+  isHidden(name) || Array.contains(ROOT_TOOLING_DIRECTORIES, name);
+
+const isDevelopmentPath: ReadonlyArray<(placement: Placement) => boolean> = [
+  ({ segments }) =>
+    Array.some(Array.initNonEmpty(segments), (dir) => Array.contains(DEVELOPMENT_DIRECTORIES, dir)),
+  ({ segments }) =>
+    Array.some(DEVELOPMENT_FILENAME_PATTERNS, (pattern) =>
+      Array.lastNonEmpty(segments).includes(pattern),
+    ),
+  ({ segments }) => isHidden(Array.lastNonEmpty(segments)),
+  ({ fromLayoutRoots }) =>
+    Array.some(fromLayoutRoots, (fromLayoutRoot) =>
+      Array.match(Array.tailNonEmpty(fromLayoutRoot), {
+        onEmpty: () => ROOT_TOOL_CONFIG_PATTERN.test(Array.headNonEmpty(fromLayoutRoot)),
+        onNonEmpty: () => isRootToolDirectory(Array.headNonEmpty(fromLayoutRoot)),
+      }),
+    ),
+];
+
+export const fileContextOf = (source: {
+  readonly path: string;
+  readonly layoutRoots: ReadonlyArray<string>;
+}): FileContext => {
+  const placement: Placement = {
+    segments: segmentsOf(source.path),
+    fromLayoutRoots: Array.map(source.layoutRoots, (root) =>
+      segmentsOf(path.posix.relative(root, source.path)),
+    ),
+  };
+  return Array.some(isDevelopmentPath, (matches) => matches(placement))
+    ? 'development'
+    : 'production';
+};
 
 type ModuleReference = {
   readonly specifier: string;
@@ -157,7 +197,9 @@ const moduleReferences = (content: string, filePath: string): ReadonlyArray<Modu
   ];
 };
 
-export const extractImports = (content: string, filePath: string): ReadonlyArray<ImportDetails> => {
+type FileImport = Omit<ImportDetails, 'context'>;
+
+export const extractImports = (content: string, filePath: string): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
 
   return pipe(
@@ -165,7 +207,7 @@ export const extractImports = (content: string, filePath: string): ReadonlyArray
     Array.map((ref) =>
       pipe(
         extractPackageName(ref.specifier),
-        Option.map((packageName): ImportDetails => ({
+        Option.map((packageName): FileImport => ({
           packageName,
           importType: ref.importType,
           file: filePath,
@@ -179,11 +221,16 @@ export const extractImports = (content: string, filePath: string): ReadonlyArray
 };
 
 export const parseFile = (
-  filePath: string,
+  source: SourceFile,
 ): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
   pipe(
-    readFile(filePath),
-    Result.map((content) => extractImports(content, filePath)),
+    readFile(source.path),
+    Result.map((content) =>
+      Array.map(extractImports(content, source.path), (found): ImportDetails => ({
+        ...found,
+        context: source.context,
+      })),
+    ),
   );
 
 type ParsedSources = {
@@ -191,10 +238,33 @@ type ParsedSources = {
   readonly unreadable: ReadonlyArray<FileError>;
 };
 
-export const parseMultipleFiles = (filePaths: ReadonlyArray<string>): ParsedSources => {
-  const [unreadable, parsed] = Array.partition(filePaths, parseFile);
+export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSources => {
+  const [unreadable, parsed] = Array.partition(sources, parseFile);
   return { imports: Array.flatten(parsed), unreadable };
 };
+
+const detectedBuildDirectories = (rootDir: string): Gathered<string> => {
+  const tsconfigs = readRootTsConfigs(rootDir);
+  return gatherAll([
+    { found: [], skipped: tsconfigs.skipped },
+    detectBuildDirectories(rootDir, tsconfigs.found),
+    detectByHeuristic(rootDir),
+  ]);
+};
+
+const anchoredDirectory = (dir: string): string => path.posix.join('/', dir, '/');
+
+// A leading slash anchors a .gitignore pattern at rootDir, so a path under rootDir becomes one.
+const anchoredExclude =
+  (rootDir: string) =>
+  (pattern: string): string =>
+    Match.value(pattern).pipe(
+      Match.when(String.startsWith(`${rootDir}${path.sep}`), (absolute) =>
+        path.posix.join('/', path.relative(rootDir, absolute)),
+      ),
+      Match.when(String.startsWith('./'), (relative) => relative.slice(1)),
+      Match.orElse((kept) => kept),
+    );
 
 export const findFiles = (
   rootDir: string,
@@ -202,16 +272,65 @@ export const findFiles = (
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): ReadonlyArray<string> =>
-  pipe(
-    globSync('**/*', {
-      cwd: rootDir,
-      nodir: true,
-      ignore: [
-        ...getAllExcludedPatterns(rootDir, !options.noAutoDetect),
-        ...(options.excludePatterns ?? []),
-      ],
-    }),
-    Array.filter(shouldAnalyzeFile),
-    Array.map((relativePath) => path.resolve(rootDir, relativePath)),
-  );
+): Gathered<SourceFile> & { readonly packages: ReadonlyArray<LeftOut> } => {
+  const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
+  const walked = walkProject(rootDir, {
+    always: [
+      ...ALWAYS_EXCLUDED,
+      ...Array.map(detected.found, anchoredDirectory),
+      ...Array.map(options.excludePatterns ?? [], anchoredExclude(path.resolve(rootDir))),
+    ],
+    atLayoutRoots: BUILD_OUTPUT_DIRECTORIES,
+    withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
+    isSource: shouldAnalyzeFile,
+  });
+  return {
+    found: pipe(
+      walked.found,
+      Array.map((source) => ({
+        path: path.resolve(rootDir, source.path),
+        context: fileContextOf(source),
+      })),
+    ),
+    skipped: [...detected.skipped, ...walked.skipped],
+    packages: Array.map(walked.packages, ({ dir, files }) => ({
+      dir: path.join(rootDir, dir),
+      files: Array.map(files, (file) => path.resolve(rootDir, file)),
+    })),
+  };
+};
+
+// A peer declaration installs nothing in the package itself.
+const INSTALLED_SECTIONS = [
+  'dependencies',
+  'devDependencies',
+] as const satisfies ReadonlyArray<DependencyType>;
+
+const installs =
+  (packageJson: PackageJson) =>
+  (name: PackageName): boolean =>
+    Array.some(INSTALLED_SECTIONS, (section) => Array.contains(packageJson[section], name));
+
+// Node resolves what a left-out package does not install from the root install. Read as
+// development use, such an import marks a root dependency used but never misplaced or type-only.
+const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileError> =>
+  Result.map(readPackageJson(path.join(leftOut.dir, 'package.json')), (declared) => {
+    const parsed = parseMultipleFiles(
+      Array.map(leftOut.files, (file): SourceFile => ({ path: file, context: 'development' })),
+    );
+    return {
+      ...parsed,
+      imports: Array.filter(parsed.imports, (detail) => !installs(declared)(detail.packageName)),
+    };
+  });
+
+export const parseHoistedImports = (
+  packages: ReadonlyArray<LeftOut>,
+): ParsedSources & { readonly skipped: ReadonlyArray<FileError> } => {
+  const [skipped, parsed] = Array.partition(packages, hoistedImportsOf);
+  return {
+    imports: Array.flatMap(parsed, (sources) => sources.imports),
+    unreadable: Array.flatMap(parsed, (sources) => sources.unreadable),
+    skipped,
+  };
+};

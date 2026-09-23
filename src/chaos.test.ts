@@ -113,6 +113,7 @@ describe('chaos: analyzeDependencies on random inputs', () => {
       const imports = Array.from({ length: importCount }, () => ({
         packageName: randomString(rng, 12) || 'x',
         importType: (rng() < 0.3 ? 'type-only' : 'runtime') as 'runtime' | 'type-only',
+        context: (rng() < 0.3 ? 'development' : 'production') as 'production' | 'development',
         file: 'src/fake.ts',
         line: 1,
         importStatement: 'import x',
@@ -186,7 +187,7 @@ describe('chaos: file-reader on random file contents', () => {
     await Promise.all(paths.map((p) => writeFile(p, randomImportLikeContent(rng))));
 
     for (const filePath of paths) {
-      const result = parseFile(filePath);
+      const result = parseFile({ path: filePath, context: 'production' });
       if (Result.isSuccess(result)) {
         expect(Array.isArray(Result.getOrThrow(result))).toBe(true);
       }

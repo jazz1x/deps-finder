@@ -8,7 +8,7 @@
 [![Bun](https://img.shields.io/badge/runtime-bun-black.svg)](https://bun.sh)
 [![CI](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml)
 
-deps-finder reads your `package.json`, walks `src/**`, and tells you which declared packages no source file actually imports — and which packages your code does import that live in the wrong section. It runs entirely on your machine, never phones home, and treats `peerDependencies` as a consumer contract by default (since real peers like `typescript` are intentionally never imported by the library itself). Opt in with `--check-peer` when you want orphan-peer detection.
+deps-finder reads your `package.json`, walks the project's source files, and tells you which declared packages no source file actually imports — and which packages your code does import that live in the wrong section. It runs entirely on your machine, never phones home, and treats `peerDependencies` as a consumer contract by default (since real peers like `typescript` are intentionally never imported by the library itself). Opt in with `--check-peer` when you want orphan-peer detection.
 
 [한국어](./README.ko.md) · English
 
@@ -35,7 +35,8 @@ deps-finder reads your `package.json`, walks `src/**`, and tells you which decla
 - Detects **misplaced** dependencies — used in source but living in `devDependencies`.
 - Detects **orphan peers** — declared as `peerDependencies` but never imported (opt-in via `--check-peer`).
 - Reports **type-only** imports separately so they don't pollute the unused list.
-- Auto-detects build output directories (`dist`, `build`, etc.) and excludes them.
+- Honours `.gitignore` and auto-detects build output directories (`dist`, `build`, etc.) at the project root, and excludes them.
+- Checks one package per run. In a monorepo, run it inside each workspace package.
 - Outputs colorized text or machine-readable JSON.
 - **Friendly errors and warnings** — actionable messages when files are missing, JSON is malformed, or a flag is given without its required value.
 
@@ -68,6 +69,9 @@ deps-finder --json
 
 # also check peerDependencies and devDependencies
 deps-finder --all
+
+# monorepo: one run per workspace package
+deps-finder apps/web
 ```
 
 Expected output (truncated):
@@ -100,7 +104,7 @@ deps-finder [options] [<root>]
 | `--all` | `-a` | Also report unused `devDependencies` and `peerDependencies` (peers only under `unusedPeer`; misplaced checks stay on) |
 | `--check-peer` | `-p` | Also check `peerDependencies` (off by default; on with `--all`) — see [peerDependencies note](#peerdependencies-note) |
 | `--ignore <pkgs>` | `-i` | Ignore packages (comma-separated, repeatable, `--ignore=a,b`) |
-| `--exclude <globs>` | `-e` | Exclude files/dirs by glob (comma-separated, repeatable) |
+| `--exclude <patterns>` | `-e` | Exclude files/dirs by `.gitignore`-style pattern; `./src/x` and absolute paths under the project are anchored at its root (comma-separated, repeatable) |
 | `--no-auto-detect` | — | Disable automatic build directory detection |
 | `--version` | `-v` | Print the version |
 | `--help` | `-h` | Show help message |
@@ -122,14 +126,14 @@ Unknown flags and flags missing their value are errors, not warnings.
 ```
 package.json ──┐
                ├─→  declared deps  ──┐
-glob src/**  ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
+walk project ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
                └─→  parsed imports  ─┘
 ```
 
 1. Read `package.json` to get declared `dependencies`, `peerDependencies`, and `devDependencies`.
-2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping tests and auto-detected build outputs.
+2. Walk the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, hidden files and directories included. The walk skips `.git/` and `node_modules/`, anything the project's `.gitignore` files ignore (the root one, nested ones, and those in parent directories up to the git repository's top, plus `.git/info/exclude`; git's rules, always matched case-sensitively, unlike git with `core.ignorecase` on, the macOS and Windows default), build outputs at each layout root (see below): `dist/`, `build/`, `out/` and `coverage/`, and the auto-detected output dirs at the project root (tsconfig `outDir`, `--outDir` in scripts, `*-dist`-style names). A project directory that its repository ignores is still scanned, with only its own `.gitignore` files. Symlinked files are followed; symlinked directories are not. A project without a `.gitignore` at its root (or above it in the repository) also skips common framework and cache dirs at each layout root (`.next/`, `.turbo/`, `.cache/`, `storybook-static/` and the like) and `.venv/`, `.gradle/`, `.claude/`, `.idea/` and `.vscode/` at any depth. A subdirectory with a `package.json` is a separate package when it is a workspace member (matched by the root `package.json` `workspaces`, as an array or as `{"packages": [...]}`, or by the `packages` list of a root `pnpm-workspace.yaml`, `!` negations included: in `workspaces` a later pattern that an earlier `!` pattern itself matches (such as `packages/b` after `!packages/b`) cancels that `!` pattern, as npm does, and in `pnpm-workspace.yaml` a `!` pattern always wins, as pnpm does) or when it has its own lockfile (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`) or `node_modules/`. Its whole tree is left out of this run's checks and stderr names it. Its imports of packages that its own `package.json` does not list in `dependencies` or `devDependencies` (a peer-only declaration installs nothing there) still mark the root's dependency as used, because Node falls back to the root install for them; they count as development use, so they never make a dependency misplaced or type-only. A malformed `workspaces` or `pnpm-workspace.yaml` is reported on stderr, and the scan goes on without it. Any other `package.json` stays part of this run, even one with a `name` and dependencies, such as an Nx-style lib that resolves from the root install. The project root and every scanned directory with a `package.json` that has a `name`, or with an Nx `project.json` (one with a string `name`, or a `targets` or `$schema` key), are layout roots; a file is matched against every layout root above it, not only the nearest. A `package.json` without a `name`, such as `{"sideEffects": false}`, is not a layout root. Each file is tagged **development** or **production**. Development files are tests, specs, stories, and test setup files; anything under `test/`, `tests/`, `__tests__/`, `__mocks__/`, `e2e/`, `cypress/`, `playwright/` or `.storybook/` at any depth; dotfiles such as `.eslintrc.js` at any depth; and, only at a layout root, `*.config.*` and `*.preset.*` files (`webpack.config.prod.js` included), the `scripts/` directory and hidden directories such as `.husky/` or `.github/`. Everything else is production, including `src/app.config.ts`, `src/scripts/`, `src/.generated/` and a feature folder named `stories/`.
 3. Parse each file with [oxc](https://oxc.rs) and collect `import`, `export … from`, `require()`, `import x = require()`, and dynamic `import()` with a string literal; resolve to package roots (e.g. `lodash/fp` → `lodash`).
-4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**.
+4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**. An import from any file counts as usage. **misplaced** and **typeOnly** look only at production files, so a `devDependency` used only in tests or tooling is never misplaced.
 
 ---
 
@@ -223,9 +227,9 @@ Or keep a report without blocking on findings, while still failing when the run 
 
 ## Honest-use notice
 
-deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages loaded only via config files outside `src/`. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
+deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages a config names only as a string (plugin or preset names). Test files that a runner config points at from an unusual place (a Playwright `testDir`, a `codegen.ts` run only from a script, `src/mocks/` imported only by tests) are treated as production. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
 
-Packages that are used without being imported are reported as unused: CLIs run from `package.json` scripts (e.g. `husky` in `prepare`) and packages declared only to satisfy another package's optional peer (e.g. `@opentelemetry/api` for Next.js tracing). Pass them to `--ignore`. Top-level `scripts/` and `*.config.*` files (except bundler configs such as `vite.config`) are treated as dev tooling, not production source.
+Packages that are used without being imported are reported as unused: CLIs run from `package.json` scripts (e.g. `husky` in `prepare`) and packages declared only to satisfy another package's optional peer (e.g. `@opentelemetry/api` for Next.js tracing). Pass them to `--ignore`.
 
 A bare builtin name such as `buffer` or `events` is matched against a declared package of that name (the npm polyfill a bundler would use). Write `node:buffer` when you mean the Node builtin.
 

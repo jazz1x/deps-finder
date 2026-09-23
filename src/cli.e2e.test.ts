@@ -108,6 +108,40 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
   });
 
+  test('warns about project inputs it cannot use and goes on', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await mkdir(path.join(tmpDir, 'weird'));
+    await writeFile(path.join(tmpDir, 'weird/package.json'), '{"name":');
+    await writeFile(path.join(tmpDir, 'weird/index.ts'), "import _ from 'lodash';");
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr).toContain('warning: could not use weird/package.json');
+    expect(r.status).toBe(0);
+  });
+
+  test('names each nested package it leaves out, and credits the root with what it does not declare', async () => {
+    await writeFile(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ workspaces: ['packages/*'], devDependencies: { '@happy-dom/global-registrator': '^20.0.0', dayjs: '^1.0.0' } }),
+    );
+    await mkdir(path.join(tmpDir, 'packages/shared-ui/src'), { recursive: true });
+    await writeFile(path.join(tmpDir, 'packages/shared-ui/package.json'), '{"name":"shared-ui","dependencies":{"dayjs":"1"}}');
+    await writeFile(
+      path.join(tmpDir, 'packages/shared-ui/src/happydom-setup.ts'),
+      "import '@happy-dom/global-registrator';\nimport 'dayjs';",
+    );
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(r.stderr).toContain('note: left out packages/shared-ui');
+    expect(JSON.parse(r.stdout).unused).toEqual(['dayjs']);
+  });
+
+  test('warns once about a left-out package whose package.json is broken', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }));
+    await mkdir(path.join(tmpDir, 'packages/a'), { recursive: true });
+    await writeFile(path.join(tmpDir, 'packages/a/package.json'), '{"name":');
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr.split('could not use packages/a/package.json').length).toBe(2);
+  });
+
   test('--json emits parseable JSON with totalIssues and exits 1 when issues exist', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }));
     const r = runCli(['--json'], tmpDir);

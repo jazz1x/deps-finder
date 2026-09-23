@@ -1,4 +1,11 @@
+import type { FileError } from './errors.js';
+
 export type PackageName = string;
+
+export type Gathered<A> = {
+  readonly found: ReadonlyArray<A>;
+  readonly skipped: ReadonlyArray<FileError>;
+};
 
 export const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
@@ -6,6 +13,13 @@ export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
 export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> };
 
 export type ImportType = 'runtime' | 'type-only';
+
+export type FileContext = 'production' | 'development';
+
+export type SourceFile = {
+  readonly path: string;
+  readonly context: FileContext;
+};
 
 export type ImportLocation = {
   readonly file: string;
@@ -21,6 +35,7 @@ export type DependencyUsage = {
 export type ImportDetails = {
   readonly packageName: PackageName;
   readonly importType: ImportType;
+  readonly context: FileContext;
   readonly file: string;
   readonly line: number;
   readonly importStatement: string;

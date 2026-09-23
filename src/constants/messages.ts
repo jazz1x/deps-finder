@@ -21,6 +21,10 @@ export const MESSAGES = {
   NOT_FOUND: 'not found',
   SOURCE_SKIPPED: (path: string, reason: string) =>
     `warning: skipped ${path} (${reason}); its imports are not counted.`,
+  INPUT_SKIPPED: (path: string, reason: string) =>
+    `warning: could not use ${path} (${reason}); the scan went on without it.`,
+  PACKAGE_LEFT_OUT: (path: string) =>
+    `note: left out ${path}, a workspace member or a package with its own install; run deps-finder there to check it.`,
 } as const;
 
 export const CLI_TEXT = {
@@ -31,6 +35,6 @@ export const CLI_TEXT = {
   ALL: 'Also report unused devDependencies and peerDependencies (misplaced checks stay on)',
   CHECK_PEER: 'Also check peerDependencies (off by default; on with --all)',
   IGNORE: 'Ignore packages (comma-separated, repeatable)',
-  EXCLUDE: 'Exclude files/dirs by glob (comma-separated, repeatable)',
+  EXCLUDE: 'Exclude files/dirs by .gitignore-style pattern (comma-separated, repeatable)',
   NO_AUTO_DETECT: 'Disable automatic build directory detection',
 } as const;
