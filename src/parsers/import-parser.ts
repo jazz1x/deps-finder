@@ -189,14 +189,15 @@ export const parseFile = (
     Result.map((content) => extractImports(content, filePath)),
   );
 
-export const parseMultipleFiles = (
-  filePaths: ReadonlyArray<string>,
-): ReadonlyArray<ImportDetails> =>
-  pipe(
-    filePaths,
-    Array.map((filePath) => Result.getOrElse(parseFile(filePath), () => [])),
-    Array.flatten,
-  );
+export type ParsedSources = {
+  readonly imports: ReadonlyArray<ImportDetails>;
+  readonly unreadable: ReadonlyArray<FileError>;
+};
+
+export const parseMultipleFiles = (filePaths: ReadonlyArray<string>): ParsedSources => {
+  const [unreadable, parsed] = Array.partition(filePaths, parseFile);
+  return { imports: Array.flatten(parsed), unreadable };
+};
 
 export const findFiles = (
   rootDir: string,

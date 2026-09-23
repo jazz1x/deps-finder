@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AnalysisResult } from '@/domain/types';
-import { hasIssues, report } from '@/reporters/console-reporter';
+import { ansi, hasIssues, plain, report } from '@/reporters/console-reporter';
 
 describe('console-reporter', () => {
   describe('hasIssues', () => {
@@ -51,7 +51,7 @@ describe('console-reporter', () => {
     };
 
     test('should generate text report with no issues', () => {
-      const output = report(empty, 'text');
+      const output = report(empty, 'text', [], ansi);
       expect(output).toContain('No issues found');
     });
 
@@ -61,7 +61,7 @@ describe('console-reporter', () => {
         unused: ['react', 'lodash'],
         totalIssues: 2,
       };
-      const output = report(result, 'text');
+      const output = report(result, 'text', [], ansi);
       expect(output).toContain('Unused Dependencies');
       expect(output).toContain('react');
       expect(output).toContain('lodash');
@@ -76,7 +76,7 @@ describe('console-reporter', () => {
         ],
         totalIssues: 2,
       };
-      const output = report(result, 'text');
+      const output = report(result, 'text', [], ansi);
       expect(output).toContain('Misplaced Dependencies');
       expect(output).toContain('express');
       expect(output).toContain('axios');
@@ -90,7 +90,7 @@ describe('console-reporter', () => {
         unusedPeer: ['react', 'react-dom'],
         totalIssues: 2,
       };
-      const output = report(result, 'text');
+      const output = report(result, 'text', [], ansi);
       expect(output).toContain('Unused peerDependencies');
       expect(output).toContain('react');
       expect(output).toContain('react-dom');
@@ -103,7 +103,7 @@ describe('console-reporter', () => {
         misplaced: [{ packageName: 'express', locations: [] }],
         totalIssues: 2,
       };
-      const output = report(result, 'json');
+      const output = report(result, 'json', [], ansi);
       const parsed = JSON.parse(output);
 
       expect(parsed.unused).toEqual(['react']);
@@ -119,18 +119,18 @@ describe('console-reporter', () => {
         unusedPeer: ['react'],
         totalIssues: 1,
       };
-      const parsed = JSON.parse(report(result, 'json'));
+      const parsed = JSON.parse(report(result, 'json', [], ansi));
       expect(parsed.unusedPeer).toEqual(['react']);
     });
 
     test('should display ignored dependencies in text report', () => {
-      const output = report(empty, 'text', ['eslint']);
+      const output = report(empty, 'text', ['eslint'], ansi);
       expect(output).toContain('Ignored packages');
       expect(output).toContain('eslint');
     });
 
     test('should include ignored dependencies in JSON report', () => {
-      const output = report(empty, 'json', ['eslint']);
+      const output = report(empty, 'json', ['eslint'], ansi);
       const parsed = JSON.parse(output);
 
       expect(parsed.ignored).toEqual(['eslint']);
@@ -138,7 +138,7 @@ describe('console-reporter', () => {
 
     test('should display type-only imports in text report', () => {
       const result: AnalysisResult = { ...empty, typeOnly: ['hotscript', 'type-fest'], totalIssues: 2 };
-      const output = report(result, 'text');
+      const output = report(result, 'text', [], ansi);
       expect(output).toContain('Type-Only Imports:');
       expect(output).toContain('hotscript');
       expect(output).toContain('type-fest');
@@ -146,9 +146,15 @@ describe('console-reporter', () => {
 
     test('should include type-only imports in JSON report', () => {
       const result: AnalysisResult = { ...empty, typeOnly: ['hotscript', 'type-fest'], totalIssues: 2 };
-      const output = report(result, 'json');
+      const output = report(result, 'json', [], ansi);
       const parsed = JSON.parse(output);
       expect(parsed.typeOnly).toEqual(['hotscript', 'type-fest']);
+    });
+
+    test('plain paint writes no ANSI escape codes', () => {
+      const result: AnalysisResult = { ...empty, unused: ['react'], totalIssues: 1 };
+      expect(report(result, 'text', [], plain)).not.toContain('\x1b[');
+      expect(report(result, 'text', [], ansi)).toContain('\x1b[');
     });
   });
 });

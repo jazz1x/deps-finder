@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { Match, Result, Schema, pipe } from 'effect';
+import { Array, Match, Option, Result, Schema, pipe } from 'effect';
+import jsonc from 'jsonc-parser';
 import { FileError } from '../domain/errors.js';
 
 const messageOf = (cause: unknown): string =>
@@ -17,16 +18,33 @@ const readFailure = (path: string) => (cause: unknown) =>
 export const readFile = (path: string): Result.Result<string, FileError> =>
   Result.try({ try: () => readFileSync(path, 'utf-8'), catch: readFailure(path) });
 
-export const readJsonFile =
+type TextParser = (text: string) => Result.Result<unknown, string>;
+
+const strictJson: TextParser = (text) =>
+  Result.try({ try: (): unknown => JSON.parse(text), catch: messageOf });
+
+const jsonWithComments: TextParser = (text) => {
+  const errors: jsonc.ParseError[] = [];
+  const value: unknown = jsonc.parse(text, errors, { allowTrailingComma: true });
+  return pipe(
+    Array.head(errors),
+    Option.match({
+      onNone: () => Result.succeed(value),
+      onSome: (error) =>
+        Result.fail(`${jsonc.printParseErrorCode(error.error)} at offset ${error.offset}`),
+    }),
+  );
+};
+
+const readStructured =
+  (parse: TextParser) =>
   <S extends Schema.Decoder<unknown>>(schema: S) =>
   (path: string): Result.Result<S['Type'], FileError> =>
     pipe(
       readFile(path),
+      Result.map((text) => text.replace(/^﻿/, '')),
       Result.flatMap((text) =>
-        Result.try({
-          try: (): unknown => JSON.parse(text),
-          catch: (cause) => FileError.ParseFailed({ path, reason: messageOf(cause) }),
-        }),
+        Result.mapError(parse(text), (reason) => FileError.ParseFailed({ path, reason })),
       ),
       Result.flatMap((json) =>
         pipe(
@@ -35,3 +53,7 @@ export const readJsonFile =
         ),
       ),
     );
+
+export const readJsonFile = readStructured(strictJson);
+
+export const readJsoncFile = readStructured(jsonWithComments);

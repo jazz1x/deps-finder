@@ -199,6 +199,11 @@ describe('package-parser', () => {
       ).toContain('dependencies');
     });
 
+    test('accepts a UTF-8 byte order mark, as npm does', async () => {
+      await writeFile(testFile, '﻿{"dependencies":{"lodash":"^4.0.0"}}');
+      expect(Result.getOrThrow(readPackageJson(testFile)).dependencies).toEqual(['lodash']);
+    });
+
     test('returns ParseFailed for json with trailing garbage', async () => {
       await writeFile(testFile, '{"name":"x"}garbage');
       const result = readPackageJson(testFile);
