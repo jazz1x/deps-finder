@@ -223,12 +223,13 @@ export const findFiles = (
     ...(options.excludePatterns || []),
   ];
 
-  const files = globSync('**/*', {
-    cwd: rootDir,
-    absolute: true,
-    nodir: true,
-    ignore: ignorePatterns as string[],
-  });
-
-  return A.filter(files, shouldAnalyzeFile);
+  return pipe(
+    globSync('**/*', {
+      cwd: rootDir,
+      nodir: true,
+      ignore: ignorePatterns as string[],
+    }),
+    A.filter(shouldAnalyzeFile),
+    A.map((relativePath) => path.resolve(rootDir, relativePath)),
+  );
 };
