@@ -8,7 +8,7 @@ import type { CliOptions, DependencyType } from '../domain/types.js';
 import { findFiles, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
 import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
-import { formatSkippedSource } from '../reporters/error-reporter.js';
+import { formatSkippedInput, formatSkippedSource } from '../reporters/error-reporter.js';
 
 const toggle = (name: string, alias: string, description: string) =>
   Flag.Boolean(name).pipe(
@@ -80,13 +80,19 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     Effect.fromResult(readPackageJson(join(options.rootDir, 'package.json'))),
     Effect.map((packageJson) => ({
       packageJson,
-      sources: parseMultipleFiles(
-        findFiles(options.rootDir, {
-          excludePatterns: options.excludePatterns,
-          noAutoDetect: options.noAutoDetect,
-        }),
-      ),
+      files: findFiles(options.rootDir, {
+        excludePatterns: options.excludePatterns,
+        noAutoDetect: options.noAutoDetect,
+      }),
     })),
+    Effect.map(({ packageJson, files }) => ({
+      packageJson,
+      skippedInputs: files.skipped,
+      sources: parseMultipleFiles(files.found),
+    })),
+    Effect.tap(({ skippedInputs }) =>
+      Effect.forEach(skippedInputs, (error) => Console.error(formatSkippedInput(error))),
+    ),
     Effect.tap(({ sources }) =>
       Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),
     ),

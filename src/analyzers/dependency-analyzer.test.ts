@@ -31,7 +31,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -53,7 +53,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -79,7 +79,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -99,7 +99,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies', 'devDependencies', 'peerDependencies'],
@@ -121,7 +121,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -150,7 +150,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -184,7 +184,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -212,7 +212,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -235,7 +235,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -259,7 +259,7 @@ describe('dependency-analyzer', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -297,7 +297,7 @@ describe('dependency-analyzer: peerDependencies', () => {
 
   test('default: peerDependencies are not flagged as unused', async () => {
     await writeFile(`${testDir}/index.ts`, 'export const x = 1;');
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
@@ -313,7 +313,7 @@ describe('dependency-analyzer: peerDependencies', () => {
 
   test('--check-peer: peerDeps not imported are reported in unusedPeer (not in unused)', async () => {
     await writeFile(`${testDir}/index.ts`, "import React from 'react'; export default React;");
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
@@ -329,7 +329,7 @@ describe('dependency-analyzer: peerDependencies', () => {
 
   test('--all implies --check-peer (peerDeps reported when not imported)', async () => {
     await writeFile(`${testDir}/index.ts`, 'export const x = 1;');
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
@@ -343,7 +343,7 @@ describe('dependency-analyzer: peerDependencies', () => {
 
   test('peerDep imported as type-only counts as used (not in unusedPeer)', async () => {
     await writeFile(`${testDir}/index.ts`, "import type { Component } from 'react'; export type C = Component;");
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
@@ -356,7 +356,7 @@ describe('dependency-analyzer: peerDependencies', () => {
 
   test('--ignore filters peerDeps too', async () => {
     await writeFile(`${testDir}/index.ts`, 'export const x = 1;');
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
@@ -370,7 +370,7 @@ describe('dependency-analyzer: peerDependencies', () => {
 
   test('peerDep is never reported as misplaced (peerDeps are a consumer contract)', async () => {
     await writeFile(`${testDir}/index.ts`, "import React from 'react'; export default React;");
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {

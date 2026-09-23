@@ -64,7 +64,7 @@ describe('Integration Tests', () => {
     };
 
     // 3. Run Analysis
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -83,7 +83,7 @@ describe('Integration Tests', () => {
     // Add misplaced dependency
     await writeFile(`${testDir}/src/utils/oops.ts`, `import { something } from 'typescript';`);
 
-    const files2 = findFiles(testDir);
+    const files2 = findFiles(testDir).found;
     const imports2 = parseMultipleFiles(files2).imports;
     const result2 = analyzeDependencies(packageJson, imports2, {
       sections: ['dependencies'],
@@ -104,7 +104,7 @@ describe('Integration Tests', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -125,7 +125,7 @@ describe('Integration Tests', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -144,7 +144,7 @@ describe('Integration Tests', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -164,7 +164,7 @@ describe('Integration Tests', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       sections: ['dependencies'],
@@ -183,7 +183,7 @@ describe('Integration Tests', () => {
       peerDependencies: [],
     };
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     expect(files.map((f) => f.context)).toEqual(['development']);
 
     const imports = parseMultipleFiles(files).imports;
@@ -198,7 +198,7 @@ describe('Integration Tests', () => {
     await mkdir(`${testDir}/storybook-static`, { recursive: true });
     await writeFile(`${testDir}/storybook-static/index.js`, `import { action } from '@storybook/addon-actions';`);
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
     expect(files.some((f) => f.path.includes('storybook-static'))).toBe(false);
   });
 
@@ -206,10 +206,10 @@ describe('Integration Tests', () => {
     await mkdir(`${testDir}/my-artifact-folder`, { recursive: true });
     await writeFile(`${testDir}/my-artifact-folder/index.js`, `import { something } from 'lib';`);
 
-    const filesDefault = findFiles(testDir);
+    const filesDefault = findFiles(testDir).found;
     expect(filesDefault.some((f) => f.path.includes('my-artifact-folder'))).toBe(true);
 
-    const filesExcluded = findFiles(testDir, { excludePatterns: ['my-artifact-folder/**'] });
+    const filesExcluded = findFiles(testDir, { excludePatterns: ['my-artifact-folder/**'] }).found;
     expect(filesExcluded.some((f) => f.path.includes('my-artifact-folder'))).toBe(false);
   });
 
@@ -217,10 +217,10 @@ describe('Integration Tests', () => {
     await mkdir(`${testDir}/custom-build`, { recursive: true });
     await writeFile(`${testDir}/custom-build/index.js`, `import { something } from 'lib';`);
 
-    const filesDefault = findFiles(testDir);
+    const filesDefault = findFiles(testDir).found;
     expect(filesDefault.some((f) => f.path.includes('custom-build'))).toBe(false);
 
-    const filesNoAuto = findFiles(testDir, { noAutoDetect: true });
+    const filesNoAuto = findFiles(testDir, { noAutoDetect: true }).found;
     expect(filesNoAuto.some((f) => f.path.includes('custom-build'))).toBe(true);
   });
 });
@@ -243,7 +243,7 @@ describe('file contexts', () => {
   };
 
   const analyze = (packageJson: PackageJson) =>
-    analyzeDependencies(packageJson, parseMultipleFiles(findFiles(testDir)).imports, { sections: ALL, ignoredPackages: [] });
+    analyzeDependencies(packageJson, parseMultipleFiles(findFiles(testDir).found).imports, { sections: ALL, ignoredPackages: [] });
 
   beforeEach(async () => {
     testDir = `./test-file-contexts-${Math.random().toString(36).slice(2)}`;
@@ -297,8 +297,7 @@ describe('file contexts', () => {
     ]);
   });
 
-  test('a package.json marker outside declared workspaces is not a package root', async () => {
-    await write('package.json', JSON.stringify({ workspaces: ['packages/*'] }));
+  test('a package.json without a name is not a package boundary', async () => {
     await write('src/components/package.json', '{"sideEffects":false}');
     await write('src/components/build/index.ts', "import 'lodash';");
     await write('src/components/scripts/fmt.ts', "import 'chalk';");
@@ -310,42 +309,61 @@ describe('file contexts', () => {
     expect(result.misplaced.map((m) => m.packageName)).toEqual(['chalk', 'zod']);
   });
 
-  test('pnpm workspaces are roots unless negated', async () => {
-    await write('pnpm-workspace.yaml', "packages:\n  - 'packages/*'\n  - '!packages/legacy'\n");
-    await write('packages/a/package.json', '{}');
-    await write('packages/a/dist/index.js', "require('left-pad');");
-    await write('packages/legacy/package.json', '{}');
-    await write('packages/legacy/dist/index.js', "require('is-odd');");
+  test('a nested package with a name is left to its own run', async () => {
+    await write('src/index.ts', 'export const x = 1;');
+    await write('functions/package.json', '{"name":"functions"}');
+    await write('functions/dist/index.js', "require('typescript');");
+    await write('packages/a/package.json', '{"name":"a"}');
+    await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
+    await write('packages/a/src/index.ts', "import 'left-pad';");
 
-    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd'] }));
+    const result = analyze(pkg({ dependencies: ['left-pad'], devDependencies: ['typescript', 'vite'] }));
+
+    expect(result.unused).toEqual(['left-pad', 'typescript', 'vite']);
+    expect(result.misplaced).toEqual([]);
+  });
+
+  test('gitignored generated output is not scanned', async () => {
+    await write('.gitignore', '.vercel\n.next/\n.gradle\n');
+    await write('src/index.ts', 'export const x = 1;');
+    await write('.vercel/output/functions/api.func/index.js', "require('left-pad');");
+    await write('apps/web/.next/server/chunk.js', "require('is-odd');");
+    await write('.gradle/build/report.js', "require('lodash');");
+
+    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd', 'lodash'] }));
+
+    expect(result.unused).toEqual(['left-pad', 'is-odd', 'lodash']);
+  });
+
+  test('root dotfiles and dot directories are development; nested dot directories are source', async () => {
+    await write('.eslintrc.cjs', "module.exports = require('eslint-config-y');");
+    await write('.github/scripts/release.mjs', "import '@actions/core';");
+    await write('.husky/check.mjs', "import 'lint-staged-x';");
+    await write('src/index.ts', "export * from './.generated/client';");
+    await write('src/.generated/client.ts', "import 'graphql-request';");
+
+    const result = analyze(pkg({ devDependencies: ['eslint-config-y', '@actions/core', 'lint-staged-x', 'graphql-request'] }));
+
+    expect(result.unused).toEqual([]);
+    expect(result.misplaced.map((m) => m.packageName)).toEqual(['graphql-request']);
+  });
+
+  test('without a .gitignore, root framework caches are still skipped', async () => {
+    await write('src/index.ts', 'export const x = 1;');
+    await write('.next/server/chunk.js', "require('left-pad');");
+
+    const result = analyze(pkg({ dependencies: ['left-pad'] }));
 
     expect(result.unused).toEqual(['left-pad']);
   });
 
-  test('a workspace package root is a root for build output, tool configs and scripts/', async () => {
-    await write('package.json', JSON.stringify({ workspaces: ['packages/*'] }));
-    await write('packages/a/package.json', '{}');
-    await write('packages/a/dist/index.js', "require('webpack'); require('left-pad');");
-    await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
-    await write('packages/a/scripts/gen.ts', "import 'tsx';");
-    await write('packages/a/src/app.config.ts', "import { z } from 'zod';");
+  test('a feature folder named stories/ is source unless its files are stories', async () => {
+    await write('src/features/stories/Carousel.ts', "import '@faker-js/faker';");
+    await write('src/features/stories/Carousel.stories.ts', "import '@storybook/test';");
 
-    const result = analyze(pkg({ devDependencies: ['webpack', 'left-pad', 'vite', 'tsx', 'zod'] }));
+    const result = analyze(pkg({ devDependencies: ['@faker-js/faker', '@storybook/test'] }));
 
-    expect(result.unused).toEqual(['webpack', 'left-pad']);
-    expect(result.misplaced.map((m) => m.packageName)).toEqual(['zod']);
-  });
-
-  test('generated and foreign dot directories are not scanned', async () => {
-    await write('src/index.ts', 'export const x = 1;');
-    await write('.vercel/output/functions/api.func/index.js', "require('left-pad');");
-    await write('apps/web/.next/server/chunk.js', "require('is-odd');");
-    await write('.claude/worktrees/agent-x/src/x.ts', "import 'ts-morph';");
-    await write('.gradle/build/report.js', "require('lodash');");
-
-    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd', 'lodash'], devDependencies: ['ts-morph'] }));
-
-    expect(result.unused).toEqual(['left-pad', 'is-odd', 'lodash', 'ts-morph']);
+    expect(result.misplaced.map((m) => m.packageName)).toEqual(['@faker-js/faker']);
   });
 
   test('root presets and happy-dom setup files are development', async () => {

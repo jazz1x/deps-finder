@@ -1,4 +1,11 @@
+import type { FileError } from './errors.js';
+
 export type PackageName = string;
+
+export type Gathered<A> = {
+  readonly found: ReadonlyArray<A>;
+  readonly skipped: ReadonlyArray<FileError>;
+};
 
 export const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 export type DependencyType = (typeof DEPENDENCY_TYPES)[number];

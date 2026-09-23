@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { type Dirent, readFileSync, readdirSync } from 'node:fs';
 import { Array, Match, Option, Result, Schema, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
 import { FileError } from '../domain/errors.js';
+import type { Gathered } from '../domain/types.js';
 
 const messageOf = (cause: unknown): string =>
   Match.value(cause).pipe(
@@ -17,6 +18,28 @@ const readFailure = (path: string) => (cause: unknown) =>
 
 export const readFile = (path: string): Result.Result<string, FileError> =>
   Result.try({ try: () => readFileSync(path, 'utf-8'), catch: readFailure(path) });
+
+export const readDirectory = (path: string): Result.Result<ReadonlyArray<Dirent>, FileError> =>
+  Result.try({ try: () => readdirSync(path, { withFileTypes: true }), catch: readFailure(path) });
+
+export const gatherAll = <A>(parts: ReadonlyArray<Gathered<A>>): Gathered<A> => ({
+  found: Array.flatMap(parts, (part) => part.found),
+  skipped: Array.flatMap(parts, (part) => part.skipped),
+});
+
+const skippedUnlessAbsent = FileError.$match({
+  FileNotFound: (): ReadonlyArray<FileError> => [],
+  ReadFailed: (error): ReadonlyArray<FileError> => [error],
+  ParseFailed: (error): ReadonlyArray<FileError> => [error],
+});
+
+export const gatherOptional = <A>(
+  result: Result.Result<ReadonlyArray<A>, FileError>,
+): Gathered<A> =>
+  Result.match(result, {
+    onSuccess: (found) => ({ found, skipped: [] }),
+    onFailure: (error) => ({ found: [], skipped: skippedUnlessAbsent(error) }),
+  });
 
 type TextParser = (text: string) => Result.Result<unknown, string>;
 

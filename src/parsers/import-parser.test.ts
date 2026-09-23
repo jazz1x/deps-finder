@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Option, Result } from 'effect';
 import { FileError } from '@/domain/errors';
@@ -127,7 +127,7 @@ describe('findFiles', () => {
     await writeFile(`${testDir}/src/index.ts`, 'console.log("test");');
     await writeFile(`${testDir}/src/utils.tsx`, 'export const App = () => {};');
 
-    const files = findFiles(`${testDir}/src`);
+    const files = findFiles(`${testDir}/src`).found;
 
     expect(files.length).toBeGreaterThanOrEqual(1);
     expect(files.some((f) => f.path.includes('index.ts'))).toBe(true);
@@ -137,7 +137,7 @@ describe('findFiles', () => {
     await writeFile(`${testDir}/src/index.js`, 'console.log("test");');
     await writeFile(`${testDir}/src/component.jsx`, 'export const App = () => {};');
 
-    const files = findFiles(`${testDir}/src`);
+    const files = findFiles(`${testDir}/src`).found;
 
     expect(files.length).toBeGreaterThanOrEqual(1);
   });
@@ -146,7 +146,7 @@ describe('findFiles', () => {
     await writeFile(`${testDir}/src/index.ts`, 'console.log("test");');
     await writeFile(`${testDir}/src/index.test.ts`, 'test("test", () => {});');
 
-    const files = findFiles(`${testDir}/src`);
+    const files = findFiles(`${testDir}/src`).found;
 
     expect(files.map((f) => [path.basename(f.path), f.context]).toSorted()).toEqual([
       ['index.test.ts', 'development'],
@@ -162,7 +162,7 @@ describe('findFiles', () => {
     await writeFile(`${testDir}/packages/a/node_modules/package.js`, 'module.exports = {};');
     await writeFile(`${testDir}/.git/hooks/hook.js`, 'module.exports = {};');
 
-    const files = findFiles(testDir);
+    const files = findFiles(testDir).found;
 
     expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
   });
@@ -174,7 +174,7 @@ describe('findFiles', () => {
     await writeFile(`${rootDir}/src/index.ts`, 'console.log("app");');
     await writeFile(`${rootDir}/e2e/flow.ts`, 'console.log("e2e");');
 
-    const files = findFiles(rootDir);
+    const files = findFiles(rootDir).found;
 
     expect(files.map((f) => [path.relative(rootDir, f.path), f.context]).toSorted()).toEqual([
       ['e2e/flow.ts', 'development'],
@@ -182,11 +182,68 @@ describe('findFiles', () => {
     ]);
   });
 
+  test('leaves out a subdirectory whose package.json has a name', async () => {
+    await writeFile(`${testDir}/src/index.ts`, '');
+    await mkdir(`${testDir}/packages/a/src`, { recursive: true });
+    await writeFile(`${testDir}/packages/a/package.json`, '{"name":"a"}');
+    await writeFile(`${testDir}/packages/a/src/index.ts`, '');
+    await mkdir(`${testDir}/src/ui`, { recursive: true });
+    await writeFile(`${testDir}/src/ui/package.json`, '{"sideEffects":false}');
+    await writeFile(`${testDir}/src/ui/index.ts`, '');
+
+    const files = findFiles(testDir).found;
+
+    expect(files.map((f) => path.relative(testDir, f.path)).toSorted()).toEqual(['src/index.ts', 'src/ui/index.ts']);
+  });
+
+  test('honours root and nested .gitignore files, deeper rules winning', async () => {
+    await mkdir(`${testDir}/generated`, { recursive: true });
+    await mkdir(`${testDir}/tools/cache`, { recursive: true });
+    await writeFile(`${testDir}/.gitignore`, 'generated/\n*.gen.ts\n');
+    await writeFile(`${testDir}/tools/.gitignore`, 'cache/\n!keep.gen.ts\n');
+    await writeFile(`${testDir}/src/index.ts`, '');
+    await writeFile(`${testDir}/src/api.gen.ts`, '');
+    await writeFile(`${testDir}/generated/client.ts`, '');
+    await writeFile(`${testDir}/tools/cache/chunk.js`, '');
+    await writeFile(`${testDir}/tools/keep.gen.ts`, '');
+
+    const files = findFiles(testDir).found;
+
+    expect(files.map((f) => path.relative(testDir, f.path)).toSorted()).toEqual(['src/index.ts', 'tools/keep.gen.ts']);
+  });
+
+  test('skips a tsconfig outDir written with ./ even when a .gitignore exists', async () => {
+    await mkdir(`${testDir}/lib`, { recursive: true });
+    await writeFile(`${testDir}/.gitignore`, 'logs\n');
+    await writeFile(`${testDir}/tsconfig.json`, '{ "compilerOptions": { "outDir": "./lib" } }');
+    await writeFile(`${testDir}/src/index.ts`, '');
+    await writeFile(`${testDir}/lib/index.js`, '');
+
+    const files = findFiles(testDir).found;
+
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
+  });
+
+  test('reports an unreadable .gitignore and a broken tsconfig.json', async () => {
+    await writeFile(`${testDir}/src/index.ts`, '');
+    await writeFile(`${testDir}/src/.gitignore`, 'index.ts');
+    await chmod(`${testDir}/src/.gitignore`, 0o000);
+    await writeFile(`${testDir}/tsconfig.json`, '{ "compilerOptions": ');
+
+    const { found, skipped } = findFiles(testDir);
+
+    expect(found.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
+    const relativeTo = (e: FileError) => path.relative(testDir, e.path);
+    expect(skipped.filter(FileError.$is('ParseFailed')).map(relativeTo)).toEqual(['tsconfig.json']);
+    expect(skipped.filter(FileError.$is('ReadFailed')).map(relativeTo)).toEqual(['src/.gitignore']);
+    expect(skipped).toHaveLength(2);
+  });
+
   test('should exclude .d.ts files', async () => {
     await writeFile(`${testDir}/src/index.d.ts`, 'export declare const x: number;');
     await writeFile(`${testDir}/src/types.d.ts`, 'export type T = string;');
 
-    const files = findFiles(`${testDir}/src`);
+    const files = findFiles(`${testDir}/src`).found;
     expect(files.length).toBe(0);
   });
 });
@@ -490,22 +547,20 @@ describe('fileContextOf', () => {
   test.each([
     'playwright.config.ts',
     'next.config.mjs',
+    'jest.preset.js',
+    '.eslintrc.cjs',
     'scripts/perf/lib/attach.ts',
     '.storybook/main.ts',
-    '.scripts/run.ts',
-    'packages/ui/.storybook/preview.tsx',
-    'packages/ui/vite.config.ts',
-    'packages/ui/scripts/gen.ts',
-    'jest.preset.js',
+    '.github/scripts/release.js',
+    'src/ui/.storybook/preview.tsx',
     'src/a.test.ts',
     'src/Button.stories.tsx',
-    'src/happydom.ts',
     'src/happydom-setup.ts',
     'test/setup.ts',
     'src/features/__mocks__/api.ts',
     'e2e/flow.ts',
   ])('%s is development', (file) => {
-    expect(fileContextOf(['packages/ui'])(file)).toBe('development');
+    expect(fileContextOf(file)).toBe('development');
   });
 
   test.each([
@@ -513,11 +568,13 @@ describe('fileContextOf', () => {
     'src/config/app.config.ts',
     'src/scripts/analytics.ts',
     'src/build/index.ts',
+    'src/.generated/client.ts',
+    'src/.eslintrc.js',
+    'src/features/stories/Carousel.ts',
+    'tools/vite.config.ts',
     'scripts.ts',
-    'packages/ui/src/app.config.ts',
-    'packages/other/vite.config.ts',
   ])('%s is production', (file) => {
-    expect(fileContextOf(['packages/ui'])(file)).toBe('production');
+    expect(fileContextOf(file)).toBe('production');
   });
 });
 

@@ -5,8 +5,7 @@ import type {
   Program,
   TSImportEqualsDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Order, Result, String, pipe } from 'effect';
-import { globSync } from 'glob';
+import { Array, Match, Option, Result, String, pipe } from 'effect';
 import {
   type DynamicImport,
   type StaticExport,
@@ -15,21 +14,27 @@ import {
   parseSync,
 } from 'oxc-parser';
 import {
+  ALWAYS_EXCLUDED,
   ANALYZABLE_EXTENSIONS,
-  BUILD_OUTPUT_PATTERNS,
   DECLARATION_FILE_PATTERN,
   DEVELOPMENT_DIRECTORIES,
-  DEVELOPMENT_DOT_DIRECTORIES,
   DEVELOPMENT_FILENAME_PATTERNS,
+  EXCLUDED_WITHOUT_GITIGNORE,
   ROOT_TOOLING_DIRECTORIES,
   ROOT_TOOL_CONFIG_PATTERN,
-  getAllExcludedPatterns,
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
-import type { FileContext, ImportDetails, ImportType, SourceFile } from '../domain/types.js';
-import { readFile } from '../utils/file-reader.js';
+import type {
+  FileContext,
+  Gathered,
+  ImportDetails,
+  ImportType,
+  SourceFile,
+} from '../domain/types.js';
+import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
+import { gatherAll, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
-import { readWorkspacePatterns } from '../utils/workspace-patterns.js';
+import { walkProject } from '../utils/project-walk.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
@@ -44,56 +49,33 @@ export const shouldAnalyzeFile = (filePath: string): boolean =>
 
 type PathSegments = Array.NonEmptyReadonlyArray<string>;
 
-type LocatedPath = {
-  readonly segments: PathSegments;
-  readonly withinPackage: PathSegments;
-};
+const isHidden = String.startsWith('.');
 
-const splitPath = (relativePath: string): PathSegments => String.split(relativePath, /[\\/]/);
+const isRootToolFile = (name: string): boolean =>
+  isHidden(name) || ROOT_TOOL_CONFIG_PATTERN.test(name);
 
-const isDevelopmentPath: ReadonlyArray<(located: LocatedPath) => boolean> = [
-  ({ segments }) =>
+const isRootToolDirectory = (name: string): boolean =>
+  isHidden(name) || Array.contains(ROOT_TOOLING_DIRECTORIES, name);
+
+const isDevelopmentPath: ReadonlyArray<(segments: PathSegments) => boolean> = [
+  (segments) =>
     Array.some(Array.initNonEmpty(segments), (dir) => Array.contains(DEVELOPMENT_DIRECTORIES, dir)),
-  ({ segments }) =>
+  (segments) =>
     Array.some(DEVELOPMENT_FILENAME_PATTERNS, (pattern) =>
       Array.lastNonEmpty(segments).includes(pattern),
     ),
-  ({ withinPackage }) =>
-    withinPackage.length === 1 && ROOT_TOOL_CONFIG_PATTERN.test(withinPackage[0]),
-  ({ withinPackage }) =>
-    withinPackage.length > 1 &&
-    Array.contains(ROOT_TOOLING_DIRECTORIES, Array.headNonEmpty(withinPackage)),
+  (segments) =>
+    Array.match(Array.tailNonEmpty(segments), {
+      onEmpty: () => isRootToolFile(Array.headNonEmpty(segments)),
+      onNonEmpty: () => isRootToolDirectory(Array.headNonEmpty(segments)),
+    }),
 ];
 
-const isInside =
-  (segments: PathSegments) =>
-  (root: PathSegments): boolean =>
-    root.length < segments.length && Array.every(root, (dir, i) => segments[i] === dir);
-
-const locate =
-  (packageRoots: ReadonlyArray<PathSegments>) =>
-  (relativePath: string): LocatedPath => {
-    const segments = splitPath(relativePath);
-    return pipe(
-      Array.findFirst(packageRoots, isInside(segments)),
-      Option.map((root) => Array.drop(segments, root.length)),
-      Option.filter(Array.isArrayNonEmpty),
-      Option.getOrElse(() => segments),
-      (withinPackage) => ({ segments, withinPackage }),
-    );
-  };
-
-const byDepthDescending = Order.mapInput(
-  Order.flip(Order.Number),
-  (root: PathSegments) => root.length,
-);
-
-export const fileContextOf = (packageRoots: ReadonlyArray<string>) => {
-  const locateIn = locate(Array.sort(Array.map(packageRoots, splitPath), byDepthDescending));
-  return (relativePath: string): FileContext =>
-    Array.some(isDevelopmentPath, (matches) => matches(locateIn(relativePath)))
-      ? 'development'
-      : 'production';
+export const fileContextOf = (relativePath: string): FileContext => {
+  const segments = String.split(relativePath, /[\\/]/);
+  return Array.some(isDevelopmentPath, (matches) => matches(segments))
+    ? 'development'
+    : 'production';
 };
 
 type ModuleReference = {
@@ -240,45 +222,36 @@ export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSo
   return { imports: Array.flatten(parsed), unreadable };
 };
 
+const detectedBuildDirectories = (rootDir: string): Gathered<string> =>
+  gatherAll([detectBuildDirectories(rootDir), detectByHeuristic(rootDir)]);
+
+const anchoredDirectory = (dir: string): string => path.posix.join('/', dir, '/');
+
 export const findFiles = (
   rootDir: string,
   options: {
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): ReadonlyArray<SourceFile> => {
-  const ignore = [
-    ...getAllExcludedPatterns(rootDir, !options.noAutoDetect),
-    ...(options.excludePatterns ?? []),
-  ];
-  const [excludedWorkspaces, includedWorkspaces] = pipe(
-    readWorkspacePatterns(rootDir),
-    Array.map((glob) => path.posix.join(glob, 'package.json')),
-    Array.partition((manifest) =>
-      manifest.startsWith('!') ? Result.fail(manifest.slice(1)) : Result.succeed(manifest),
+): Gathered<SourceFile> => {
+  const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
+  const walked = walkProject(rootDir, {
+    always: [
+      ...ALWAYS_EXCLUDED,
+      ...Array.map(detected.found, anchoredDirectory),
+      ...(options.excludePatterns ?? []),
+    ],
+    withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
+  });
+  return {
+    found: pipe(
+      walked.found,
+      Array.filter(shouldAnalyzeFile),
+      Array.map((relativePath) => ({
+        path: path.resolve(rootDir, relativePath),
+        context: fileContextOf(relativePath),
+      })),
     ),
-  );
-  const packageRoots = pipe(
-    globSync(includedWorkspaces, { cwd: rootDir, ignore: [...ignore, ...excludedWorkspaces] }),
-    Array.map((manifest) => path.dirname(manifest)),
-  );
-  const contextOf = fileContextOf(packageRoots);
-
-  return pipe(
-    globSync(['**/*', `**/{${DEVELOPMENT_DOT_DIRECTORIES.join(',')}}/**/*`], {
-      cwd: rootDir,
-      nodir: true,
-      ignore: [
-        ...ignore,
-        ...Array.flatMap(packageRoots, (root) =>
-          Array.map(BUILD_OUTPUT_PATTERNS, (pattern) => path.posix.join(root, pattern)),
-        ),
-      ],
-    }),
-    Array.filter(shouldAnalyzeFile),
-    Array.map((relativePath) => ({
-      path: path.resolve(rootDir, relativePath),
-      context: contextOf(relativePath),
-    })),
-  );
+    skipped: [...detected.skipped, ...walked.skipped],
+  };
 };

@@ -7,6 +7,12 @@ export const formatFileError = FileError.$match({
   ReadFailed: (e) => MESSAGES.PACKAGE_JSON_READ_ERROR(e.path, e.reason),
 });
 
+export const formatSkippedInput = FileError.$match({
+  FileNotFound: (e) => MESSAGES.INPUT_SKIPPED(e.path, MESSAGES.NOT_FOUND),
+  ParseFailed: (e) => MESSAGES.INPUT_SKIPPED(e.path, e.reason),
+  ReadFailed: (e) => MESSAGES.INPUT_SKIPPED(e.path, e.reason),
+});
+
 export const formatSkippedSource = FileError.$match({
   FileNotFound: (e) => MESSAGES.SOURCE_SKIPPED(e.path, MESSAGES.NOT_FOUND),
   ParseFailed: (e) => MESSAGES.SOURCE_SKIPPED(e.path, e.reason),

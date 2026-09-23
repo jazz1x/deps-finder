@@ -1,7 +1,7 @@
-import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Array, Option, Result, Schema, pipe } from 'effect';
-import { readJsonFile } from './file-reader.js';
+import type { Gathered } from '../domain/types.js';
+import { gatherAll, gatherOptional, readDirectory, readJsonFile } from './file-reader.js';
 import { readTsConfig } from './tsconfig-reader.js';
 
 const PackageScripts = Schema.Struct({
@@ -15,49 +15,33 @@ const outDirsFromScripts = (pkg: typeof PackageScripts.Type): ReadonlyArray<stri
     Object.values(pkg.scripts ?? {}),
     Array.map((script) => Option.fromNullishOr(OUT_DIR_FLAG.exec(script)?.[1])),
     Array.getSomes,
-    Array.map((dir) => `${dir}/**`),
   );
 
-export const detectBuildDirectories = (projectRoot: string): ReadonlyArray<string> => {
-  const fromPkg = pipe(
-    readJsonFile(PackageScripts)(join(projectRoot, 'package.json')),
-    Result.map(outDirsFromScripts),
-    Result.getOrElse((): ReadonlyArray<string> => []),
-  );
-
-  const fromTsConfig = pipe(
-    readTsConfig(projectRoot),
-    Result.map((cfg) =>
-      pipe(
-        Option.fromNullishOr(cfg.compilerOptions?.outDir),
-        Option.map((dir) => `${dir}/**`),
-        Option.toArray,
+export const detectBuildDirectories = (projectRoot: string): Gathered<string> =>
+  gatherAll([
+    gatherOptional(
+      Result.map(
+        readJsonFile(PackageScripts)(join(projectRoot, 'package.json')),
+        outDirsFromScripts,
       ),
     ),
-    Result.getOrElse((): ReadonlyArray<string> => []),
-  );
-
-  return Array.dedupe([...fromPkg, ...fromTsConfig]);
-};
+    gatherOptional(
+      Result.map(readTsConfig(projectRoot), (cfg) =>
+        Option.toArray(Option.fromNullishOr(cfg.compilerOptions?.outDir)),
+      ),
+    ),
+  ]);
 
 const BUILD_LIKE_SUFFIXES = ['-static', '-dist', '-build', '-output'];
 
-const isDirectory = (path: string): boolean =>
-  pipe(
-    Result.try(() => statSync(path).isDirectory()),
-    Result.getOrElse(() => false),
-  );
-
-export const detectByHeuristic = (projectRoot: string): ReadonlyArray<string> =>
-  pipe(
-    Result.try(() => readdirSync(projectRoot)),
-    Result.map((entries) =>
+export const detectByHeuristic = (projectRoot: string): Gathered<string> =>
+  gatherOptional(
+    Result.map(readDirectory(projectRoot), (entries) =>
       pipe(
         entries,
-        Array.filter((entry) => isDirectory(join(projectRoot, entry))),
+        Array.filter((entry) => entry.isDirectory()),
+        Array.map((entry) => entry.name),
         Array.filter((dir) => Array.some(BUILD_LIKE_SUFFIXES, (suffix) => dir.endsWith(suffix))),
-        Array.map((dir) => `${dir}/**`),
       ),
     ),
-    Result.getOrElse((): ReadonlyArray<string> => []),
   );
