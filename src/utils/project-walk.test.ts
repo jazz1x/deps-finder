@@ -113,6 +113,20 @@ describe('walkProject', () => {
     expect(packagesOf()).toEqual(['packages/a', 'packages/b', 'tools/x']);
   });
 
+  test('npm: a double negation is a positive', async () => {
+    await put('package.json', '{"workspaces":["packages/*","!!packages/foo"]}');
+    await put('packages/foo/package.json', '{"name":"foo"}');
+
+    expect(packagesOf()).toEqual(['packages/foo']);
+  });
+
+  test('pnpm: a leading ./ is stripped', async () => {
+    await put('pnpm-workspace.yaml', "packages:\n  - './packages/*'\n");
+    await put('packages/a/package.json', '{"name":"a"}');
+
+    expect(packagesOf()).toEqual(['packages/a']);
+  });
+
   test('pnpm: a negation wins wherever it sits', async () => {
     await put('pnpm-workspace.yaml', "packages:\n  - 'packages/*'\n  - '!packages/b'\n  - 'packages/b'\n");
     await put('packages/a/package.json', '{"name":"a"}');
