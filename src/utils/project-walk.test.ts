@@ -93,6 +93,19 @@ describe('walkProject', () => {
     expect(walked(path.join(testDir, 'apps/web'))).toEqual(['src/index.ts']);
   });
 
+  test('reports an unreadable .gitignore above rootDir and an unreadable info/exclude', async () => {
+    await put('.git/info/exclude', 'scratch/\n');
+    await put('.gitignore', 'generated/\n');
+    await put('apps/web/src/index.ts');
+    await chmod(path.join(testDir, '.git/info/exclude'), 0o000);
+    await chmod(path.join(testDir, '.gitignore'), 0o000);
+
+    expect(skippedIn(path.join(testDir, 'apps/web'))).toEqual([
+      ['ReadFailed', '../../.git/info/exclude'],
+      ['ReadFailed', '../../.gitignore'],
+    ]);
+  });
+
   test('scans a rootDir that its repository ignores', async () => {
     await mkdir(path.join(testDir, '.git'));
     await put('.gitignore', 'sandbox/\n');
