@@ -45,6 +45,31 @@ describe('readTsConfigImports', () => {
     ]);
   });
 
+  test.each([
+    ['a bare package', '@tsconfig/node20', 'node_modules/@tsconfig/node20/tsconfig.json'],
+    ['a file without .json', './configs/base', 'configs/base.json'],
+  ])('extends %s', async (_, specifier, parent) => {
+    await write('tsconfig.json', { extends: specifier });
+    await write(parent, { compilerOptions: { types: ['node'] } });
+    expect(readTsConfigImports(testDir).found.map((usage) => usage.packageName)).toContain('node');
+  });
+
+  test('a package extends resolves through node_modules above the project', async () => {
+    await write('pkg/tsconfig.json', { extends: '@tsconfig/node20/tsconfig.json' });
+    await write('node_modules/@tsconfig/node20/tsconfig.json', { compilerOptions: { types: ['node'] } });
+    const { found, skipped } = readTsConfigImports(path.join(testDir, 'pkg'));
+    expect(found.map((usage) => usage.packageName)).toEqual(['@tsconfig/node20', 'node']);
+    expect(skipped).toEqual([]);
+  });
+
+  test('a parent shared by tsconfig.json and tsconfig.base.json counts once', async () => {
+    await write('tsconfig.json', { extends: './shared.json' });
+    await write('tsconfig.base.json', { extends: './shared.json' });
+    await write('shared.json', { extends: '@tsconfig/strictest/tsconfig.json' });
+    await write('node_modules/@tsconfig/strictest/tsconfig.json', {});
+    expect(usages()).toEqual(['@tsconfig/strictest:type-only:development:shared.json:2']);
+  });
+
   test('a child importHelpers: false turns the inherited tslib usage off', async () => {
     await write('tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { importHelpers: false } });
     await write('tsconfig.base.json', { compilerOptions: { importHelpers: true } });

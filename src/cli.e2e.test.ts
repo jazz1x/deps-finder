@@ -330,6 +330,14 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.stderr).toContain('missing.json');
   });
 
+  test('a malformed tsconfig.json warns once', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ devDependencies: { typescript: '1' } }));
+    await writeFile(path.join(tmpDir, 'tsconfig.json'), '{ "compilerOptions": { ');
+
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(r.stderr.match(/tsconfig\.json/g)).toHaveLength(1);
+  });
+
   test('--json output larger than one pipe read arrives whole before a failing exit', async () => {
     const dependencies = Object.fromEntries(Array.from({ length: 50000 }, (_, i) => [`unused-package-${i}`, '^1.0.0']));
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies }));

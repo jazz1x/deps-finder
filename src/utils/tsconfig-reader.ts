@@ -2,14 +2,7 @@ import path from 'node:path';
 import { Array, Match, Option, Result, Schema, pipe } from 'effect';
 import { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
-import {
-  decodeJsonc,
-  gatherAll,
-  gatherOptional,
-  readFile,
-  readJsoncFile,
-  readStats,
-} from './file-reader.js';
+import { decodeJsonc, gatherAll, gatherOptional, readFile, readStats } from './file-reader.js';
 import { lineage } from './project-walk.js';
 
 const TsConfig = Schema.Struct({
@@ -33,12 +26,24 @@ export type TsConfigFile = {
 
 const ROOT_TSCONFIGS = ['tsconfig.json', 'tsconfig.base.json'];
 
-export const readRootTsConfigs = (projectRoot: string): Gathered<TsConfig> =>
+const readTsConfigFile = (file: string): Result.Result<TsConfigFile, FileError> =>
+  Result.flatMap(readFile(file), (text) =>
+    Result.map(decodeJsonc(TsConfig)(file)(text), (config) => ({ path: file, text, config })),
+  );
+
+// The build-directory detection and the usage reader each read these; equal paths let their
+// errors dedupe.
+const readRootFiles = (projectRoot: string): Gathered<TsConfigFile> =>
   gatherAll(
     Array.map(ROOT_TSCONFIGS, (name) =>
-      gatherOptional(Result.map(readJsoncFile(TsConfig)(path.join(projectRoot, name)), Array.of)),
+      gatherOptional(Result.map(readTsConfigFile(path.resolve(projectRoot, name)), Array.of)),
     ),
   );
+
+export const readRootTsConfigs = (projectRoot: string): Gathered<TsConfig> => {
+  const roots = readRootFiles(projectRoot);
+  return { found: Array.map(roots.found, (file) => file.config), skipped: roots.skipped };
+};
 
 export const outDirsOf = (configs: ReadonlyArray<TsConfig>): ReadonlyArray<string> =>
   Array.flatMap(configs, (config) =>
@@ -50,11 +55,6 @@ export const extendsOf = (config: TsConfig): ReadonlyArray<string> =>
     Match.when(Match.undefined, (): ReadonlyArray<string> => []),
     Match.when(Match.string, (single) => [single]),
     Match.orElse((several) => several),
-  );
-
-const readTsConfigFile = (file: string): Result.Result<TsConfigFile, FileError> =>
-  Result.flatMap(readFile(file), (text) =>
-    Result.map(decodeJsonc(TsConfig)(file)(text), (config) => ({ path: file, text, config })),
   );
 
 const isFile = (file: string): boolean =>
@@ -121,11 +121,7 @@ const parentChain = (extended: Extended, seen: ReadonlyArray<string>): Gathered<
   );
 
 export const readTsConfigChains = (projectRoot: string): Gathered<TsConfigChain> => {
-  const roots = gatherAll(
-    Array.map(ROOT_TSCONFIGS, (name) =>
-      gatherOptional(Result.map(readTsConfigFile(path.resolve(projectRoot, name)), Array.of)),
-    ),
-  );
+  const roots = readRootFiles(projectRoot);
   const chained = Array.map(roots.found, (root) => chainFrom(root, []));
   const isIn = (chain: TsConfigChain) => (other: TsConfigChain) =>
     Array.some(other, (file) => file.path === Array.headNonEmpty(chain).path);
