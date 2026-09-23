@@ -52,7 +52,10 @@ describe('walkProject', () => {
     expect(walked()).toEqual(['src/index.ts']);
   });
 
-  const packagesOf = (root = testDir) => walkProject(root, RULES).packages.toSorted();
+  const packagesOf = (root = testDir) =>
+    walkProject(root, RULES)
+      .packages.map((leftOut) => leftOut.dir)
+      .toSorted();
 
   test('leaves out array-form workspace members, honouring negation', async () => {
     await put('package.json', '{"workspaces":["!packages/keep","./packages/*/"]}');

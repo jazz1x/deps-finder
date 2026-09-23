@@ -5,7 +5,7 @@ import { analyzeDependencies } from '../analyzers/dependency-analyzer.js';
 import { CLI_TEXT, MESSAGES } from '../constants/messages.js';
 import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.js';
 import type { CliOptions, DependencyType } from '../domain/types.js';
-import { findFiles, parseMultipleFiles } from '../parsers/import-parser.js';
+import { findFiles, parseHoistedImports, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
 import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
 import { formatSkippedInput, formatSkippedSource } from '../reporters/error-reporter.js';
@@ -87,9 +87,19 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     })),
     Effect.map(({ packageJson, files }) => ({
       packageJson,
-      skippedInputs: files.skipped,
-      packagesLeftOut: files.packages,
-      sources: parseMultipleFiles(files.found),
+      files,
+      own: parseMultipleFiles(files.found),
+      hoisted: parseHoistedImports(files.packages),
+    })),
+    Effect.map(({ packageJson, files, own, hoisted }) => ({
+      packageJson,
+      // The walk and the hoisting credit both read a left-out package.json.
+      skippedInputs: Array.dedupe([...files.skipped, ...hoisted.skipped]),
+      packagesLeftOut: Array.map(files.packages, (leftOut) => leftOut.dir),
+      sources: {
+        imports: [...own.imports, ...hoisted.imports],
+        unreadable: [...own.unreadable, ...hoisted.unreadable],
+      },
     })),
     Effect.tap(({ skippedInputs }) =>
       Effect.forEach(skippedInputs, (error) => Console.error(formatSkippedInput(error))),

@@ -25,17 +25,21 @@ import {
   ROOT_TOOL_CONFIG_PATTERN,
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
-import type {
-  FileContext,
-  Gathered,
-  ImportDetails,
-  ImportType,
-  SourceFile,
+import {
+  DEPENDENCY_TYPES,
+  type FileContext,
+  type Gathered,
+  type ImportDetails,
+  type ImportType,
+  type PackageJson,
+  type PackageName,
+  type SourceFile,
 } from '../domain/types.js';
+import { readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
 import { gatherAll, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
-import { walkProject } from '../utils/project-walk.js';
+import { type LeftOut, walkProject } from '../utils/project-walk.js';
 import { readRootTsConfigs } from '../utils/tsconfig-reader.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
@@ -268,7 +272,7 @@ export const findFiles = (
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): Gathered<SourceFile> & { readonly packages: ReadonlyArray<string> } => {
+): Gathered<SourceFile> & { readonly packages: ReadonlyArray<LeftOut> } => {
   const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
   const walked = walkProject(rootDir, {
     always: [
@@ -289,6 +293,38 @@ export const findFiles = (
       })),
     ),
     skipped: [...detected.skipped, ...walked.skipped],
-    packages: Array.map(walked.packages, (dir) => path.join(rootDir, dir)),
+    packages: Array.map(walked.packages, ({ dir, files }) => ({
+      dir: path.join(rootDir, dir),
+      files: Array.map(files, (file) => path.resolve(rootDir, file)),
+    })),
+  };
+};
+
+const declares =
+  (packageJson: PackageJson) =>
+  (name: PackageName): boolean =>
+    Array.some(DEPENDENCY_TYPES, (section) => Array.contains(packageJson[section], name));
+
+// Node resolves what a left-out package does not declare from the root install. Read as
+// development use, such an import marks a root dependency used but never misplaced or type-only.
+const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileError> =>
+  Result.map(readPackageJson(path.join(leftOut.dir, 'package.json')), (declared) => {
+    const parsed = parseMultipleFiles(
+      Array.map(leftOut.files, (file): SourceFile => ({ path: file, context: 'development' })),
+    );
+    return {
+      ...parsed,
+      imports: Array.filter(parsed.imports, (detail) => !declares(declared)(detail.packageName)),
+    };
+  });
+
+export const parseHoistedImports = (
+  packages: ReadonlyArray<LeftOut>,
+): ParsedSources & { readonly skipped: ReadonlyArray<FileError> } => {
+  const [skipped, parsed] = Array.partition(packages, hoistedImportsOf);
+  return {
+    imports: Array.flatMap(parsed, (sources) => sources.imports),
+    unreadable: Array.flatMap(parsed, (sources) => sources.unreadable),
+    skipped,
   };
 };

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
-import { findFiles, parseMultipleFiles } from '@/parsers/import-parser';
+import { findFiles, parseHoistedImports, parseMultipleFiles } from '@/parsers/import-parser';
 import type { PackageJson } from '@/domain/types';
 import path from 'node:path';
 
@@ -242,8 +242,11 @@ describe('file contexts', () => {
     await writeFile(`${testDir}/${file}`, content);
   };
 
-  const analyze = (packageJson: PackageJson) =>
-    analyzeDependencies(packageJson, parseMultipleFiles(findFiles(testDir).found).imports, { sections: ALL, ignoredPackages: [] });
+  const analyze = (packageJson: PackageJson) => {
+    const files = findFiles(testDir);
+    const imports = [...parseMultipleFiles(files.found).imports, ...parseHoistedImports(files.packages).imports];
+    return analyzeDependencies(packageJson, imports, { sections: ALL, ignoredPackages: [] });
+  };
 
   beforeEach(async () => {
     testDir = `./test-file-contexts-${Math.random().toString(36).slice(2)}`;
@@ -309,19 +312,30 @@ describe('file contexts', () => {
     expect(result.misplaced.map((m) => m.packageName)).toEqual(['chalk', 'zod']);
   });
 
-  test('workspace members and nested installs are left to their own run', async () => {
-    await write('package.json', '{"workspaces":["packages/*"]}');
+  test('a left-out package credits the root only with what it does not declare, as development use', async () => {
+    await write('package.json', '{"workspaces":["packages/*","apps/*"]}');
+    await write('bun.lock', '');
     await write('src/index.ts', 'export const x = 1;');
-    await write('functions/package.json', '{"name":"functions"}');
+    await write('packages/shared-ui/package.json', '{"name":"shared-ui","dependencies":{"react":"18"}}');
+    await write('packages/shared-ui/src/happydom-setup.ts', "import { GlobalRegistrator } from '@happy-dom/global-registrator';");
+    await write(
+      'packages/shared-ui/src/Button.tsx',
+      "import 'react';\nimport { match } from 'ts-pattern';\nimport type { Dayjs } from 'dayjs';",
+    );
+    await write('functions/package.json', '{"name":"functions","devDependencies":{"is-odd":"1"}}');
     await write('functions/package-lock.json', '{}');
-    await write('functions/src/index.ts', "import 'is-odd';");
-    await write('packages/a/package.json', '{"name":"a"}');
-    await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
-    await write('packages/a/src/index.ts', "import 'left-pad';");
+    await write('functions/src/index.ts', "import 'is-odd';\nimport 'left-pad';");
 
-    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd'], devDependencies: ['vite'] }));
+    const result = analyze(
+      pkg({
+        dependencies: ['react', 'is-odd', 'dayjs'],
+        devDependencies: ['@happy-dom/global-registrator', 'ts-pattern', 'left-pad'],
+      }),
+    );
 
-    expect(result.unused).toEqual(['left-pad', 'is-odd', 'vite']);
+    expect(result.unused).toEqual(['react', 'is-odd']);
+    expect(result.misplaced).toEqual([]);
+    expect(result.typeOnly).toEqual([]);
   });
 
   test('an Nx lib with a name and dependencies but no install of its own is scanned', async () => {

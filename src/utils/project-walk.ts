@@ -33,6 +33,7 @@ type Walk = {
   readonly layoutRoots: Array.NonEmptyReadonlyArray<string>;
   readonly isSource: (relativePath: string) => boolean;
   readonly isWorkspaceMember: (dir: string) => boolean;
+  readonly package: Option.Option<string>;
 };
 
 type EntryKind = 'directory' | 'file' | 'unfollowed';
@@ -42,8 +43,10 @@ type Source = {
   readonly layoutRoots: Array.NonEmptyReadonlyArray<string>;
 };
 
+export type LeftOut = { readonly dir: string; readonly files: ReadonlyArray<string> };
+
 type Walked = Data.TaggedEnum<{
-  Source: Source;
+  Source: Source & { readonly package: Option.Option<string> };
   Package: { readonly path: string };
 }>;
 
@@ -279,7 +282,13 @@ const walkEntries = (
           Match.value(kind).pipe(
             Match.when('directory', () => walkSubdirectory(walk, relativePath, gitignores)),
             Match.when('file', (): Gathered<Walked> => ({
-              found: [Walked.Source({ path: relativePath, layoutRoots: walk.layoutRoots })],
+              found: [
+                Walked.Source({
+                  path: relativePath,
+                  layoutRoots: walk.layoutRoots,
+                  package: walk.package,
+                }),
+              ],
               skipped: [],
             })),
             Match.when('unfollowed', () => NOTHING),
@@ -337,10 +346,21 @@ const walkSubdirectory = (
         skippedOnly(manifests.skipped),
         skippedOnly(projects.skipped),
         Match.value(role).pipe(
-          Match.when('package', (): Gathered<Walked> => ({
-            found: [Walked.Package({ path: dir })],
-            skipped: [],
-          })),
+          Match.when('package', () =>
+            gatherAll<Walked>([
+              { found: [Walked.Package({ path: dir })], skipped: [] },
+              walkFolder(
+                {
+                  ...walk,
+                  layoutRoots: Array.append(walk.layoutRoots, dir),
+                  package: Option.some(dir),
+                },
+                dir,
+                inherited,
+                entries,
+              ),
+            ]),
+          ),
           Match.when('layout-root', () =>
             walkFolder(
               { ...walk, layoutRoots: Array.append(walk.layoutRoots, dir) },
@@ -415,6 +435,7 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
         layoutRoots: [''],
         isSource: rules.isSource,
         isWorkspaceMember: isMemberOf(workspaces.found),
+        package: Option.none(),
       };
       return gatherAll([
         skippedOnly(inherited.exclude.skipped),
@@ -430,15 +451,31 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
 export const walkProject = (
   rootDir: string,
   rules: WalkRules,
-): Gathered<Source> & { readonly packages: ReadonlyArray<string> } => {
+): Gathered<Source> & { readonly packages: ReadonlyArray<LeftOut> } => {
   const { found, skipped } = walkRoot(rootDir, rules);
-  const [packages, sources] = Array.partition(
+  const [dirs, sources] = Array.partition(
     found,
     Walked.$match({
-      Source: (source) =>
-        Result.succeed<Source>({ path: source.path, layoutRoots: source.layoutRoots }),
+      Source: (source) => Result.succeed(source),
       Package: (nested) => Result.fail(nested.path),
     }),
   );
-  return { found: sources, skipped, packages };
+  const [packaged, own] = Array.partition(sources, (source) =>
+    Option.match(source.package, {
+      onNone: () => Result.succeed<Source>({ path: source.path, layoutRoots: source.layoutRoots }),
+      onSome: (dir) => Result.fail({ dir, file: source.path }),
+    }),
+  );
+  return {
+    found: own,
+    skipped,
+    packages: Array.map(dirs, (dir) => ({
+      dir,
+      files: pipe(
+        packaged,
+        Array.filter((file) => file.dir === dir),
+        Array.map(({ file }) => file),
+      ),
+    })),
+  };
 };
