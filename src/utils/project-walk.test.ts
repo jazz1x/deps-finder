@@ -7,7 +7,7 @@ import { FileError } from '@/domain/errors';
 import { shouldAnalyzeFile } from '@/parsers/import-parser';
 import { walkProject } from './project-walk';
 
-const RULES = { always: ALWAYS_EXCLUDED, withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE, isSource: shouldAnalyzeFile };
+const RULES = { always: ALWAYS_EXCLUDED, withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE, isSource: shouldAnalyzeFile, aliasTargets: [] };
 
 const tagOf = FileError.$match({
   FileNotFound: () => 'FileNotFound',

@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { Array, Option, Result, Schema, pipe } from 'effect';
 import type { Gathered } from '../domain/types.js';
 import { gatherAll, gatherOptional, readDirectory, readJsonFile } from './file-reader.js';
-import { readTsConfig } from './tsconfig-reader.js';
+import { type TsConfig, outDirsOf } from './tsconfig-reader.js';
 
 const PackageScripts = Schema.Struct({
   scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -17,7 +17,10 @@ const outDirsFromScripts = (pkg: typeof PackageScripts.Type): ReadonlyArray<stri
     Array.getSomes,
   );
 
-export const detectBuildDirectories = (projectRoot: string): Gathered<string> =>
+export const detectBuildDirectories = (
+  projectRoot: string,
+  tsconfigs: ReadonlyArray<TsConfig>,
+): Gathered<string> =>
   gatherAll([
     gatherOptional(
       Result.map(
@@ -25,11 +28,7 @@ export const detectBuildDirectories = (projectRoot: string): Gathered<string> =>
         outDirsFromScripts,
       ),
     ),
-    gatherOptional(
-      Result.map(readTsConfig(projectRoot), (cfg) =>
-        Option.toArray(Option.fromNullishOr(cfg.compilerOptions?.outDir)),
-      ),
-    ),
+    { found: outDirsOf(tsconfigs), skipped: [] },
   ]);
 
 const BUILD_LIKE_SUFFIXES = ['-static', '-dist', '-build', '-output'];

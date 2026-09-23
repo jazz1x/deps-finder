@@ -1,6 +1,6 @@
 import { type Dirent, existsSync } from 'node:fs';
 import path from 'node:path';
-import { Array, Data, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Data, Match, Option, Result, Schema, String, pipe } from 'effect';
 import ignore, { type Ignore } from 'ignore';
 import type { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
@@ -17,6 +17,7 @@ export type WalkRules = {
   readonly always: ReadonlyArray<string>;
   readonly withoutGitignore: ReadonlyArray<string>;
   readonly isSource: (relativePath: string) => boolean;
+  readonly aliasTargets: ReadonlyArray<string>;
 };
 
 // prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
@@ -26,6 +27,7 @@ type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
   readonly isSource: (relativePath: string) => boolean;
+  readonly aliasTargets: ReadonlyArray<string>;
 };
 
 type EntryKind = 'directory' | 'file' | 'unfollowed';
@@ -171,10 +173,11 @@ const walkSubdirectory = (
         'package.json',
         readJsonFile(Manifest),
       );
+      const aliased = Array.some(walk.aliasTargets, String.startsWith(`${dir}/`));
       return gatherAll([
         skippedOnly(manifests.skipped),
         Array.match(
-          Array.getSomes(Array.map(manifests.found, (m) => Option.fromNullishOr(m.name))),
+          Array.filter(manifests.found, (m) => m.name !== undefined && !aliased),
           {
             onEmpty: () => walkFolder(walk, dir, inherited, entries),
             onNonEmpty: (): Gathered<Walked> => ({
@@ -227,7 +230,12 @@ const inheritedGitignores = (rootDir: string): Inherited => {
 };
 
 const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
-  const walk: Walk = { rootDir, excluded: rulesOf(rules.always), isSource: rules.isSource };
+  const walk: Walk = {
+    rootDir,
+    excluded: rulesOf(rules.always),
+    isSource: rules.isSource,
+    aliasTargets: rules.aliasTargets,
+  };
   const inherited = inheritedGitignores(path.resolve(rootDir));
   return Result.match(readDirectory(rootDir), {
     onFailure: (error) => skippedOnly([error]),

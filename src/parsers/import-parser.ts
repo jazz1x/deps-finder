@@ -35,6 +35,7 @@ import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build
 import { gatherAll, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { walkProject } from '../utils/project-walk.js';
+import { type TsConfig, aliasTargetsOf, readRootTsConfigs } from '../utils/tsconfig-reader.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
@@ -220,8 +221,11 @@ export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSo
   return { imports: Array.flatten(parsed), unreadable };
 };
 
-const detectedBuildDirectories = (rootDir: string): Gathered<string> =>
-  gatherAll([detectBuildDirectories(rootDir), detectByHeuristic(rootDir)]);
+const detectedBuildDirectories = (
+  rootDir: string,
+  tsconfigs: ReadonlyArray<TsConfig>,
+): Gathered<string> =>
+  gatherAll([detectBuildDirectories(rootDir, tsconfigs), detectByHeuristic(rootDir)]);
 
 const anchoredDirectory = (dir: string): string => path.posix.join('/', dir, '/');
 
@@ -244,7 +248,10 @@ export const findFiles = (
     readonly noAutoDetect?: boolean;
   } = {},
 ): Gathered<SourceFile> & { readonly packages: ReadonlyArray<string> } => {
-  const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
+  const tsconfigs = readRootTsConfigs(rootDir);
+  const detected = options.noAutoDetect
+    ? gatherAll<string>([])
+    : detectedBuildDirectories(rootDir, tsconfigs.found);
   const walked = walkProject(rootDir, {
     always: [
       ...ALWAYS_EXCLUDED,
@@ -253,6 +260,7 @@ export const findFiles = (
     ],
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
     isSource: shouldAnalyzeFile,
+    aliasTargets: aliasTargetsOf(tsconfigs.found),
   });
   return {
     found: pipe(
@@ -262,7 +270,7 @@ export const findFiles = (
         context: fileContextOf(relativePath),
       })),
     ),
-    skipped: [...detected.skipped, ...walked.skipped],
+    skipped: [...tsconfigs.skipped, ...detected.skipped, ...walked.skipped],
     packages: Array.map(walked.packages, (dir) => path.join(rootDir, dir)),
   };
 };

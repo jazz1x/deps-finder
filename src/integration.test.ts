@@ -323,6 +323,22 @@ describe('file contexts', () => {
     expect(result.misplaced).toEqual([]);
   });
 
+  test('a named lib the root tsconfig paths map into is part of this package', async () => {
+    await write(
+      'tsconfig.base.json',
+      '{ "compilerOptions": { "paths": { "@x/common": ["libs/common/src/index.ts"], "@x/ui/*": ["./libs/ui/src/*"] } } }',
+    );
+    await write('apps/api/src/main.ts', "import { log } from '@x/common';");
+    await write('libs/common/package.json', '{"name":"@x/common","dependencies":{"dotenv":"16"}}');
+    await write('libs/common/src/index.ts', "import 'winston';");
+    await write('libs/ui/package.json', '{"name":"@x/ui"}');
+    await write('libs/ui/src/button.ts', "import 'chalk';");
+
+    const result = analyze(pkg({ dependencies: ['winston', 'chalk'] }));
+
+    expect(result.unused).toEqual([]);
+  });
+
   test('gitignored generated output is not scanned', async () => {
     await write('.gitignore', '.vercel\n.next/\n.gradle\n');
     await write('src/index.ts', 'export const x = 1;');
