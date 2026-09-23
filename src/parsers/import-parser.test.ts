@@ -546,7 +546,7 @@ describe('fileContextOf', () => {
     'src/features/__mocks__/api.ts',
     'e2e/flow.ts',
   ])('%s is development', (file) => {
-    expect(fileContextOf({ path: file, layoutRoot: '' })).toBe('development');
+    expect(fileContextOf({ path: file, layoutRoots: [''] })).toBe('development');
   });
 
   test.each([
@@ -559,7 +559,7 @@ describe('fileContextOf', () => {
     'tools/vite.config.ts',
     'scripts.ts',
   ])('%s is production', (file) => {
-    expect(fileContextOf({ path: file, layoutRoot: '' })).toBe('production');
+    expect(fileContextOf({ path: file, layoutRoots: [''] })).toBe('production');
   });
 });
 

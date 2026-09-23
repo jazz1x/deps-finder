@@ -23,18 +23,21 @@ type WalkRules = {
 // prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
 type Gitignore = { readonly prefix: string; readonly base: string; readonly rules: Ignore };
 
-// layoutRoot: rootDir or the nearest named package.json above, relative to rootDir.
+// layoutRoots: rootDir and every named package.json above, relative to rootDir.
 type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
   readonly atLayoutRoot: Ignore;
-  readonly layoutRoot: string;
+  readonly layoutRoots: Array.NonEmptyReadonlyArray<string>;
   readonly isSource: (relativePath: string) => boolean;
 };
 
 type EntryKind = 'directory' | 'file' | 'unfollowed';
 
-type Source = { readonly path: string; readonly layoutRoot: string };
+type Source = {
+  readonly path: string;
+  readonly layoutRoots: Array.NonEmptyReadonlyArray<string>;
+};
 
 type Walked = Data.TaggedEnum<{
   Source: Source;
@@ -161,8 +164,8 @@ const walkEntries = (
       ({ entry, relativePath }) =>
         (entry.isDirectory() || walk.isSource(relativePath)) &&
         !walk.excluded.ignores(relativePath + slashFor(entry)) &&
-        !walk.atLayoutRoot.ignores(
-          path.posix.relative(walk.layoutRoot, relativePath) + slashFor(entry),
+        !Array.some(walk.layoutRoots, (root) =>
+          walk.atLayoutRoot.ignores(path.posix.relative(root, relativePath) + slashFor(entry)),
         ) &&
         !isGitignored(gitignores, relativePath, slashFor(entry)),
     ),
@@ -173,7 +176,7 @@ const walkEntries = (
           Match.value(kind).pipe(
             Match.when('directory', () => walkSubdirectory(walk, relativePath, gitignores)),
             Match.when('file', (): Gathered<Walked> => ({
-              found: [Walked.Source({ path: relativePath, layoutRoot: walk.layoutRoot })],
+              found: [Walked.Source({ path: relativePath, layoutRoots: walk.layoutRoots })],
               skipped: [],
             })),
             Match.when('unfollowed', () => NOTHING),
@@ -223,7 +226,12 @@ const walkSubdirectory = (
             skipped: [],
           })),
           Match.when('layout-root', () =>
-            walkFolder({ ...walk, layoutRoot: dir }, dir, inherited, entries),
+            walkFolder(
+              { ...walk, layoutRoots: Array.append(walk.layoutRoots, dir) },
+              dir,
+              inherited,
+              entries,
+            ),
           ),
           Match.when('folder', () => walkFolder(walk, dir, inherited, entries)),
           Match.exhaustive,
@@ -276,7 +284,7 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
     rootDir,
     excluded: rulesOf(rules.always),
     atLayoutRoot: rulesOf(rules.atLayoutRoots),
-    layoutRoot: '',
+    layoutRoots: [''],
     isSource: rules.isSource,
   };
   const inherited = inheritedGitignores(path.resolve(rootDir));
@@ -309,7 +317,7 @@ export const walkProject = (
     found,
     Walked.$match({
       Source: (source) =>
-        Result.succeed<Source>({ path: source.path, layoutRoot: source.layoutRoot }),
+        Result.succeed<Source>({ path: source.path, layoutRoots: source.layoutRoots }),
       Package: (nested) => Result.fail(nested.path),
     }),
   );

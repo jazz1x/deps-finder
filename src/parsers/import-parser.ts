@@ -51,7 +51,10 @@ export const shouldAnalyzeFile = (filePath: string): boolean =>
 
 type PathSegments = Array.NonEmptyReadonlyArray<string>;
 
-type Placement = { readonly segments: PathSegments; readonly fromLayoutRoot: PathSegments };
+type Placement = {
+  readonly segments: PathSegments;
+  readonly fromLayoutRoots: ReadonlyArray<PathSegments>;
+};
 
 const segmentsOf = (relativePath: string): PathSegments => String.split(relativePath, /[\\/]/);
 
@@ -68,20 +71,24 @@ const isDevelopmentPath: ReadonlyArray<(placement: Placement) => boolean> = [
       Array.lastNonEmpty(segments).includes(pattern),
     ),
   ({ segments }) => isHidden(Array.lastNonEmpty(segments)),
-  ({ fromLayoutRoot }) =>
-    Array.match(Array.tailNonEmpty(fromLayoutRoot), {
-      onEmpty: () => ROOT_TOOL_CONFIG_PATTERN.test(Array.headNonEmpty(fromLayoutRoot)),
-      onNonEmpty: () => isRootToolDirectory(Array.headNonEmpty(fromLayoutRoot)),
-    }),
+  ({ fromLayoutRoots }) =>
+    Array.some(fromLayoutRoots, (fromLayoutRoot) =>
+      Array.match(Array.tailNonEmpty(fromLayoutRoot), {
+        onEmpty: () => ROOT_TOOL_CONFIG_PATTERN.test(Array.headNonEmpty(fromLayoutRoot)),
+        onNonEmpty: () => isRootToolDirectory(Array.headNonEmpty(fromLayoutRoot)),
+      }),
+    ),
 ];
 
 export const fileContextOf = (source: {
   readonly path: string;
-  readonly layoutRoot: string;
+  readonly layoutRoots: ReadonlyArray<string>;
 }): FileContext => {
   const placement: Placement = {
     segments: segmentsOf(source.path),
-    fromLayoutRoot: segmentsOf(path.posix.relative(source.layoutRoot, source.path)),
+    fromLayoutRoots: Array.map(source.layoutRoots, (root) =>
+      segmentsOf(path.posix.relative(root, source.path)),
+    ),
   };
   return Array.some(isDevelopmentPath, (matches) => matches(placement))
     ? 'development'

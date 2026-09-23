@@ -338,6 +338,18 @@ describe('file contexts', () => {
     expect(result.misplaced).toEqual([]);
   });
 
+  test('a named lib inside root scripts/ or .github/ keeps the root tooling rules', async () => {
+    await write('scripts/package.json', '{"name":"scripts","type":"module","private":true}');
+    await write('scripts/release.ts', "import 'zx';");
+    await write('.github/actions/notify/package.json', '{"name":"notify","private":true}');
+    await write('.github/actions/notify/index.js', "import '@actions/core';");
+
+    const result = analyze(pkg({ devDependencies: ['zx', '@actions/core'] }));
+
+    expect(result.unused).toEqual([]);
+    expect(result.misplaced).toEqual([]);
+  });
+
   test('gitignored generated output is not scanned', async () => {
     await write('.gitignore', '.vercel\n.next/\n.gradle\n');
     await write('src/index.ts', 'export const x = 1;');
