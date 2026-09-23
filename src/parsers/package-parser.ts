@@ -3,7 +3,7 @@ import type { FileError } from '../domain/errors.js';
 import type { PackageJson, PackageName } from '../domain/types.js';
 import { readJsonFile } from '../utils/file-reader.js';
 
-export const DependencySection = Schema.optionalKey(
+const DependencySection = Schema.optionalKey(
   Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown)),
 );
 

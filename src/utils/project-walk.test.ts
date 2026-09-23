@@ -52,21 +52,79 @@ describe('walkProject', () => {
     expect(walked()).toEqual(['src/index.ts']);
   });
 
-  test('leaves out a named package that declares dependencies, and reports a broken one', async () => {
-    await put('src/index.ts');
-    await put('packages/a/package.json', '{"name":"a","devDependencies":{"vite":"7"}}');
-    await put('packages/a/src/index.ts');
-    await put('libs/b/package.json', '{"name":"b"}');
-    await put('libs/b/src/index.ts');
+  const packagesOf = (root = testDir) => walkProject(root, RULES).packages.toSorted();
+
+  test('leaves out array-form workspace members, honouring negation', async () => {
+    await put('package.json', '{"workspaces":["./packages/*","!packages/keep"]}');
+    await put('packages/a/package.json', '{"name":"a"}');
+    await put('packages/a/index.ts');
+    await put('packages/keep/package.json', '{"name":"keep"}');
+    await put('packages/keep/index.ts');
+    await put('packages/group/nested/package.json', '{"name":"nested"}');
+    await put('packages/group/nested/index.ts');
+    await put('packages/docs/index.ts');
+
+    expect(packagesOf()).toEqual(['packages/a']);
+    expect(walked()).toEqual(['packages/docs/index.ts', 'packages/group/nested/index.ts', 'packages/keep/index.ts']);
+  });
+
+  test('leaves out object-form workspace members', async () => {
+    await put('package.json', '{"workspaces":{"packages":["apps/*"],"nohoist":["**/x"]}}');
+    await put('apps/web/package.json', '{"name":"web"}');
+    await put('apps/web/index.ts');
+
+    expect(packagesOf()).toEqual(['apps/web']);
+    expect(walked()).toEqual([]);
+  });
+
+  test('leaves out pnpm-workspace.yaml members, honouring negation', async () => {
+    await put('pnpm-workspace.yaml', "packages:\n  - 'packages/**'\n  - '!**/test/**'\n");
+    await put('packages/a/package.json', '{}');
+    await put('packages/a/index.ts');
+    await put('packages/b/test/pkg/package.json', '{"name":"pkg"}');
+    await put('packages/b/test/pkg/index.ts');
+
+    expect(packagesOf()).toEqual(['packages/a']);
+    expect(walked()).toEqual(['packages/b/test/pkg/index.ts']);
+  });
+
+  test('warns about a malformed workspace declaration instead of guessing', async () => {
+    await put('package.json', '{"workspaces":"packages/*"}');
+    await put('pnpm-workspace.yaml', 'packages: [a\n');
+    await put('packages/a/package.json', '{"name":"a"}');
+    await put('packages/a/index.ts');
+
+    expect(packagesOf()).toEqual([]);
+    expect(skippedIn(testDir)).toEqual([
+      ['ParseFailed', 'package.json'],
+      ['ParseFailed', 'pnpm-workspace.yaml'],
+    ]);
+  });
+
+  test.each(['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'node_modules/'])(
+    'leaves out a nested project with its own %s',
+    async (install) => {
+      await put('examples/demo/package.json', '{}');
+      await put(install.endsWith('/') ? `examples/demo/${install}x/index.js` : `examples/demo/${install}`);
+      await put('examples/demo/index.ts');
+
+      expect(packagesOf()).toEqual(['examples/demo']);
+      expect(walked()).toEqual([]);
+    },
+  );
+
+  test('scans named libs that resolve from the root, and reports a broken manifest', async () => {
+    await put('libs/common/package.json', '{"name":"c","dependencies":{"x":"1"},"peerDependencies":null}');
+    await put('libs/common/src/index.ts');
     await put('src/ui/package.json', '{"sideEffects":false}');
     await put('src/ui/index.ts');
+    await put('vendor/yarn.lock');
+    await put('vendor/index.ts');
     await put('pkgs/bad/package.json', '{"name":');
     await put('pkgs/bad/index.ts');
-    await put('pkgs/nulls/package.json', '{"name":"n","devDependencies":null,"dependencies":{"x":"1"}}');
-    await put('pkgs/nulls/index.ts');
 
-    expect(walked()).toEqual(['libs/b/src/index.ts', 'pkgs/bad/index.ts', 'src/index.ts', 'src/ui/index.ts']);
-    expect(walkProject(testDir, RULES).packages.toSorted()).toEqual(['packages/a', 'pkgs/nulls']);
+    expect(packagesOf()).toEqual([]);
+    expect(walked()).toEqual(['libs/common/src/index.ts', 'pkgs/bad/index.ts', 'src/ui/index.ts', 'vendor/index.ts']);
     expect(skippedIn(testDir)).toEqual([['ParseFailed', 'pkgs/bad/package.json']]);
   });
 

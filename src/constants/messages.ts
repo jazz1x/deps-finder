@@ -24,7 +24,7 @@ export const MESSAGES = {
   INPUT_SKIPPED: (path: string, reason: string) =>
     `warning: could not use ${path} (${reason}); the scan went on without it.`,
   PACKAGE_LEFT_OUT: (path: string) =>
-    `note: left out ${path}, a separate package that declares its own dependencies; run deps-finder there to check it.`,
+    `note: left out ${path}, a workspace member or a package with its own install; run deps-finder there to check it.`,
 } as const;
 
 export const CLI_TEXT = {

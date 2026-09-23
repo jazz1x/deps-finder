@@ -1,6 +1,7 @@
 import { type Dirent, type Stats, readFileSync, readdirSync, statSync } from 'node:fs';
 import { Array, Match, Option, Result, Schema, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
+import YAML from 'yaml';
 import { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
 
@@ -62,6 +63,9 @@ const jsonWithComments: TextParser = (text) => {
   );
 };
 
+const yaml: TextParser = (text) =>
+  Result.try({ try: (): unknown => YAML.parse(text, { prettyErrors: false }), catch: messageOf });
+
 const stripByteOrderMark = (text: string): string =>
   text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 
@@ -86,3 +90,5 @@ const readStructured =
 export const readJsonFile = readStructured(strictJson);
 
 export const readJsoncFile = readStructured(jsonWithComments);
+
+export const readYamlFile = readStructured(yaml);

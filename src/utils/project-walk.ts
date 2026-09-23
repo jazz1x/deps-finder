@@ -1,9 +1,8 @@
 import { type Dirent, existsSync } from 'node:fs';
 import path from 'node:path';
-import { Array, Data, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Data, Match, Option, Result, Schema, String, pipe } from 'effect';
 import ignore, { type Ignore } from 'ignore';
 import type { FileError } from '../domain/errors.js';
-import { DependencySection } from '../parsers/package-parser.js';
 import type { Gathered } from '../domain/types.js';
 import {
   gatherAll,
@@ -12,6 +11,7 @@ import {
   readFile,
   readJsonFile,
   readStats,
+  readYamlFile,
 } from './file-reader.js';
 
 type WalkRules = {
@@ -24,13 +24,14 @@ type WalkRules = {
 // prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
 type Gitignore = { readonly prefix: string; readonly base: string; readonly rules: Ignore };
 
-// layoutRoots: rootDir and every named package.json above, relative to rootDir.
+// layoutRoots: rootDir and every directory above with a named package.json or a project.json, relative to rootDir.
 type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
   readonly atLayoutRoot: Ignore;
   readonly layoutRoots: Array.NonEmptyReadonlyArray<string>;
   readonly isSource: (relativePath: string) => boolean;
+  readonly isWorkspaceMember: (dir: string) => boolean;
 };
 
 type EntryKind = 'directory' | 'file' | 'unfollowed';
@@ -54,38 +55,86 @@ const skippedOnly = (skipped: ReadonlyArray<FileError>): Gathered<never> => ({
   skipped,
 });
 
-const Manifest = Schema.Struct({
-  name: Schema.optionalKey(Schema.String),
-  dependencies: DependencySection,
-  devDependencies: DependencySection,
-  peerDependencies: DependencySection,
-  optionalDependencies: DependencySection,
+const Manifest = Schema.Struct({ name: Schema.optionalKey(Schema.String) });
+
+const Globs = Schema.Array(Schema.String);
+
+const RootManifest = Schema.Struct({
+  workspaces: Schema.optionalKey(Schema.Union([Globs, Schema.Struct({ packages: Globs })])),
 });
 
-type Manifest = typeof Manifest.Type;
+const PnpmWorkspace = Schema.NullOr(Schema.Struct({ packages: Schema.optionalKey(Globs) }));
+
+const INSTALL_MARKERS = [
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+  'bun.lock',
+  'bun.lockb',
+  'node_modules',
+];
 
 type Role = 'package' | 'layout-root' | 'folder';
 
-const declaresDependencies = (manifest: Manifest): boolean =>
-  Array.some(
-    [
-      manifest.dependencies,
-      manifest.devDependencies,
-      manifest.peerDependencies,
-      manifest.optionalDependencies,
-    ],
-    (section) => Array.isReadonlyArrayNonEmpty(Object.keys(section ?? {})),
+type Signals = { readonly separateInstall: boolean; readonly layoutRoot: boolean };
+
+const roleOf = (signals: Signals): Role =>
+  Match.value(signals).pipe(
+    Match.when({ separateInstall: true }, (): Role => 'package'),
+    Match.when({ layoutRoot: true }, (): Role => 'layout-root'),
+    Match.orElse((): Role => 'folder'),
   );
 
-const roleOf = (manifest: Manifest): Role =>
-  Match.value(manifest).pipe(
-    Match.when(
-      (m) => m.name === undefined,
-      (): Role => 'folder',
+type WorkspaceGlob = { readonly negated: boolean; readonly pattern: string };
+
+const workspaceGlobOf = (glob: string): WorkspaceGlob => {
+  const negated = String.startsWith('!')(glob);
+  return {
+    negated,
+    pattern: pipe(
+      negated ? glob.slice(1) : glob,
+      String.replace(/^\.\//, ''),
+      String.replace(/\/+$/, ''),
     ),
-    Match.when(declaresDependencies, (): Role => 'package'),
-    Match.orElse((): Role => 'layout-root'),
+  };
+};
+
+// Later globs win, so a negation drops what an earlier glob matched.
+const isMemberOf =
+  (globs: ReadonlyArray<WorkspaceGlob>) =>
+  (dir: string): boolean =>
+    Array.reduce(globs, false, (member, { negated, pattern }) =>
+      path.posix.matchesGlob(dir, pattern) ? !negated : member,
+    );
+
+const workspacesOf = (manifest: typeof RootManifest.Type): ReadonlyArray<string> =>
+  Match.value(manifest.workspaces).pipe(
+    Match.when(Match.undefined, (): ReadonlyArray<string> => []),
+    Match.when({ packages: Match.any }, (declared) => declared.packages),
+    Match.orElse((globs) => globs),
   );
+
+const pnpmPackagesOf = (workspace: typeof PnpmWorkspace.Type): ReadonlyArray<string> =>
+  Match.value(workspace).pipe(
+    Match.when(Match.null, (): ReadonlyArray<string> => []),
+    Match.orElse((declared) => declared.packages ?? []),
+  );
+
+const workspaceGlobsIn = (
+  rootDir: string,
+  entries: ReadonlyArray<Dirent>,
+): Gathered<WorkspaceGlob> => {
+  const npm = readPresent(rootDir, entries, 'package.json', readJsonFile(RootManifest));
+  const pnpm = readPresent(rootDir, entries, 'pnpm-workspace.yaml', readYamlFile(PnpmWorkspace));
+  return {
+    found: Array.map(
+      [...Array.flatMap(npm.found, workspacesOf), ...Array.flatMap(pnpm.found, pnpmPackagesOf)],
+      workspaceGlobOf,
+    ),
+    skipped: [...npm.skipped, ...pnpm.skipped],
+  };
+};
 
 const rulesOf = (patterns: string | ReadonlyArray<string>): Ignore =>
   ignore({ ignorecase: false }).add(patterns);
@@ -213,9 +262,15 @@ const walkSubdirectory = (
         'package.json',
         readJsonFile(Manifest),
       );
-      const role = Option.match(Array.head(manifests.found), {
-        onNone: (): Role => 'folder',
-        onSome: roleOf,
+      const names = Array.map(entries, (entry) => entry.name);
+      const role = roleOf({
+        separateInstall:
+          Array.contains(names, 'package.json') &&
+          (walk.isWorkspaceMember(dir) ||
+            Array.some(INSTALL_MARKERS, (marker) => Array.contains(names, marker))),
+        layoutRoot:
+          Array.some(manifests.found, (manifest) => manifest.name !== undefined) ||
+          Array.contains(names, 'project.json'),
       });
       return gatherAll([
         skippedOnly(manifests.skipped),
@@ -285,6 +340,7 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
     onSuccess: (entries) => {
       const own = gitignoresIn(rootDir, '', entries);
       const gitignores = [...inherited.gitignores.found, ...own.found];
+      const workspaces = workspaceGlobsIn(rootDir, entries);
       const walk: Walk = {
         rootDir,
         excluded: rulesOf(rules.always),
@@ -296,11 +352,13 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
         ),
         layoutRoots: [''],
         isSource: rules.isSource,
+        isWorkspaceMember: isMemberOf(workspaces.found),
       };
       return gatherAll([
         skippedOnly(inherited.exclude.skipped),
         skippedOnly(inherited.gitignores.skipped),
         skippedOnly(own.skipped),
+        skippedOnly(workspaces.skipped),
         walkEntries(walk, '', [...inherited.exclude.found, ...gitignores], entries),
       ]);
     },

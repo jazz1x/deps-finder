@@ -309,20 +309,41 @@ describe('file contexts', () => {
     expect(result.misplaced.map((m) => m.packageName)).toEqual(['chalk', 'zod']);
   });
 
-  test('a named package that declares dependencies is left to its own run', async () => {
+  test('workspace members and nested installs are left to their own run', async () => {
+    await write('package.json', '{"workspaces":["packages/*"]}');
     await write('src/index.ts', 'export const x = 1;');
-    await write('functions/package.json', '{"name":"functions","dependencies":{"firebase-functions":"6"}}');
-    await write('functions/dist/index.js', "require('typescript');");
+    await write('functions/package.json', '{"name":"functions"}');
+    await write('functions/package-lock.json', '{}');
     await write('functions/src/index.ts', "import 'is-odd';");
-    await write('packages/a/package.json', '{"name":"a","optionalDependencies":{"fsevents":"2"}}');
+    await write('packages/a/package.json', '{"name":"a"}');
     await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
     await write('packages/a/src/index.ts', "import 'left-pad';");
-    await write('packages/p/package.json', '{"name":"p","peerDependencies":{"react":"19"}}');
-    await write('packages/p/index.ts', "import 'ramda';");
 
-    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd', 'ramda'], devDependencies: ['typescript', 'vite'] }));
+    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd'], devDependencies: ['vite'] }));
 
-    expect(result.unused).toEqual(['left-pad', 'is-odd', 'ramda', 'typescript', 'vite']);
+    expect(result.unused).toEqual(['left-pad', 'is-odd', 'vite']);
+  });
+
+  test('an Nx lib with a name and dependencies but no install of its own is scanned', async () => {
+    await write('libs/common/package.json', '{"name":"@x/common","dependencies":{"dotenv":"16"}}');
+    await write('libs/common/project.json', '{}');
+    await write('libs/common/src/log.ts', "import 'winston';\nimport 'dotenv';");
+
+    const result = analyze(pkg({ dependencies: ['winston', 'dotenv'] }));
+
+    expect(result.unused).toEqual([]);
+  });
+
+  test('a project.json directory is a layout root', async () => {
+    await write('apps/api/project.json', '{"name":"api"}');
+    await write('apps/api/jest.config.ts', "import 'jest';");
+    await write('apps/api/vite.config.ts', "import { nxViteTsPaths } from '@nx/vite';");
+    await write('apps/api/dist/main.js', "require('left-pad');");
+    await write('apps/api/src/main.ts', "import 'express';");
+
+    const result = analyze(pkg({ dependencies: ['express', 'left-pad'], devDependencies: ['jest', '@nx/vite'] }));
+
+    expect(result.unused).toEqual(['left-pad']);
     expect(result.misplaced).toEqual([]);
   });
 
