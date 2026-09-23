@@ -227,6 +227,18 @@ const detectedBuildDirectories = (rootDir: string): Gathered<string> =>
 
 const anchoredDirectory = (dir: string): string => path.posix.join('/', dir, '/');
 
+// A leading slash anchors a .gitignore pattern at rootDir, so a path under rootDir becomes one.
+const anchoredExclude =
+  (rootDir: string) =>
+  (pattern: string): string =>
+    Match.value(pattern).pipe(
+      Match.when(String.startsWith(`${rootDir}${path.sep}`), (absolute) =>
+        path.posix.join('/', path.relative(rootDir, absolute)),
+      ),
+      Match.when(String.startsWith('./'), (relative) => relative.slice(1)),
+      Match.orElse((kept) => kept),
+    );
+
 export const findFiles = (
   rootDir: string,
   options: {
@@ -239,7 +251,7 @@ export const findFiles = (
     always: [
       ...ALWAYS_EXCLUDED,
       ...Array.map(detected.found, anchoredDirectory),
-      ...(options.excludePatterns ?? []),
+      ...Array.map(options.excludePatterns ?? [], anchoredExclude(path.resolve(rootDir))),
     ],
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
   });

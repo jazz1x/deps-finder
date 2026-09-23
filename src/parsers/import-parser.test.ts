@@ -193,6 +193,20 @@ describe('findFiles', () => {
     expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/lib/util.ts']);
   });
 
+  test('takes --exclude paths written with ./ or as absolute paths under rootDir', async () => {
+    await mkdir(`${testDir}/src/legacy`, { recursive: true });
+    await mkdir(`${testDir}/src/old`, { recursive: true });
+    await writeFile(`${testDir}/src/index.ts`, '');
+    await writeFile(`${testDir}/src/legacy/x.ts`, '');
+    await writeFile(`${testDir}/src/old/y.ts`, '');
+
+    const files = findFiles(testDir, {
+      excludePatterns: ['./src/legacy/**', `${path.resolve(testDir)}/src/old/**`],
+    }).found;
+
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
+  });
+
   test('reports an unreadable .gitignore and a broken tsconfig.json', async () => {
     await writeFile(`${testDir}/src/index.ts`, '');
     await writeFile(`${testDir}/src/.gitignore`, 'index.ts');
