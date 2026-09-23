@@ -531,6 +531,8 @@ describe('fileContextOf', () => {
     'playwright.config.ts',
     'next.config.mjs',
     'jest.preset.js',
+    'webpack.config.prod.js',
+    'vite.config.base.ts',
     '.eslintrc.cjs',
     'scripts/perf/lib/attach.ts',
     '.storybook/main.ts',

@@ -11,7 +11,7 @@ export const ANALYZABLE_EXTENSIONS = [
 
 export const DECLARATION_FILE_PATTERN = /\.d\.[cm]?ts$/;
 
-export const ROOT_TOOL_CONFIG_PATTERN = /\.(config|preset)\.[cm]?[jt]sx?$/;
+export const ROOT_TOOL_CONFIG_PATTERN = /\.(config|preset)\./;
 
 export const ROOT_TOOLING_DIRECTORIES = ['scripts'] as const;
 
