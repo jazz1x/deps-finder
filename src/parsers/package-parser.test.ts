@@ -184,6 +184,21 @@ describe('package-parser', () => {
       expect(Result.isFailure(result)).toBe(true);
     });
 
+    test.each([['"lodash"'], ['["lodash"]'], ['5']])('rejects a non-object dependencies section (%s)', async (section) => {
+      await writeFile(testFile, `{"dependencies":${section}}`);
+      const result = readPackageJson(testFile);
+      expect(
+        Result.match(result, {
+          onSuccess: () => '',
+          onFailure: FileError.$match({
+            ParseFailed: (e) => e.reason,
+            FileNotFound: () => '',
+            ReadFailed: () => '',
+          }),
+        }),
+      ).toContain('dependencies');
+    });
+
     test('returns ParseFailed for json with trailing garbage', async () => {
       await writeFile(testFile, '{"name":"x"}garbage');
       const result = readPackageJson(testFile);

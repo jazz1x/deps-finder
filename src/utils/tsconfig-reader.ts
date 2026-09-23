@@ -4,7 +4,9 @@ import type { FileError } from '../domain/errors.js';
 import { readJsonFile } from './file-reader.js';
 
 const TsConfig = Schema.Struct({
-  compilerOptions: Schema.optionalKey(Schema.Struct({ outDir: Schema.optionalKey(Schema.String) })),
+  compilerOptions: Schema.optionalKey(
+    Schema.Struct({ outDir: Schema.optionalKey(Schema.NonEmptyString) }),
+  ),
 });
 
 export type TsConfig = typeof TsConfig.Type;

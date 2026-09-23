@@ -2,10 +2,16 @@ import { readFileSync } from 'node:fs';
 import { Match, Result, Schema, pipe } from 'effect';
 import { FileError } from '../domain/errors.js';
 
+const messageOf = (cause: unknown): string =>
+  Match.value(cause).pipe(
+    Match.when(Match.instanceOf(Error), (error) => error.message),
+    Match.orElse(String),
+  );
+
 const readFailure = (path: string) => (cause: unknown) =>
   Match.value(cause).pipe(
     Match.when({ code: 'ENOENT' }, () => FileError.FileNotFound({ path })),
-    Match.orElse(() => FileError.ReadFailed({ path, reason: String(cause) })),
+    Match.orElse(() => FileError.ReadFailed({ path, reason: messageOf(cause) })),
   );
 
 export const readFile = (path: string): Result.Result<string, FileError> =>
@@ -17,8 +23,14 @@ export const readJsonFile =
     pipe(
       readFile(path),
       Result.flatMap((text) =>
+        Result.try({
+          try: (): unknown => JSON.parse(text),
+          catch: (cause) => FileError.ParseFailed({ path, reason: messageOf(cause) }),
+        }),
+      ),
+      Result.flatMap((json) =>
         pipe(
-          Schema.decodeUnknownResult(Schema.fromJsonString(schema))(text),
+          Schema.decodeUnknownResult(schema)(json),
           Result.mapError((error) => FileError.ParseFailed({ path, reason: error.message })),
         ),
       ),

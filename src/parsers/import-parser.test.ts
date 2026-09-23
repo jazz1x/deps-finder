@@ -350,6 +350,7 @@ describe('extractPackageName edge cases', () => {
     expect(extractPackageName('@scope')).toEqual(Option.none());
     expect(extractPackageName('@scope/')).toEqual(Option.none());
     expect(extractPackageName('@/')).toEqual(Option.none());
+    expect(extractPackageName('@/components/Button')).toEqual(Option.none());
   });
 });
 
