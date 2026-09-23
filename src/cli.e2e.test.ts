@@ -108,6 +108,16 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
   });
 
+  test('warns about project inputs it cannot use and goes on', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await mkdir(path.join(tmpDir, 'weird'));
+    await writeFile(path.join(tmpDir, 'weird/package.json'), '{"name":');
+    await writeFile(path.join(tmpDir, 'weird/index.ts'), "import _ from 'lodash';");
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr).toContain('warning: could not use weird/package.json');
+    expect(r.status).toBe(0);
+  });
+
   test('--json emits parseable JSON with totalIssues and exits 1 when issues exist', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }));
     const r = runCli(['--json'], tmpDir);
