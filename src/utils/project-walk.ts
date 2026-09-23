@@ -1,6 +1,6 @@
 import { type Dirent, existsSync } from 'node:fs';
 import path from 'node:path';
-import { Array, Data, Match, Option, Result, Schema, String, pipe } from 'effect';
+import { Array, Data, Match, Option, Result, Schema, pipe } from 'effect';
 import ignore, { type Ignore } from 'ignore';
 import type { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
@@ -13,33 +13,35 @@ import {
   readStats,
 } from './file-reader.js';
 
-export type WalkRules = {
+type WalkRules = {
   readonly always: ReadonlyArray<string>;
+  readonly atLayoutRoots: ReadonlyArray<string>;
   readonly withoutGitignore: ReadonlyArray<string>;
   readonly isSource: (relativePath: string) => boolean;
-  readonly aliasTargets: ReadonlyArray<string>;
 };
 
 // prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
 type Gitignore = { readonly prefix: string; readonly base: string; readonly rules: Ignore };
 
+// layoutRoot: rootDir or the nearest named package.json above, relative to rootDir.
 type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
+  readonly atLayoutRoot: Ignore;
+  readonly layoutRoot: string;
   readonly isSource: (relativePath: string) => boolean;
-  readonly aliasTargets: ReadonlyArray<string>;
 };
 
 type EntryKind = 'directory' | 'file' | 'unfollowed';
 
+type Source = { readonly path: string; readonly layoutRoot: string };
+
 type Walked = Data.TaggedEnum<{
-  Source: { readonly path: string };
+  Source: Source;
   Package: { readonly path: string };
 }>;
 
 const Walked = Data.taggedEnum<Walked>();
-
-export type ProjectWalk = Gathered<string> & { readonly packages: ReadonlyArray<string> };
 
 const NOTHING: Gathered<never> = { found: [], skipped: [] };
 
@@ -48,7 +50,40 @@ const skippedOnly = (skipped: ReadonlyArray<FileError>): Gathered<never> => ({
   skipped,
 });
 
-const Manifest = Schema.Struct({ name: Schema.optionalKey(Schema.String) });
+const DependencySection = Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown));
+
+const Manifest = Schema.Struct({
+  name: Schema.optionalKey(Schema.String),
+  dependencies: DependencySection,
+  devDependencies: DependencySection,
+  peerDependencies: DependencySection,
+  optionalDependencies: DependencySection,
+});
+
+type Manifest = typeof Manifest.Type;
+
+type Role = 'package' | 'layout-root' | 'folder';
+
+const declaresDependencies = (manifest: Manifest): boolean =>
+  Array.some(
+    [
+      manifest.dependencies,
+      manifest.devDependencies,
+      manifest.peerDependencies,
+      manifest.optionalDependencies,
+    ],
+    (section) => Array.isReadonlyArrayNonEmpty(Object.keys(section ?? {})),
+  );
+
+const roleOf = (manifest: Manifest): Role =>
+  Match.value(manifest).pipe(
+    Match.when(
+      (m) => m.name === undefined,
+      (): Role => 'folder',
+    ),
+    Match.when(declaresDependencies, (): Role => 'package'),
+    Match.orElse((): Role => 'layout-root'),
+  );
 
 const rulesOf = (patterns: string | ReadonlyArray<string>): Ignore =>
   ignore({ ignorecase: false }).add(patterns);
@@ -126,6 +161,9 @@ const walkEntries = (
       ({ entry, relativePath }) =>
         (entry.isDirectory() || walk.isSource(relativePath)) &&
         !walk.excluded.ignores(relativePath + slashFor(entry)) &&
+        !walk.atLayoutRoot.ignores(
+          path.posix.relative(walk.layoutRoot, relativePath) + slashFor(entry),
+        ) &&
         !isGitignored(gitignores, relativePath, slashFor(entry)),
     ),
     Array.map(({ entry, relativePath }) =>
@@ -135,7 +173,7 @@ const walkEntries = (
           Match.value(kind).pipe(
             Match.when('directory', () => walkSubdirectory(walk, relativePath, gitignores)),
             Match.when('file', (): Gathered<Walked> => ({
-              found: [Walked.Source({ path: relativePath })],
+              found: [Walked.Source({ path: relativePath, layoutRoot: walk.layoutRoot })],
               skipped: [],
             })),
             Match.when('unfollowed', () => NOTHING),
@@ -173,18 +211,22 @@ const walkSubdirectory = (
         'package.json',
         readJsonFile(Manifest),
       );
-      const aliased = Array.some(walk.aliasTargets, String.startsWith(`${dir}/`));
+      const role = Option.match(Array.head(manifests.found), {
+        onNone: (): Role => 'folder',
+        onSome: roleOf,
+      });
       return gatherAll([
         skippedOnly(manifests.skipped),
-        Array.match(
-          Array.filter(manifests.found, (m) => m.name !== undefined && !aliased),
-          {
-            onEmpty: () => walkFolder(walk, dir, inherited, entries),
-            onNonEmpty: (): Gathered<Walked> => ({
-              found: [Walked.Package({ path: dir })],
-              skipped: [],
-            }),
-          },
+        Match.value(role).pipe(
+          Match.when('package', (): Gathered<Walked> => ({
+            found: [Walked.Package({ path: dir })],
+            skipped: [],
+          })),
+          Match.when('layout-root', () =>
+            walkFolder({ ...walk, layoutRoot: dir }, dir, inherited, entries),
+          ),
+          Match.when('folder', () => walkFolder(walk, dir, inherited, entries)),
+          Match.exhaustive,
         ),
       ]);
     },
@@ -233,8 +275,9 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
   const walk: Walk = {
     rootDir,
     excluded: rulesOf(rules.always),
+    atLayoutRoot: rulesOf(rules.atLayoutRoots),
+    layoutRoot: '',
     isSource: rules.isSource,
-    aliasTargets: rules.aliasTargets,
   };
   const inherited = inheritedGitignores(path.resolve(rootDir));
   return Result.match(readDirectory(rootDir), {
@@ -257,12 +300,16 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
   });
 };
 
-export const walkProject = (rootDir: string, rules: WalkRules): ProjectWalk => {
+export const walkProject = (
+  rootDir: string,
+  rules: WalkRules,
+): Gathered<Source> & { readonly packages: ReadonlyArray<string> } => {
   const { found, skipped } = walkRoot(rootDir, rules);
   const [packages, sources] = Array.partition(
     found,
     Walked.$match({
-      Source: (source) => Result.succeed(source.path),
+      Source: (source) =>
+        Result.succeed<Source>({ path: source.path, layoutRoot: source.layoutRoot }),
       Package: (nested) => Result.fail(nested.path),
     }),
   );

@@ -121,7 +121,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('names each nested package it leaves out', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { winston: '^3.0.0' } }));
     await mkdir(path.join(tmpDir, 'libs/common/src'), { recursive: true });
-    await writeFile(path.join(tmpDir, 'libs/common/package.json'), '{"name":"@x/common"}');
+    await writeFile(path.join(tmpDir, 'libs/common/package.json'), '{"name":"@x/common","dependencies":{"dotenv":"16"}}');
     await writeFile(path.join(tmpDir, 'libs/common/src/log.ts'), "import 'winston';");
     const r = runCli(['--json'], tmpDir);
     expect(r.stderr).toContain('libs/common');

@@ -309,11 +309,11 @@ describe('file contexts', () => {
     expect(result.misplaced.map((m) => m.packageName)).toEqual(['chalk', 'zod']);
   });
 
-  test('a nested package with a name is left to its own run', async () => {
+  test('a named package that declares dependencies is left to its own run', async () => {
     await write('src/index.ts', 'export const x = 1;');
-    await write('functions/package.json', '{"name":"functions"}');
+    await write('functions/package.json', '{"name":"functions","dependencies":{"firebase-functions":"6"}}');
     await write('functions/dist/index.js', "require('typescript');");
-    await write('packages/a/package.json', '{"name":"a"}');
+    await write('packages/a/package.json', '{"name":"a","optionalDependencies":{"fsevents":"2"}}');
     await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
     await write('packages/a/src/index.ts', "import 'left-pad';");
 
@@ -323,20 +323,19 @@ describe('file contexts', () => {
     expect(result.misplaced).toEqual([]);
   });
 
-  test('a named lib the root tsconfig paths map into is part of this package', async () => {
-    await write(
-      'tsconfig.base.json',
-      '{ "compilerOptions": { "paths": { "@x/common": ["libs/common/src/index.ts"], "@x/ui/*": ["./libs/ui/src/*"] } } }',
-    );
-    await write('apps/api/src/main.ts', "import { log } from '@x/common';");
-    await write('libs/common/package.json', '{"name":"@x/common","dependencies":{"dotenv":"16"}}');
-    await write('libs/common/src/index.ts', "import 'winston';");
-    await write('libs/ui/package.json', '{"name":"@x/ui"}');
+  test('a named lib without dependencies is scanned, anchored at its own root', async () => {
+    await write('libs/ui/package.json', '{"name":"@x/ui","dependencies":{}}');
     await write('libs/ui/src/button.ts', "import 'chalk';");
+    await write('libs/ui/vite.config.ts', "import { defineConfig } from 'vite';");
+    await write('libs/ui/scripts/release.ts', "import 'execa';");
+    await write('libs/ui/dist/index.js', "require('left-pad');");
+    await write('libs/ui/test/fixtures/pkg/package.json', '{"name":"fixture"}');
+    await write('libs/ui/test/fixtures/pkg/index.ts', "import 'nock';");
 
-    const result = analyze(pkg({ dependencies: ['winston', 'chalk'] }));
+    const result = analyze(pkg({ dependencies: ['chalk', 'left-pad'], devDependencies: ['vite', 'execa', 'nock'] }));
 
-    expect(result.unused).toEqual([]);
+    expect(result.unused).toEqual(['left-pad']);
+    expect(result.misplaced).toEqual([]);
   });
 
   test('gitignored generated output is not scanned', async () => {
@@ -394,10 +393,18 @@ describe('file contexts', () => {
 
   test('build output is excluded only at the project root', async () => {
     await write('dist/index.js', "import 'dist-only';");
-    await write('src/build/index.ts', "import _ from 'lodash';");
+    await write('build/index.js', "import 'build-only';");
+    await write('out/index.js', "import 'out-only';");
+    await write('coverage/lcov-report/prettify.js', "import 'coverage-only';");
+    await write('src/dist/index.ts', "import 'lodash';");
+    await write('src/build/index.ts', "import 'ramda';");
+    await write('src/out/index.ts', "import 'zod';");
+    await write('src/coverage/index.ts', "import 'dayjs';");
 
-    const result = analyze(pkg({ dependencies: ['lodash', 'dist-only'] }));
+    const result = analyze(
+      pkg({ dependencies: ['lodash', 'ramda', 'zod', 'dayjs', 'dist-only', 'build-only', 'out-only', 'coverage-only'] }),
+    );
 
-    expect(result.unused).toEqual(['dist-only']);
+    expect(result.unused).toEqual(['dist-only', 'build-only', 'out-only', 'coverage-only']);
   });
 });

@@ -45,14 +45,10 @@ export const DEVELOPMENT_FILENAME_PATTERNS = [
 ] as const;
 
 // .gitignore syntax: a leading slash anchors the entry at rootDir.
-export const ALWAYS_EXCLUDED = [
-  '.git/',
-  'node_modules/',
-  '/dist/',
-  '/build/',
-  '/out/',
-  '/coverage/',
-] as const;
+export const ALWAYS_EXCLUDED = ['.git/', 'node_modules/'] as const;
+
+// Anchored at rootDir and at every nested named package.json.
+export const BUILD_OUTPUT_DIRECTORIES = ['/dist/', '/build/', '/out/', '/coverage/'] as const;
 
 export const EXCLUDED_WITHOUT_GITIGNORE = [
   '/.next/',

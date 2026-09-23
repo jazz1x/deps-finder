@@ -16,6 +16,7 @@ import {
 import {
   ALWAYS_EXCLUDED,
   ANALYZABLE_EXTENSIONS,
+  BUILD_OUTPUT_DIRECTORIES,
   DECLARATION_FILE_PATTERN,
   DEVELOPMENT_DIRECTORIES,
   DEVELOPMENT_FILENAME_PATTERNS,
@@ -35,7 +36,7 @@ import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build
 import { gatherAll, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { walkProject } from '../utils/project-walk.js';
-import { type TsConfig, aliasTargetsOf, readRootTsConfigs } from '../utils/tsconfig-reader.js';
+import { readRootTsConfigs } from '../utils/tsconfig-reader.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
@@ -50,29 +51,39 @@ export const shouldAnalyzeFile = (filePath: string): boolean =>
 
 type PathSegments = Array.NonEmptyReadonlyArray<string>;
 
+type Placement = { readonly segments: PathSegments; readonly fromLayoutRoot: PathSegments };
+
+const segmentsOf = (relativePath: string): PathSegments => String.split(relativePath, /[\\/]/);
+
 const isHidden = String.startsWith('.');
 
 const isRootToolDirectory = (name: string): boolean =>
   isHidden(name) || Array.contains(ROOT_TOOLING_DIRECTORIES, name);
 
-const isDevelopmentPath: ReadonlyArray<(segments: PathSegments) => boolean> = [
-  (segments) =>
+const isDevelopmentPath: ReadonlyArray<(placement: Placement) => boolean> = [
+  ({ segments }) =>
     Array.some(Array.initNonEmpty(segments), (dir) => Array.contains(DEVELOPMENT_DIRECTORIES, dir)),
-  (segments) =>
+  ({ segments }) =>
     Array.some(DEVELOPMENT_FILENAME_PATTERNS, (pattern) =>
       Array.lastNonEmpty(segments).includes(pattern),
     ),
-  (segments) => isHidden(Array.lastNonEmpty(segments)),
-  (segments) =>
-    Array.match(Array.tailNonEmpty(segments), {
-      onEmpty: () => ROOT_TOOL_CONFIG_PATTERN.test(Array.headNonEmpty(segments)),
-      onNonEmpty: () => isRootToolDirectory(Array.headNonEmpty(segments)),
+  ({ segments }) => isHidden(Array.lastNonEmpty(segments)),
+  ({ fromLayoutRoot }) =>
+    Array.match(Array.tailNonEmpty(fromLayoutRoot), {
+      onEmpty: () => ROOT_TOOL_CONFIG_PATTERN.test(Array.headNonEmpty(fromLayoutRoot)),
+      onNonEmpty: () => isRootToolDirectory(Array.headNonEmpty(fromLayoutRoot)),
     }),
 ];
 
-export const fileContextOf = (relativePath: string): FileContext => {
-  const segments = String.split(relativePath, /[\\/]/);
-  return Array.some(isDevelopmentPath, (matches) => matches(segments))
+export const fileContextOf = (source: {
+  readonly path: string;
+  readonly layoutRoot: string;
+}): FileContext => {
+  const placement: Placement = {
+    segments: segmentsOf(source.path),
+    fromLayoutRoot: segmentsOf(path.posix.relative(source.layoutRoot, source.path)),
+  };
+  return Array.some(isDevelopmentPath, (matches) => matches(placement))
     ? 'development'
     : 'production';
 };
@@ -221,11 +232,14 @@ export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSo
   return { imports: Array.flatten(parsed), unreadable };
 };
 
-const detectedBuildDirectories = (
-  rootDir: string,
-  tsconfigs: ReadonlyArray<TsConfig>,
-): Gathered<string> =>
-  gatherAll([detectBuildDirectories(rootDir, tsconfigs), detectByHeuristic(rootDir)]);
+const detectedBuildDirectories = (rootDir: string): Gathered<string> => {
+  const tsconfigs = readRootTsConfigs(rootDir);
+  return gatherAll([
+    { found: [], skipped: tsconfigs.skipped },
+    detectBuildDirectories(rootDir, tsconfigs.found),
+    detectByHeuristic(rootDir),
+  ]);
+};
 
 const anchoredDirectory = (dir: string): string => path.posix.join('/', dir, '/');
 
@@ -248,29 +262,26 @@ export const findFiles = (
     readonly noAutoDetect?: boolean;
   } = {},
 ): Gathered<SourceFile> & { readonly packages: ReadonlyArray<string> } => {
-  const tsconfigs = readRootTsConfigs(rootDir);
-  const detected = options.noAutoDetect
-    ? gatherAll<string>([])
-    : detectedBuildDirectories(rootDir, tsconfigs.found);
+  const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
   const walked = walkProject(rootDir, {
     always: [
       ...ALWAYS_EXCLUDED,
       ...Array.map(detected.found, anchoredDirectory),
       ...Array.map(options.excludePatterns ?? [], anchoredExclude(path.resolve(rootDir))),
     ],
+    atLayoutRoots: BUILD_OUTPUT_DIRECTORIES,
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
     isSource: shouldAnalyzeFile,
-    aliasTargets: aliasTargetsOf(tsconfigs.found),
   });
   return {
     found: pipe(
       walked.found,
-      Array.map((relativePath) => ({
-        path: path.resolve(rootDir, relativePath),
-        context: fileContextOf(relativePath),
+      Array.map((source) => ({
+        path: path.resolve(rootDir, source.path),
+        context: fileContextOf(source),
       })),
     ),
-    skipped: [...tsconfigs.skipped, ...detected.skipped, ...walked.skipped],
+    skipped: [...detected.skipped, ...walked.skipped],
     packages: Array.map(walked.packages, (dir) => path.join(rootDir, dir)),
   };
 };

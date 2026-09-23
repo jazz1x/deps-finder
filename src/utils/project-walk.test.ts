@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ALWAYS_EXCLUDED, EXCLUDED_WITHOUT_GITIGNORE } from '@/constants/patterns';
+import { ALWAYS_EXCLUDED, BUILD_OUTPUT_DIRECTORIES, EXCLUDED_WITHOUT_GITIGNORE } from '@/constants/patterns';
 import { FileError } from '@/domain/errors';
 import { shouldAnalyzeFile } from '@/parsers/import-parser';
 import { walkProject } from './project-walk';
 
-const RULES = { always: ALWAYS_EXCLUDED, withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE, isSource: shouldAnalyzeFile, aliasTargets: [] };
+const RULES = {
+  always: ALWAYS_EXCLUDED,
+  atLayoutRoots: BUILD_OUTPUT_DIRECTORIES,
+  withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
+  isSource: shouldAnalyzeFile,
+};
 
 const tagOf = FileError.$match({
   FileNotFound: () => 'FileNotFound',
@@ -25,7 +30,10 @@ describe('walkProject', () => {
     await writeFile(path.join(testDir, file), content);
   };
 
-  const walked = (root = testDir) => walkProject(root, RULES).found.toSorted();
+  const walked = (root = testDir) =>
+    walkProject(root, RULES)
+      .found.map((source) => source.path)
+      .toSorted();
 
   beforeEach(async () => {
     testDir = await mkdtemp(path.join(tmpdir(), 'depsfinder-walk-'));
@@ -44,16 +52,18 @@ describe('walkProject', () => {
     expect(walked()).toEqual(['src/index.ts']);
   });
 
-  test('leaves out a subdirectory whose package.json has a name, and reports a broken one', async () => {
+  test('leaves out a named package that declares dependencies, and reports a broken one', async () => {
     await put('src/index.ts');
-    await put('packages/a/package.json', '{"name":"a"}');
+    await put('packages/a/package.json', '{"name":"a","devDependencies":{"vite":"7"}}');
     await put('packages/a/src/index.ts');
+    await put('libs/b/package.json', '{"name":"b"}');
+    await put('libs/b/src/index.ts');
     await put('src/ui/package.json', '{"sideEffects":false}');
     await put('src/ui/index.ts');
     await put('pkgs/bad/package.json', '{"name":');
     await put('pkgs/bad/index.ts');
 
-    expect(walked()).toEqual(['pkgs/bad/index.ts', 'src/index.ts', 'src/ui/index.ts']);
+    expect(walked()).toEqual(['libs/b/src/index.ts', 'pkgs/bad/index.ts', 'src/index.ts', 'src/ui/index.ts']);
     expect(walkProject(testDir, RULES).packages).toEqual(['packages/a']);
     expect(skippedIn(testDir)).toEqual([['ParseFailed', 'pkgs/bad/package.json']]);
   });
@@ -169,7 +179,7 @@ describe('walkProject', () => {
     const { found, skipped } = walkProject(testDir, RULES);
     await chmod(path.join(testDir, 'locked'), 0o755);
 
-    expect(found.toSorted()).toEqual(['src/index.ts']);
+    expect(found.map((source) => source.path)).toEqual(['src/index.ts']);
     expect(skipped.every(FileError.$is('ReadFailed'))).toBe(true);
     expect(skipped.map((e) => path.relative(testDir, e.path)).toSorted()).toEqual(['locked', 'src/.gitignore']);
   });

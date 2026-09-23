@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { FileError } from '@/domain/errors';
-import { aliasTargetsOf, outDirsOf, readRootTsConfigs } from './tsconfig-reader';
+import { outDirsOf, readRootTsConfigs } from './tsconfig-reader';
 
 describe('tsconfig-reader', () => {
   const testDir = './test-tsconfig-reader';
@@ -35,15 +35,5 @@ describe('tsconfig-reader', () => {
     const { found, skipped } = readRootTsConfigs(testDir);
     expect(found).toEqual([]);
     expect(skipped.map(FileError.$is('ParseFailed'))).toEqual([true]);
-  });
-
-  test('alias targets resolve against baseUrl and stop at a wildcard', () => {
-    const paths = { '@x/a': ['libs/a/src/index.ts'], '@x/b/*': ['./libs/b/src/*'], '@/*': ['*'] };
-    expect(aliasTargetsOf([{ compilerOptions: { paths } }])).toEqual(['libs/a/src/index.ts/', 'libs/b/src/', '']);
-    expect(aliasTargetsOf([{ compilerOptions: { baseUrl: './src', paths } }])).toEqual([
-      'src/libs/a/src/index.ts/',
-      'src/libs/b/src/',
-      'src/',
-    ]);
   });
 });
