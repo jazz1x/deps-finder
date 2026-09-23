@@ -144,6 +144,11 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.status).toBe(2);
   });
 
+  test('interactive built-ins such as --wizard are not exposed (they hang or pass vacuously in CI)', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    expect(runCli(['--wizard'], tmpDir).status).toBe(2);
+  });
+
   test('--ignore without a value fails the run (exit 2)', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0' }));
     const r = runCli(['--ignore'], tmpDir);

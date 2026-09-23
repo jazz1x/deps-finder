@@ -1,14 +1,13 @@
 import { join } from 'node:path';
-import { Array, Console, Effect, pipe } from 'effect';
+import { Array, Console, Effect, String, pipe } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 import { analyzeDependencies } from '../analyzers/dependency-analyzer.js';
 import { CLI_TEXT } from '../constants/messages.js';
-import { type FileError, IssuesFound } from '../domain/errors.js';
+import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.js';
 import type { CliOptions } from '../domain/types.js';
 import { findFiles, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
 import { hasIssues, report } from '../reporters/console-reporter.js';
-import { formatFileError } from '../reporters/error-reporter.js';
 
 const toggle = (name: string, alias: string, description: string) =>
   Flag.Boolean(name).pipe(
@@ -25,9 +24,9 @@ const list = (name: string, alias: string, description: string) =>
     Flag.map((values) =>
       pipe(
         values,
-        Array.flatMap((value) => value.split(',')),
-        Array.map((item) => item.trim()),
-        Array.filter((item) => item.length > 0),
+        Array.flatMap(String.split(',')),
+        Array.map(String.trim),
+        Array.filter(String.isNonEmpty),
       ),
     ),
   );
@@ -51,7 +50,7 @@ const config = {
 
 type ParsedFlags = Command.Command.Config.Infer<typeof config>;
 
-export const toCliOptions = (flags: ParsedFlags): CliOptions => ({
+const toCliOptions = (flags: ParsedFlags): CliOptions => ({
   format: flags.json ? 'json' : 'text',
   checkAll: flags.all,
   checkPeer: flags.checkPeer,
@@ -61,10 +60,9 @@ export const toCliOptions = (flags: ParsedFlags): CliOptions => ({
   rootDir: flags.root,
 });
 
-const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | IssuesFound> =>
+const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | RunOutcome> =>
   pipe(
     Effect.fromResult(readPackageJson(join(options.rootDir, 'package.json'))),
-    Effect.tapError((error) => Console.error(formatFileError(error))),
     Effect.map((packageJson) =>
       analyzeDependencies(
         packageJson,
@@ -83,7 +81,7 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Is
     ),
     Effect.tap((result) => Console.log(report(result, options.format, options.ignoredPackages))),
     Effect.flatMap((result) =>
-      hasIssues(result) ? Effect.fail(IssuesFound(result.totalIssues)) : Effect.void,
+      hasIssues(result) ? Effect.fail(IssuesFound({ total: result.totalIssues })) : Effect.void,
     ),
   );
 

@@ -13,7 +13,7 @@ export const MESSAGES = {
   IGNORED_PACKAGES: 'Ignored packages:',
   SEPARATOR: '━'.repeat(60),
   PACKAGE_JSON_NOT_FOUND: (path: string) =>
-    `package.json not found at ${path}. Run deps-finder from a directory containing package.json.`,
+    `package.json not found at ${path}. Pass the project directory as an argument, or run deps-finder from it.`,
   PACKAGE_JSON_PARSE_ERROR: (path: string, message: string) =>
     `Failed to parse ${path}: ${message}`,
   PACKAGE_JSON_READ_ERROR: (path: string, message: string) => `Failed to read ${path}: ${message}`,
