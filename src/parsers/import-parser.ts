@@ -17,10 +17,11 @@ import {
 import {
   ANALYZABLE_EXTENSIONS,
   DECLARATION_FILE_PATTERN,
-  DEV_CONFIG_PATTERNS,
   EXCLUDED_DIRECTORY_PATTERNS,
   EXCLUDED_FILENAME_PATTERNS,
   PRODUCTION_CONFIG_PATTERNS,
+  ROOT_TOOLING_DIRECTORIES,
+  TOOL_CONFIG_PATTERN,
   getAllExcludedPatterns,
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
@@ -47,8 +48,9 @@ export const isExcludedPath = (filePath: string): boolean => {
     Array.some(EXCLUDED_DIRECTORY_PATTERNS, (pattern) =>
       normalizedPath.includes(pattern.startsWith('/') ? pattern : `/${pattern}`),
     ) ||
+    Array.some(ROOT_TOOLING_DIRECTORIES, (dir) => normalizedPath.startsWith(`/${dir}`)) ||
     Array.some(EXCLUDED_FILENAME_PATTERNS, (pattern) => filename.includes(pattern)) ||
-    Array.some(DEV_CONFIG_PATTERNS, (pattern) => filename.includes(pattern))
+    TOOL_CONFIG_PATTERN.test(filename)
   );
 };
 

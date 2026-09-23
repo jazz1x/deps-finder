@@ -226,6 +226,8 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 
 deps-finder는 정적 AST 스캔을 사용하므로 동적 패턴은 보이지 않습니다: `require(variable)`, `import(expr)`, `eval`, 번들러 플러그인이 만드는 가상 모듈, `src/` 바깥의 설정 파일을 통해서만 로드되는 패키지 등이 그렇습니다. 도구는 과보고보다 누락 보고를 선호하지만, 그래도 오탐은 발생할 수 있습니다. 그럴 때는 `--ignore <pkg>`가 탈출구이며 — 이슈 리포트도 환영합니다.
 
+import 없이 쓰이는 패키지는 unused로 보고됩니다: `package.json` 스크립트에서 실행하는 CLI(예: `prepare`의 `husky`), 다른 패키지의 optional peer를 채우려고만 선언한 패키지(예: Next.js 추적용 `@opentelemetry/api`)가 그렇습니다. `--ignore`로 넘기세요. 최상위 `scripts/`와 `*.config.*` 파일(`vite.config` 같은 번들러 설정 제외)은 프로덕션 소스가 아니라 개발 도구로 봅니다.
+
 `buffer`, `events` 같은 내장 모듈 이름을 접두사 없이 쓰면, 같은 이름으로 선언된 패키지(번들러가 쓰는 npm 폴리필)와 맞춰 봅니다. Node 내장 모듈을 뜻한다면 `node:buffer`처럼 쓰세요.
 
 ---

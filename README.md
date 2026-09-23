@@ -225,6 +225,8 @@ Or keep a report without blocking on findings, while still failing when the run 
 
 deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages loaded only via config files outside `src/`. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
 
+Packages that are used without being imported are reported as unused: CLIs run from `package.json` scripts (e.g. `husky` in `prepare`) and packages declared only to satisfy another package's optional peer (e.g. `@opentelemetry/api` for Next.js tracing). Pass them to `--ignore`. Top-level `scripts/` and `*.config.*` files (except bundler configs such as `vite.config`) are treated as dev tooling, not production source.
+
 A bare builtin name such as `buffer` or `events` is matched against a declared package of that name (the npm polyfill a bundler would use). Write `node:buffer` when you mean the Node builtin.
 
 ---
