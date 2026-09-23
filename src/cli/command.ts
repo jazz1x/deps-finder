@@ -7,7 +7,7 @@ import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.j
 import type { CliOptions } from '../domain/types.js';
 import { findFiles, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
-import { type Paint, ansi, hasIssues, plain, report } from '../reporters/console-reporter.js';
+import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
 import { formatSkippedSource } from '../reporters/error-reporter.js';
 
 const toggle = (name: string, alias: string, description: string) =>
@@ -61,8 +61,8 @@ const toCliOptions = (flags: ParsedFlags): CliOptions => ({
   rootDir: flags.root,
 });
 
-const paintForStdout = Effect.sync((): Paint =>
-  process.stdout.isTTY === true && String.isEmpty(process.env['NO_COLOR'] ?? '') ? ansi : plain,
+const paintForStdout = Effect.sync(() =>
+  paintFor(process.stdout.isTTY === true, process.env['NO_COLOR']),
 );
 
 const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | RunOutcome> =>

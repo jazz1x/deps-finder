@@ -17,6 +17,7 @@ export const MESSAGES = {
   PACKAGE_JSON_PARSE_ERROR: (path: string, message: string) =>
     `Failed to parse ${path}: ${message}`,
   PACKAGE_JSON_READ_ERROR: (path: string, message: string) => `Failed to read ${path}: ${message}`,
+  NOT_FOUND: 'not found',
   SOURCE_SKIPPED: (path: string, reason: string) =>
     `warning: skipped ${path} (${reason}); its imports are not counted.`,
 } as const;

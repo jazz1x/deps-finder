@@ -189,7 +189,7 @@ export const parseFile = (
     Result.map((content) => extractImports(content, filePath)),
   );
 
-export type ParsedSources = {
+type ParsedSources = {
   readonly imports: ReadonlyArray<ImportDetails>;
   readonly unreadable: ReadonlyArray<FileError>;
 };

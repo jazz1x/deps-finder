@@ -8,7 +8,7 @@ export const formatFileError = FileError.$match({
 });
 
 export const formatSkippedSource = FileError.$match({
-  FileNotFound: (e) => MESSAGES.SOURCE_SKIPPED(e.path, 'not found'),
+  FileNotFound: (e) => MESSAGES.SOURCE_SKIPPED(e.path, MESSAGES.NOT_FOUND),
   ParseFailed: (e) => MESSAGES.SOURCE_SKIPPED(e.path, e.reason),
   ReadFailed: (e) => MESSAGES.SOURCE_SKIPPED(e.path, e.reason),
 });

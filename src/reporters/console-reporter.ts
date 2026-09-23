@@ -20,6 +20,9 @@ export const ansi: Paint = (text, color) => `${ANSI[color]}${text}${ANSI.reset}`
 
 export const plain: Paint = (text) => text;
 
+export const paintFor = (isTerminal: boolean, noColor: string | undefined): Paint =>
+  isTerminal && (noColor ?? '') === '' ? ansi : plain;
+
 const whenAny = <A>(
   items: ReadonlyArray<A>,
   render: (items: ReadonlyArray<A>) => ReadonlyArray<string>,

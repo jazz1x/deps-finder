@@ -36,13 +36,16 @@ const jsonWithComments: TextParser = (text) => {
   );
 };
 
+const stripByteOrderMark = (text: string): string =>
+  text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+
 const readStructured =
   (parse: TextParser) =>
   <S extends Schema.Decoder<unknown>>(schema: S) =>
   (path: string): Result.Result<S['Type'], FileError> =>
     pipe(
       readFile(path),
-      Result.map((text) => text.replace(/^﻿/, '')),
+      Result.map(stripByteOrderMark),
       Result.flatMap((text) =>
         Result.mapError(parse(text), (reason) => FileError.ParseFailed({ path, reason })),
       ),
