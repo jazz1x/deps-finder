@@ -29,6 +29,7 @@ import type { FileError } from '../domain/errors.js';
 import type { FileContext, ImportDetails, ImportType, SourceFile } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
+import { readWorkspacePatterns } from '../utils/workspace-patterns.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
@@ -250,8 +251,15 @@ export const findFiles = (
     ...getAllExcludedPatterns(rootDir, !options.noAutoDetect),
     ...(options.excludePatterns ?? []),
   ];
+  const [excludedWorkspaces, includedWorkspaces] = pipe(
+    readWorkspacePatterns(rootDir),
+    Array.map((glob) => path.posix.join(glob, 'package.json')),
+    Array.partition((manifest) =>
+      manifest.startsWith('!') ? Result.fail(manifest.slice(1)) : Result.succeed(manifest),
+    ),
+  );
   const packageRoots = pipe(
-    globSync('*/**/package.json', { cwd: rootDir, ignore }),
+    globSync(includedWorkspaces, { cwd: rootDir, ignore: [...ignore, ...excludedWorkspaces] }),
     Array.map((manifest) => path.dirname(manifest)),
   );
   const contextOf = fileContextOf(packageRoots);

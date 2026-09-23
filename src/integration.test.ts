@@ -297,7 +297,33 @@ describe('file contexts', () => {
     ]);
   });
 
+  test('a package.json marker outside declared workspaces is not a package root', async () => {
+    await write('package.json', JSON.stringify({ workspaces: ['packages/*'] }));
+    await write('src/components/package.json', '{"sideEffects":false}');
+    await write('src/components/build/index.ts', "import 'lodash';");
+    await write('src/components/scripts/fmt.ts', "import 'chalk';");
+    await write('src/components/theme.config.ts', "import 'zod';");
+
+    const result = analyze(pkg({ dependencies: ['lodash'], devDependencies: ['chalk', 'zod'] }));
+
+    expect(result.unused).toEqual([]);
+    expect(result.misplaced.map((m) => m.packageName)).toEqual(['chalk', 'zod']);
+  });
+
+  test('pnpm workspaces are roots unless negated', async () => {
+    await write('pnpm-workspace.yaml', "packages:\n  - 'packages/*'\n  - '!packages/legacy'\n");
+    await write('packages/a/package.json', '{}');
+    await write('packages/a/dist/index.js', "require('left-pad');");
+    await write('packages/legacy/package.json', '{}');
+    await write('packages/legacy/dist/index.js', "require('is-odd');");
+
+    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd'] }));
+
+    expect(result.unused).toEqual(['left-pad']);
+  });
+
   test('a workspace package root is a root for build output, tool configs and scripts/', async () => {
+    await write('package.json', JSON.stringify({ workspaces: ['packages/*'] }));
     await write('packages/a/package.json', '{}');
     await write('packages/a/dist/index.js', "require('webpack'); require('left-pad');");
     await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
