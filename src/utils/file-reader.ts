@@ -63,8 +63,17 @@ const jsonWithComments: TextParser = (text) => {
   );
 };
 
-const yaml: TextParser = (text) =>
-  Result.try({ try: (): unknown => YAML.parse(text, { prettyErrors: false }), catch: messageOf });
+// parseDocument collects what YAML.parse would print through process.emitWarning.
+const yaml: TextParser = (text) => {
+  const document = YAML.parseDocument(text, { prettyErrors: false });
+  return pipe(
+    Array.head([...document.errors, ...document.warnings]),
+    Option.match({
+      onNone: () => Result.try({ try: (): unknown => document.toJS(), catch: messageOf }),
+      onSome: (problem) => Result.fail(problem.message),
+    }),
+  );
+};
 
 const stripByteOrderMark = (text: string): string =>
   text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;

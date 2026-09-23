@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -138,6 +138,18 @@ describe('walkProject', () => {
       ['ParseFailed', 'package.json#workspaces'],
       ['ParseFailed', 'pnpm-workspace.yaml'],
     ]);
+  });
+
+  test('a YAML warning becomes a skipped input instead of a process warning', async () => {
+    const emitWarning = spyOn(process, 'emitWarning');
+    await put('pnpm-workspace.yaml', 'packages: !custom\n  - packages/*\n');
+    await put('packages/a/package.json', '{"name":"a"}');
+
+    const skipped = skippedIn(testDir);
+    emitWarning.mockRestore();
+
+    expect(skipped).toEqual([['ParseFailed', 'pnpm-workspace.yaml']]);
+    expect(emitWarning).not.toHaveBeenCalled();
   });
 
   test.each(['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'node_modules/'])(
