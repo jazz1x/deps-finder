@@ -43,7 +43,6 @@ const isBun = (name: PackageName): boolean => name === 'bun' || String.startsWit
 
 const typesPackagesOf = (name: PackageName): ReadonlyArray<PackageName> =>
   Match.value(name).pipe(
-    Match.when(String.startsWith('@types/'), () => []),
     Match.when(String.startsWith('node:'), () => ['@types/node']),
     Match.when(isBun, () => ['@types/bun']),
     Match.when(isBuiltin, (builtin) => ['@types/node', `@types/${builtin}`]),
