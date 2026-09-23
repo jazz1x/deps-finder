@@ -1,22 +1,32 @@
-import type { Dirent } from 'node:fs';
+import { type Dirent, existsSync } from 'node:fs';
 import path from 'node:path';
 import { Array, Match, Option, Result, Schema, pipe } from 'effect';
 import ignore, { type Ignore } from 'ignore';
 import type { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
-import { gatherAll, readDirectory, readFile, readJsonFile } from './file-reader.js';
+import {
+  gatherAll,
+  gatherOptional,
+  readDirectory,
+  readFile,
+  readJsonFile,
+  readStats,
+} from './file-reader.js';
 
 export type WalkRules = {
   readonly always: ReadonlyArray<string>;
   readonly withoutGitignore: ReadonlyArray<string>;
 };
 
-type Gitignore = { readonly base: string; readonly rules: Ignore };
+// prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
+type Gitignore = { readonly prefix: string; readonly base: string; readonly rules: Ignore };
 
 type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
 };
+
+type EntryKind = 'directory' | 'file' | 'unfollowed';
 
 const NOTHING: Gathered<never> = { found: [], skipped: [] };
 
@@ -27,8 +37,11 @@ const skippedOnly = (skipped: ReadonlyArray<FileError>): Gathered<never> => ({
 
 const Manifest = Schema.Struct({ name: Schema.optionalKey(Schema.String) });
 
+const rulesOf = (patterns: string | ReadonlyArray<string>): Ignore =>
+  ignore({ ignorecase: false }).add(patterns);
+
 const readGitignore = (file: string): Result.Result<Ignore, FileError> =>
-  Result.map(readFile(file), (content) => ignore().add(content));
+  Result.map(readFile(file), rulesOf);
 
 const readPresent = <A>(
   directory: string,
@@ -38,7 +51,7 @@ const readPresent = <A>(
 ): Gathered<A> => {
   const [skipped, found] = pipe(
     entries,
-    Array.filter((entry) => entry.isFile() && entry.name === name),
+    Array.filter((entry) => !entry.isDirectory() && entry.name === name),
     Array.map((entry) => path.join(directory, entry.name)),
     Array.partition(read),
   );
@@ -51,22 +64,41 @@ const gitignoresIn = (
   entries: ReadonlyArray<Dirent>,
 ): Gathered<Gitignore> => {
   const read = readPresent(path.join(walk.rootDir, dir), entries, '.gitignore', readGitignore);
-  return { ...read, found: Array.map(read.found, (rules) => ({ base: dir, rules })) };
+  return { ...read, found: Array.map(read.found, (rules) => ({ prefix: '', base: dir, rules })) };
 };
 
-type Candidate = { readonly entry: Dirent; readonly relativePath: string };
-
 // ignore matches a directory only when its path ends with a slash.
-const pathFrom =
-  (base: string) =>
-  ({ entry, relativePath }: Candidate): string =>
-    path.posix.relative(base, relativePath) + (entry.isDirectory() ? '/' : '');
-
-const isGitignored = (gitignores: ReadonlyArray<Gitignore>, candidate: Candidate): boolean =>
-  Array.reduce(gitignores, false, (ignored, { base, rules }) => {
-    const verdict = rules.test(pathFrom(base)(candidate));
+const isGitignored = (
+  gitignores: ReadonlyArray<Gitignore>,
+  relativePath: string,
+  slash: '' | '/',
+): boolean =>
+  Array.reduce(gitignores, false, (ignored, { prefix, base, rules }) => {
+    const verdict = rules.test(
+      path.posix.join(prefix, path.posix.relative(base, relativePath)) + slash,
+    );
     return verdict.ignored || (ignored && !verdict.unignored);
   });
+
+const slashFor = (entry: Dirent): '' | '/' => (entry.isDirectory() ? '/' : '');
+
+const kindOf = (file: string, entry: Dirent): Result.Result<EntryKind, FileError> =>
+  Match.value(entry).pipe(
+    Match.when(
+      (e) => e.isDirectory(),
+      () => Result.succeed<EntryKind>('directory'),
+    ),
+    Match.when(
+      (e) => e.isSymbolicLink(),
+      () =>
+        Result.map(readStats(file), (stats): EntryKind => (stats.isFile() ? 'file' : 'unfollowed')),
+    ),
+    Match.when(
+      (e) => e.isFile(),
+      () => Result.succeed<EntryKind>('file'),
+    ),
+    Match.orElse(() => Result.succeed<EntryKind>('unfollowed')),
+  );
 
 const walkEntries = (
   walk: Walk,
@@ -76,23 +108,23 @@ const walkEntries = (
 ): Gathered<string> =>
   pipe(
     entries,
-    Array.map((entry): Candidate => ({ entry, relativePath: path.posix.join(dir, entry.name) })),
+    Array.map((entry) => ({ entry, relativePath: path.posix.join(dir, entry.name) })),
     Array.filter(
-      (candidate) =>
-        !walk.excluded.ignores(pathFrom('')(candidate)) && !isGitignored(gitignores, candidate),
+      ({ entry, relativePath }) =>
+        !walk.excluded.ignores(relativePath + slashFor(entry)) &&
+        !isGitignored(gitignores, relativePath, slashFor(entry)),
     ),
     Array.map(({ entry, relativePath }) =>
-      Match.value(entry).pipe(
-        Match.when(
-          (e) => e.isDirectory(),
-          () => walkSubdirectory(walk, relativePath, gitignores),
-        ),
-        Match.when(
-          (e) => e.isFile(),
-          (): Gathered<string> => ({ found: [relativePath], skipped: [] }),
-        ),
-        Match.orElse(() => NOTHING),
-      ),
+      Result.match(kindOf(path.join(walk.rootDir, relativePath), entry), {
+        onFailure: (error) => skippedOnly([error]),
+        onSuccess: (kind) =>
+          Match.value(kind).pipe(
+            Match.when('directory', () => walkSubdirectory(walk, relativePath, gitignores)),
+            Match.when('file', (): Gathered<string> => ({ found: [relativePath], skipped: [] })),
+            Match.when('unfollowed', () => NOTHING),
+            Match.exhaustive,
+          ),
+      }),
     ),
     gatherAll,
   );
@@ -137,19 +169,64 @@ const walkSubdirectory = (
     },
   });
 
+const lineage = (dir: string): Array.NonEmptyReadonlyArray<string> =>
+  path.dirname(dir) === dir ? [dir] : [dir, ...lineage(path.dirname(dir))];
+
+type Inherited = {
+  readonly exclude: Gathered<Gitignore>;
+  readonly gitignores: Gathered<Gitignore>;
+};
+
+const readInherited = (rootDir: string, dir: string, file: string): Gathered<Gitignore> => {
+  const read = gatherOptional(Result.map(readGitignore(file), Array.of));
+  const prefix = path.relative(dir, rootDir);
+  return { ...read, found: Array.map(read.found, (rules) => ({ prefix, base: '', rules })) };
+};
+
+const inheritedFrom = (rootDir: string, top: string, above: ReadonlyArray<string>): Inherited => {
+  const exclude = readInherited(rootDir, top, path.join(top, '.git', 'info', 'exclude'));
+  const gitignores = gatherAll(
+    Array.map(above, (dir) => readInherited(rootDir, dir, path.join(dir, '.gitignore'))),
+  );
+  const rootIgnored =
+    Array.isReadonlyArrayNonEmpty(above) &&
+    isGitignored([...exclude.found, ...gitignores.found], '', '/');
+  const kept = (read: Gathered<Gitignore>) => ({ ...read, found: rootIgnored ? [] : read.found });
+  return { exclude: kept(exclude), gitignores: kept(gitignores) };
+};
+
+// Rules above rootDir count only inside its git repository, and never hide rootDir itself.
+const inheritedGitignores = (rootDir: string): Inherited => {
+  const dirs = lineage(rootDir);
+  return pipe(
+    Array.findFirstWithIndex(dirs, (dir) => existsSync(path.join(dir, '.git'))),
+    Option.match({
+      onNone: (): Inherited => ({ exclude: NOTHING, gitignores: NOTHING }),
+      onSome: ([top, index]) =>
+        inheritedFrom(rootDir, top, Array.reverse(dirs.slice(1, index + 1))),
+    }),
+  );
+};
+
 export const walkProject = (rootDir: string, rules: WalkRules): Gathered<string> => {
-  const walk: Walk = { rootDir, excluded: ignore().add([...rules.always]) };
+  const walk: Walk = { rootDir, excluded: rulesOf(rules.always) };
+  const inherited = inheritedGitignores(path.resolve(rootDir));
   return Result.match(readDirectory(rootDir), {
     onFailure: (error) => skippedOnly([error]),
     onSuccess: (entries) => {
       const own = gitignoresIn(walk, '', entries);
-      const gitignores = Array.match(own.found, {
+      const gitignores = Array.match([...inherited.gitignores.found, ...own.found], {
         onEmpty: (): ReadonlyArray<Gitignore> => [
-          { base: '', rules: ignore().add([...rules.withoutGitignore]) },
+          { prefix: '', base: '', rules: rulesOf(rules.withoutGitignore) },
         ],
         onNonEmpty: (found) => found,
       });
-      return gatherAll([skippedOnly(own.skipped), walkEntries(walk, '', gitignores, entries)]);
+      return gatherAll([
+        skippedOnly(inherited.exclude.skipped),
+        skippedOnly(inherited.gitignores.skipped),
+        skippedOnly(own.skipped),
+        walkEntries(walk, '', [...inherited.exclude.found, ...gitignores], entries),
+      ]);
     },
   });
 };

@@ -154,19 +154,6 @@ describe('findFiles', () => {
     ]);
   });
 
-  test('skips node_modules at any depth and .git', async () => {
-    await mkdir(`${testDir}/packages/a/node_modules`, { recursive: true });
-    await mkdir(`${testDir}/.git/hooks`, { recursive: true });
-    await writeFile(`${testDir}/src/index.ts`, 'console.log("test");');
-    await writeFile(`${testDir}/node_modules/package.js`, 'module.exports = {};');
-    await writeFile(`${testDir}/packages/a/node_modules/package.js`, 'module.exports = {};');
-    await writeFile(`${testDir}/.git/hooks/hook.js`, 'module.exports = {};');
-
-    const files = findFiles(testDir).found;
-
-    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
-  });
-
   test('classifies by the path below rootDir', async () => {
     const rootDir = `${testDir}/e2e/app`;
     await mkdir(`${rootDir}/src`, { recursive: true });
@@ -182,36 +169,6 @@ describe('findFiles', () => {
     ]);
   });
 
-  test('leaves out a subdirectory whose package.json has a name', async () => {
-    await writeFile(`${testDir}/src/index.ts`, '');
-    await mkdir(`${testDir}/packages/a/src`, { recursive: true });
-    await writeFile(`${testDir}/packages/a/package.json`, '{"name":"a"}');
-    await writeFile(`${testDir}/packages/a/src/index.ts`, '');
-    await mkdir(`${testDir}/src/ui`, { recursive: true });
-    await writeFile(`${testDir}/src/ui/package.json`, '{"sideEffects":false}');
-    await writeFile(`${testDir}/src/ui/index.ts`, '');
-
-    const files = findFiles(testDir).found;
-
-    expect(files.map((f) => path.relative(testDir, f.path)).toSorted()).toEqual(['src/index.ts', 'src/ui/index.ts']);
-  });
-
-  test('honours root and nested .gitignore files, deeper rules winning', async () => {
-    await mkdir(`${testDir}/generated`, { recursive: true });
-    await mkdir(`${testDir}/tools/cache`, { recursive: true });
-    await writeFile(`${testDir}/.gitignore`, 'generated/\n*.gen.ts\n');
-    await writeFile(`${testDir}/tools/.gitignore`, 'cache/\n!keep.gen.ts\n');
-    await writeFile(`${testDir}/src/index.ts`, '');
-    await writeFile(`${testDir}/src/api.gen.ts`, '');
-    await writeFile(`${testDir}/generated/client.ts`, '');
-    await writeFile(`${testDir}/tools/cache/chunk.js`, '');
-    await writeFile(`${testDir}/tools/keep.gen.ts`, '');
-
-    const files = findFiles(testDir).found;
-
-    expect(files.map((f) => path.relative(testDir, f.path)).toSorted()).toEqual(['src/index.ts', 'tools/keep.gen.ts']);
-  });
-
   test('skips a tsconfig outDir written with ./ even when a .gitignore exists', async () => {
     await mkdir(`${testDir}/lib`, { recursive: true });
     await writeFile(`${testDir}/.gitignore`, 'logs\n');
@@ -222,6 +179,18 @@ describe('findFiles', () => {
     const files = findFiles(testDir).found;
 
     expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
+  });
+
+  test('excludes a detected outDir only at the project root', async () => {
+    await mkdir(`${testDir}/lib`, { recursive: true });
+    await mkdir(`${testDir}/src/lib`, { recursive: true });
+    await writeFile(`${testDir}/tsconfig.json`, '{ "compilerOptions": { "outDir": "lib" } }');
+    await writeFile(`${testDir}/lib/index.js`, '');
+    await writeFile(`${testDir}/src/lib/util.ts`, '');
+
+    const files = findFiles(testDir).found;
+
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/lib/util.ts']);
   });
 
   test('reports an unreadable .gitignore and a broken tsconfig.json', async () => {

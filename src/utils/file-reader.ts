@@ -1,4 +1,4 @@
-import { type Dirent, readFileSync, readdirSync } from 'node:fs';
+import { type Dirent, type Stats, readFileSync, readdirSync, statSync } from 'node:fs';
 import { Array, Match, Option, Result, Schema, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
 import { FileError } from '../domain/errors.js';
@@ -12,12 +12,15 @@ const messageOf = (cause: unknown): string =>
 
 const readFailure = (path: string) => (cause: unknown) =>
   Match.value(cause).pipe(
-    Match.when({ code: 'ENOENT' }, () => FileError.FileNotFound({ path })),
+    Match.when({ code: Match.is('ENOENT', 'ENOTDIR') }, () => FileError.FileNotFound({ path })),
     Match.orElse(() => FileError.ReadFailed({ path, reason: messageOf(cause) })),
   );
 
 export const readFile = (path: string): Result.Result<string, FileError> =>
   Result.try({ try: () => readFileSync(path, 'utf-8'), catch: readFailure(path) });
+
+export const readStats = (path: string): Result.Result<Stats, FileError> =>
+  Result.try({ try: () => statSync(path), catch: readFailure(path) });
 
 export const readDirectory = (path: string): Result.Result<ReadonlyArray<Dirent>, FileError> =>
   Result.try({ try: () => readdirSync(path, { withFileTypes: true }), catch: readFailure(path) });
