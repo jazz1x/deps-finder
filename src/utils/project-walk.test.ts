@@ -54,6 +54,7 @@ describe('walkProject', () => {
     await put('pkgs/bad/index.ts');
 
     expect(walked()).toEqual(['pkgs/bad/index.ts', 'src/index.ts', 'src/ui/index.ts']);
+    expect(walkProject(testDir, RULES).packages).toEqual(['packages/a']);
     expect(skippedIn(testDir)).toEqual([['ParseFailed', 'pkgs/bad/package.json']]);
   });
 

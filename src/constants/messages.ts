@@ -23,6 +23,8 @@ export const MESSAGES = {
     `warning: skipped ${path} (${reason}); its imports are not counted.`,
   INPUT_SKIPPED: (path: string, reason: string) =>
     `warning: could not use ${path} (${reason}); the scan went on without it.`,
+  PACKAGE_LEFT_OUT: (path: string) =>
+    `note: left out ${path}, a separate package with its own package.json; run deps-finder there to check it.`,
 } as const;
 
 export const CLI_TEXT = {

@@ -245,7 +245,7 @@ export const findFiles = (
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): Gathered<SourceFile> => {
+): Gathered<SourceFile> & { readonly packages: ReadonlyArray<string> } => {
   const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
   const walked = walkProject(rootDir, {
     always: [
@@ -265,5 +265,6 @@ export const findFiles = (
       })),
     ),
     skipped: [...detected.skipped, ...walked.skipped],
+    packages: Array.map(walked.packages, (dir) => path.join(rootDir, dir)),
   };
 };

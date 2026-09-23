@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { Array, Console, Effect, String, pipe } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 import { analyzeDependencies } from '../analyzers/dependency-analyzer.js';
-import { CLI_TEXT } from '../constants/messages.js';
+import { CLI_TEXT, MESSAGES } from '../constants/messages.js';
 import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.js';
 import type { CliOptions, DependencyType } from '../domain/types.js';
 import { findFiles, parseMultipleFiles } from '../parsers/import-parser.js';
@@ -88,10 +88,14 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     Effect.map(({ packageJson, files }) => ({
       packageJson,
       skippedInputs: files.skipped,
+      packagesLeftOut: files.packages,
       sources: parseMultipleFiles(files.found),
     })),
     Effect.tap(({ skippedInputs }) =>
       Effect.forEach(skippedInputs, (error) => Console.error(formatSkippedInput(error))),
+    ),
+    Effect.tap(({ packagesLeftOut }) =>
+      Effect.forEach(packagesLeftOut, (dir) => Console.error(MESSAGES.PACKAGE_LEFT_OUT(dir))),
     ),
     Effect.tap(({ sources }) =>
       Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),

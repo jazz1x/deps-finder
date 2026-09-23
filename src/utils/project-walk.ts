@@ -1,6 +1,6 @@
 import { type Dirent, existsSync } from 'node:fs';
 import path from 'node:path';
-import { Array, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Data, Match, Option, Result, Schema, pipe } from 'effect';
 import ignore, { type Ignore } from 'ignore';
 import type { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
@@ -29,6 +29,15 @@ type Walk = {
 };
 
 type EntryKind = 'directory' | 'file' | 'unfollowed';
+
+type Walked = Data.TaggedEnum<{
+  Source: { readonly path: string };
+  Package: { readonly path: string };
+}>;
+
+const Walked = Data.taggedEnum<Walked>();
+
+export type ProjectWalk = Gathered<string> & { readonly packages: ReadonlyArray<string> };
 
 const NOTHING: Gathered<never> = { found: [], skipped: [] };
 
@@ -107,7 +116,7 @@ const walkEntries = (
   dir: string,
   gitignores: ReadonlyArray<Gitignore>,
   entries: ReadonlyArray<Dirent>,
-): Gathered<string> =>
+): Gathered<Walked> =>
   pipe(
     entries,
     Array.map((entry) => ({ entry, relativePath: path.posix.join(dir, entry.name) })),
@@ -123,7 +132,10 @@ const walkEntries = (
         onSuccess: (kind) =>
           Match.value(kind).pipe(
             Match.when('directory', () => walkSubdirectory(walk, relativePath, gitignores)),
-            Match.when('file', (): Gathered<string> => ({ found: [relativePath], skipped: [] })),
+            Match.when('file', (): Gathered<Walked> => ({
+              found: [Walked.Source({ path: relativePath })],
+              skipped: [],
+            })),
             Match.when('unfollowed', () => NOTHING),
             Match.exhaustive,
           ),
@@ -137,7 +149,7 @@ const walkFolder = (
   dir: string,
   inherited: ReadonlyArray<Gitignore>,
   entries: ReadonlyArray<Dirent>,
-): Gathered<string> => {
+): Gathered<Walked> => {
   const own = gitignoresIn(walk, dir, entries);
   return gatherAll([
     skippedOnly(own.skipped),
@@ -149,7 +161,7 @@ const walkSubdirectory = (
   walk: Walk,
   dir: string,
   inherited: ReadonlyArray<Gitignore>,
-): Gathered<string> =>
+): Gathered<Walked> =>
   Result.match(readDirectory(path.join(walk.rootDir, dir)), {
     onFailure: (error) => skippedOnly([error]),
     onSuccess: (entries) => {
@@ -165,7 +177,10 @@ const walkSubdirectory = (
           Array.getSomes(Array.map(manifests.found, (m) => Option.fromNullishOr(m.name))),
           {
             onEmpty: () => walkFolder(walk, dir, inherited, entries),
-            onNonEmpty: () => NOTHING,
+            onNonEmpty: (): Gathered<Walked> => ({
+              found: [Walked.Package({ path: dir })],
+              skipped: [],
+            }),
           },
         ),
       ]);
@@ -211,7 +226,7 @@ const inheritedGitignores = (rootDir: string): Inherited => {
   );
 };
 
-export const walkProject = (rootDir: string, rules: WalkRules): Gathered<string> => {
+const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
   const walk: Walk = { rootDir, excluded: rulesOf(rules.always), isSource: rules.isSource };
   const inherited = inheritedGitignores(path.resolve(rootDir));
   return Result.match(readDirectory(rootDir), {
@@ -232,4 +247,16 @@ export const walkProject = (rootDir: string, rules: WalkRules): Gathered<string>
       ]);
     },
   });
+};
+
+export const walkProject = (rootDir: string, rules: WalkRules): ProjectWalk => {
+  const { found, skipped } = walkRoot(rootDir, rules);
+  const [packages, sources] = Array.partition(
+    found,
+    Walked.$match({
+      Source: (source) => Result.succeed(source.path),
+      Package: (nested) => Result.fail(nested.path),
+    }),
+  );
+  return { found: sources, skipped, packages };
 };
