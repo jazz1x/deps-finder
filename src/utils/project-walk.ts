@@ -25,7 +25,7 @@ type WalkRules = {
 // prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
 type Gitignore = { readonly prefix: string; readonly base: string; readonly rules: Ignore };
 
-// layoutRoots: rootDir and every directory above with a named package.json or a project.json, relative to rootDir.
+// layoutRoots: rootDir and every directory above with a named package.json or an Nx project.json, relative to rootDir.
 type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
@@ -79,6 +79,14 @@ const INSTALL_MARKERS: ReadonlyArray<string> = [
   'bun.lockb',
   'node_modules',
 ];
+
+const isNxProject = (json: unknown): boolean =>
+  Match.value(json).pipe(
+    Match.when({ name: Match.string }, () => true),
+    Match.when({ targets: Match.defined }, () => true),
+    Match.when({ $schema: Match.defined }, () => true),
+    Match.orElse(() => false),
+  );
 
 type Role = 'package' | 'layout-root' | 'folder';
 
@@ -309,6 +317,12 @@ const walkSubdirectory = (
         'package.json',
         readJsonFile(Manifest),
       );
+      const projects = readPresent(
+        path.join(walk.rootDir, dir),
+        entries,
+        'project.json',
+        readJsonFile(Schema.Unknown),
+      );
       const names = Array.map(entries, (entry) => entry.name);
       const role = roleOf({
         separateInstall:
@@ -317,10 +331,11 @@ const walkSubdirectory = (
             Array.some(INSTALL_MARKERS, (marker) => Array.contains(names, marker))),
         layoutRoot:
           Array.some(manifests.found, (manifest) => manifest.name !== undefined) ||
-          Array.contains(names, 'project.json'),
+          Array.some(projects.found, isNxProject),
       });
       return gatherAll([
         skippedOnly(manifests.skipped),
+        skippedOnly(projects.skipped),
         Match.value(role).pipe(
           Match.when('package', (): Gathered<Walked> => ({
             found: [Walked.Package({ path: dir })],

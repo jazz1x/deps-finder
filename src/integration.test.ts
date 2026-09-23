@@ -347,6 +347,21 @@ describe('file contexts', () => {
     expect(result.misplaced).toEqual([]);
   });
 
+  test('only an Nx project.json makes a layout root, not a data file of that name', async () => {
+    await write('apps/web/project.json', '{"targets":{}}');
+    await write('apps/web/dist/main.js', "require('is-odd');");
+    await write('apps/docs/project.json', '{"$schema":"../../node_modules/nx/schemas/project-schema.json"}');
+    await write('apps/docs/dist/main.js', "require('is-even');");
+    await write('src/fixtures/project.json', '{"id":1,"title":"Sample project"}');
+    await write('src/fixtures/build/make.ts', "import 'lodash';");
+    await write('src/fixtures/schema.config.ts', "import 'zod';");
+
+    const result = analyze(pkg({ dependencies: ['lodash', 'is-odd', 'is-even'], devDependencies: ['zod'] }));
+
+    expect(result.unused).toEqual(['is-odd', 'is-even']);
+    expect(result.misplaced.map((m) => m.packageName)).toEqual(['zod']);
+  });
+
   test('a named lib without dependencies is scanned, anchored at its own root', async () => {
     await write('libs/ui/package.json', '{"name":"@x/ui","dependencies":{}}');
     await write('libs/ui/src/button.ts', "import 'chalk';");
