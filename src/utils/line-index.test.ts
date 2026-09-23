@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { buildLineStarts, lineNumberAt } from './line-index';
 
+const naive = (s: string, off: number): number => s.substring(0, Math.min(off, s.length)).split('\n').length;
+
 describe('buildLineStarts', () => {
   test('empty string yields a single line starting at 0', () => {
     expect(buildLineStarts('')).toEqual([0]);
@@ -66,7 +68,6 @@ describe('lineNumberAt', () => {
     // 임의 콘텐츠로 reference 구현과 결과 일치 검증 (회귀 가드)
     const content = 'line1\nline two\n\n\nfinal line content here\nx\n';
     const idx = buildLineStarts(content);
-    const naive = (s: string, off: number): number => s.substring(0, Math.min(off, s.length)).split('\n').length;
     for (let off = 0; off <= content.length + 5; off++) {
       const expected = naive(content, off);
       const actual = lineNumberAt(idx, off);

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { A } from '@mobily/ts-belt';
-import { P, match } from 'ts-pattern';
+import { match } from 'ts-pattern';
 import { MESSAGES } from '../constants/messages.js';
 import type { AnalysisResult, DependencyUsage, OutputFormat } from '../domain/types.js';
 
@@ -124,50 +124,36 @@ export const report = (
         2,
       ),
     )
-    .with('text', () => {
-      return match({ result, ignoredPackages })
-        .with(
-          {
-            result: { totalIssues: 0 },
-            ignoredPackages: P.any,
-          },
-          ({ ignoredPackages }) =>
-            [
-              '',
-              formatSeparator(),
-              `  ${colorize(MESSAGES.REPORT_TITLE, 'cyan')}`,
-              formatSeparator(),
-              ...formatIgnored(ignoredPackages),
-              ...formatNoIssues(),
-            ].join('\n'),
-        )
-        .otherwise(({ result, ignoredPackages }) =>
-          [
-            '',
-            formatSeparator(),
-            `  ${colorize(MESSAGES.REPORT_TITLE, 'cyan')}`,
-            formatSeparator(),
-            ...formatIgnored(ignoredPackages),
-            ...formatIssueSection(MESSAGES.UNUSED_TITLE, MESSAGES.UNUSED_SUBTITLE, result.unused),
+    .with('text', () =>
+      [
+        '',
+        formatSeparator(),
+        `  ${colorize(MESSAGES.REPORT_TITLE, 'cyan')}`,
+        formatSeparator(),
+        ...formatIgnored(ignoredPackages),
+        ...match(result)
+          .with({ totalIssues: 0 }, () => formatNoIssues())
+          .otherwise((issues) => [
+            ...formatIssueSection(MESSAGES.UNUSED_TITLE, MESSAGES.UNUSED_SUBTITLE, issues.unused),
             ...formatIssueSection(
               MESSAGES.UNUSED_PEER_TITLE,
               MESSAGES.UNUSED_PEER_SUBTITLE,
-              result.unusedPeer,
+              issues.unusedPeer,
             ),
             ...formatMisplacedSection(
               MESSAGES.MISPLACED_TITLE,
               MESSAGES.MISPLACED_SUBTITLE,
-              result.misplaced,
+              issues.misplaced,
             ),
             ...formatTypeOnlySection(
               MESSAGES.TYPE_ONLY_TITLE,
               MESSAGES.TYPE_ONLY_SUBTITLE,
-              result.typeOnly,
+              issues.typeOnly,
             ),
-            ...formatSummary(result.totalIssues),
-          ].join('\n'),
-        );
-    })
+            ...formatSummary(issues.totalIssues),
+          ]),
+      ].join('\n'),
+    )
     .exhaustive();
 };
 

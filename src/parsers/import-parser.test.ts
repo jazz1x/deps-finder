@@ -378,7 +378,7 @@ describe('extractImports edge cases', () => {
     const content = ["import { a } from 'pkg';", "import { b } from 'pkg';", "import { c } from 'pkg';"].join('\n');
     const findings = extractImports(content, 'test.ts').filter((f) => f.packageName === 'pkg');
     expect(findings).toHaveLength(3);
-    expect(findings.map((f) => f.line).sort()).toEqual([1, 2, 3]);
+    expect(findings.map((f) => f.line).toSorted()).toEqual([1, 2, 3]);
   });
 
   test('handles side-effect imports (no specifier)', () => {

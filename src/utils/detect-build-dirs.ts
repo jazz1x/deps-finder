@@ -50,20 +50,19 @@ export const detectByHeuristic = (projectRoot: string): ReadonlyArray<string> =>
 
   return pipe(
     R.fromExecution(() => readdirSync(projectRoot)),
-    R.map(
-      (dirs): ReadonlyArray<string> =>
-        pipe(
-          dirs,
-          A.filter((dir) => {
-            const fullPath = join(projectRoot, dir);
-            return pipe(
-              R.fromExecution(() => statSync(fullPath).isDirectory()),
-              R.getWithDefault(false),
-            );
-          }),
-          A.filter((dir) => A.some(buildLikeSuffixes, (suffix) => dir.endsWith(suffix))),
-          A.map((dir) => `${dir}/**`),
-        ),
+    R.map((dirs): ReadonlyArray<string> =>
+      pipe(
+        dirs,
+        A.filter((dir) => {
+          const fullPath = join(projectRoot, dir);
+          return pipe(
+            R.fromExecution(() => statSync(fullPath).isDirectory()),
+            R.getWithDefault(false),
+          );
+        }),
+        A.filter((dir) => A.some(buildLikeSuffixes, (suffix) => dir.endsWith(suffix))),
+        A.map((dir) => `${dir}/**`),
+      ),
     ),
     R.getWithDefault([] as ReadonlyArray<string>),
   );

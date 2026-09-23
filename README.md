@@ -217,7 +217,7 @@ deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `
 git clone https://github.com/jazz1x/deps-finder.git
 cd deps-finder
 bun install
-bun run validate   # typecheck + lint + tests
+bun run validate   # typecheck + lint + format + tests
 ```
 
 The project uses Bun for tests and `tsc` from TypeScript 7 for typecheck and the published build. See [package.json](package.json) for the full script list.

@@ -13,12 +13,11 @@
     "test:coverage": "bun test --coverage",
     "bench": "bun bench/import-parser.bench.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "bunx biome lint src/",
-    "format": "bunx biome format --write src/",
-    "format:check": "bunx biome format src/",
-    "check": "bunx biome check --write src/",
+    "lint": "oxlint --deny-warnings src/",
+    "format": "oxfmt src/",
+    "format:check": "oxfmt --check src/",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
-    "validate": "bun run typecheck && bun run lint && bun test",
+    "validate": "bun run typecheck && bun run lint && bun run format:check && bun test",
     "prepublishOnly": "bun run validate && bun run build",
     "prepare": "husky"
   },
@@ -51,9 +50,10 @@
     "url": "https://github.com/jazz1x/deps-finder/issues"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
     "@types/bun": "^1.4.2",
     "husky": "^9.1.7",
+    "oxfmt": "^0.70.0",
+    "oxlint": "^1.85.0",
     "typescript": "^7.0.2"
   },
   "dependencies": {

@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "semi": true,
+  "arrowParens": "always",
+  "ignorePatterns": ["dist"],
+  "overrides": [
+    {
+      "files": ["**/*.test.ts"],
+      "options": { "printWidth": 140 }
+    }
+  ]
+}

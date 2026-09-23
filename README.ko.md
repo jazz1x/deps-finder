@@ -218,7 +218,7 @@ deps-finder는 정적 AST 스캔을 사용하므로 동적 패턴은 보이지 �
 git clone https://github.com/jazz1x/deps-finder.git
 cd deps-finder
 bun install
-bun run validate   # typecheck + lint + tests
+bun run validate   # typecheck + lint + format + tests
 ```
 
 테스트는 Bun을, 타입체크와 배포 빌드는 TypeScript 7의 `tsc`를 사용합니다. 전체 스크립트 목록은 [package.json](package.json)을 참고하세요.
