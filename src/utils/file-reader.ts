@@ -63,11 +63,12 @@ const jsonWithComments: TextParser = (text) => {
   );
 };
 
-// parseDocument collects what YAML.parse would print through process.emitWarning.
+// parseDocument keeps its warnings on the document, where YAML.parse would pass them to
+// process.emitWarning. A warning still leaves a usable value, as pnpm's reader does.
 const yaml: TextParser = (text) => {
   const document = YAML.parseDocument(text, { prettyErrors: false });
   return pipe(
-    Array.head([...document.errors, ...document.warnings]),
+    Array.head(document.errors),
     Option.match({
       onNone: () => Result.try({ try: (): unknown => document.toJS(), catch: messageOf }),
       onSome: (problem) => Result.fail(problem.message),

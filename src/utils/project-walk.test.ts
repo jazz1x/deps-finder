@@ -143,15 +143,17 @@ describe('walkProject', () => {
     ]);
   });
 
-  test('a YAML warning becomes a skipped input instead of a process warning', async () => {
+  test('a YAML warning keeps the declaration and stays off process warnings', async () => {
     const emitWarning = spyOn(process, 'emitWarning');
-    await put('pnpm-workspace.yaml', 'packages: !custom\n  - packages/*\n');
+    await put('pnpm-workspace.yaml', '%FOO bar\n---\npackages:\n  - "packages/*"\n');
     await put('packages/a/package.json', '{"name":"a"}');
 
     const skipped = skippedIn(testDir);
+    const packages = packagesOf();
     emitWarning.mockRestore();
 
-    expect(skipped).toEqual([['ParseFailed', 'pnpm-workspace.yaml']]);
+    expect(skipped).toEqual([]);
+    expect(packages).toEqual(['packages/a']);
     expect(emitWarning).not.toHaveBeenCalled();
   });
 
