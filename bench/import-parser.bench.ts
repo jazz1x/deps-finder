@@ -8,7 +8,7 @@
  * 결정적: 시드 고정 PRNG + 고정 입력 크기.
  */
 
-import { extractImports, isBuiltinModule } from '../src/parsers/import-parser.ts';
+import { extractImports } from '../src/parsers/import-parser.ts';
 import { makeRng } from '../src/test-utils/random.ts';
 
 /**
@@ -96,9 +96,3 @@ for (const density of [0.05, 0.2, 0.5, 1.0]) {
     },
   );
 }
-
-console.log('\n== isBuiltinModule — hot lookup ==');
-const builtinSamples = ['fs', 'node:path', 'bun:test', 'react', 'lodash', 'unknown-pkg'];
-bench('isBuiltinModule x6 (mixed hit/miss)', 100_000, () => {
-  for (const s of builtinSamples) isBuiltinModule(s);
-});

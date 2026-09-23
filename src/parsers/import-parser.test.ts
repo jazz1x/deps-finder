@@ -394,21 +394,11 @@ describe('extractImports edge cases', () => {
     expect(dbl[0]?.packageName).toBe('pkg-b');
   });
 
-  test('skips Node and Bun built-in modules', () => {
-    const content = `
-      import fs from 'fs';
-      import path from 'node:path';
-      import { test as bunTest } from 'bun:test';
-      import sqlite from 'bun:sqlite';
-      import realPkg from 'real-pkg';
-    `;
-    const findings = extractImports(content, 'test.ts');
-    const names = findings.map((f) => f.packageName);
-    expect(names).not.toContain('fs');
-    expect(names).not.toContain('node:path');
-    expect(names).not.toContain('bun:test');
-    expect(names).not.toContain('bun:sqlite');
-    expect(names).toContain('real-pkg');
+  test('keeps builtin-named imports so a declared polyfill (buffer, events) counts as used', () => {
+    const names = extractImports("import { Buffer } from 'buffer';\nimport { EventEmitter } from 'events';", 'test.ts').map(
+      (f) => f.packageName,
+    );
+    expect(names).toEqual(['buffer', 'events']);
   });
 
   test.each([

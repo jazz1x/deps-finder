@@ -11,6 +11,7 @@ export const MESSAGES = {
   TOTAL_ISSUES: 'Total Issues:',
   NO_ISSUES: '✓ No issues found! All dependencies are properly used.',
   IGNORED_PACKAGES: 'Ignored packages:',
+  USED_IN_FILES: (count: number) => (count === 1 ? 'used in 1 file' : `used in ${count} files`),
   SEPARATOR: '━'.repeat(60),
   PACKAGE_JSON_NOT_FOUND: (path: string) =>
     `package.json not found at ${path}. Pass the project directory as an argument, or run deps-finder from it.`,
@@ -27,7 +28,7 @@ export const CLI_TEXT = {
   ROOT: 'Project directory containing package.json (default: current directory)',
   TEXT: 'Output as text (default)',
   JSON: 'Output as JSON',
-  ALL: 'Check dependencies, peerDependencies, and devDependencies',
+  ALL: 'Also report unused devDependencies and peerDependencies (misplaced checks stay on)',
   CHECK_PEER: 'Also check peerDependencies (off by default; on with --all)',
   IGNORE: 'Ignore packages (comma-separated, repeatable)',
   EXCLUDE: 'Exclude files/dirs by glob (comma-separated, repeatable)',

@@ -1,6 +1,7 @@
-import { Array, Option, Record, pipe } from 'effect';
+import { Array, Option, Order, Record, pipe } from 'effect';
 import type {
   AnalysisResult,
+  DependencyType,
   DependencyUsage,
   ImportDetails,
   ImportLocation,
@@ -27,24 +28,39 @@ const indexUsage = (imports: ReadonlyArray<ImportDetails>, importType: ImportTyp
     Record.map(Array.map(locationOf)),
   );
 
+const bySourcePosition = Order.combine(
+  Order.mapInput(Order.String, (loc: ImportLocation) => loc.file),
+  Order.mapInput(Order.Number, (loc: ImportLocation) => loc.line),
+);
+
 const isUnused =
   (runtime: UsageIndex, typeOnly: UsageIndex) =>
   (dep: PackageName): boolean =>
     !Record.has(runtime, dep) && !Record.has(typeOnly, dep);
 
 const findMisplaced = (
-  devDependencies: ReadonlyArray<PackageName>,
+  packageJson: PackageJson,
   runtime: UsageIndex,
 ): ReadonlyArray<DependencyUsage> =>
   pipe(
-    devDependencies,
+    packageJson.devDependencies,
+    Array.filter(
+      (dep) =>
+        !Array.contains(packageJson.dependencies, dep) &&
+        !Array.contains(packageJson.peerDependencies, dep),
+    ),
     Array.map((dep) =>
       pipe(
         Record.get(runtime, dep),
         Option.map((locations) =>
-          deduplicateLocations(Array.filter(locations, (loc) => !isProductionConfigFile(loc.file))),
+          pipe(
+            locations,
+            Array.filter((loc) => !isProductionConfigFile(loc.file)),
+            deduplicateLocations,
+            (unique) => Array.sort(unique, bySourcePosition),
+          ),
         ),
-        Option.filter(Array.isReadonlyArrayNonEmpty),
+        Option.filter((locations) => Array.isReadonlyArrayNonEmpty(locations)),
         Option.map((locations): DependencyUsage => ({ packageName: dep, locations })),
       ),
     ),
@@ -52,48 +68,58 @@ const findMisplaced = (
   );
 
 export type AnalyzeOptions = {
-  readonly checkAll: boolean;
-  readonly checkPeer?: boolean;
+  readonly sections: ReadonlyArray<DependencyType>;
   readonly ignoredPackages: ReadonlyArray<string>;
 };
+
+const declaredIn =
+  (packageJson: PackageJson, sections: ReadonlyArray<DependencyType>) =>
+  (...wanted: ReadonlyArray<DependencyType>): ReadonlyArray<PackageName> =>
+    pipe(
+      wanted,
+      Array.filter((section) => Array.contains(sections, section)),
+      Array.flatMap((section) => packageJson[section]),
+      Array.dedupe,
+    );
 
 export const analyzeDependencies = (
   packageJson: PackageJson,
   allImports: ReadonlyArray<ImportDetails>,
   options: AnalyzeOptions,
 ): AnalysisResult => {
-  const { dependencies, devDependencies, peerDependencies } = packageJson;
   const runtime = indexUsage(allImports, 'runtime');
   const typeOnly = indexUsage(allImports, 'type-only');
   const notIgnored = (name: PackageName): boolean => !Array.contains(options.ignoredPackages, name);
+  const declared = declaredIn(packageJson, options.sections);
 
-  const declaredForUnused = options.checkAll
-    ? [...dependencies, ...peerDependencies, ...devDependencies]
-    : dependencies;
+  const peers = pipe(
+    declared('peerDependencies'),
+    Array.filter((dep) => !Array.contains(packageJson.dependencies, dep)),
+  );
 
   const unused = pipe(
-    declaredForUnused,
+    declared('dependencies', 'devDependencies'),
+    Array.filter((dep) => !Array.contains(peers, dep)),
     Array.filter(isUnused(runtime, typeOnly)),
     Array.filter(notIgnored),
   );
 
-  const unusedPeer =
-    options.checkAll || options.checkPeer === true
-      ? pipe(peerDependencies, Array.filter(isUnused(runtime, typeOnly)), Array.filter(notIgnored))
-      : [];
+  const unusedPeer = pipe(
+    peers,
+    Array.filter(isUnused(runtime, typeOnly)),
+    Array.filter(notIgnored),
+  );
 
   const typeOnlyUsed = pipe(
-    declaredForUnused,
+    packageJson.dependencies,
     Array.filter((dep) => Record.has(typeOnly, dep) && !Record.has(runtime, dep)),
     Array.filter(notIgnored),
   );
 
-  const misplaced = options.checkAll
-    ? []
-    : pipe(
-        findMisplaced(devDependencies, runtime),
-        Array.filter((usage) => notIgnored(usage.packageName)),
-      );
+  const misplaced = pipe(
+    findMisplaced(packageJson, runtime),
+    Array.filter((usage) => notIgnored(usage.packageName)),
+  );
 
   return {
     unused,

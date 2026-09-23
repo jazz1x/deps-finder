@@ -4,7 +4,7 @@ import { Argument, Command, Flag } from 'effect/unstable/cli';
 import { analyzeDependencies } from '../analyzers/dependency-analyzer.js';
 import { CLI_TEXT } from '../constants/messages.js';
 import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.js';
-import type { CliOptions } from '../domain/types.js';
+import type { CliOptions, DependencyType } from '../domain/types.js';
 import { findFiles, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
 import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
@@ -51,10 +51,20 @@ const config = {
 
 type ParsedFlags = Command.Command.Config.Infer<typeof config>;
 
+const SECTION_SWITCHES: ReadonlyArray<readonly [DependencyType, (flags: ParsedFlags) => boolean]> =
+  [
+    ['dependencies', () => true],
+    ['devDependencies', (flags) => flags.all],
+    ['peerDependencies', (flags) => flags.all || flags.checkPeer],
+  ];
+
 const toCliOptions = (flags: ParsedFlags): CliOptions => ({
   format: flags.json ? 'json' : 'text',
-  checkAll: flags.all,
-  checkPeer: flags.checkPeer,
+  sections: pipe(
+    SECTION_SWITCHES,
+    Array.filter(([, isOn]) => isOn(flags)),
+    Array.map(([section]) => section),
+  ),
   ignoredPackages: flags.ignore,
   excludePatterns: flags.exclude,
   noAutoDetect: flags.noAutoDetect,
@@ -82,8 +92,7 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     ),
     Effect.map(({ packageJson, sources }) =>
       analyzeDependencies(packageJson, sources.imports, {
-        checkAll: options.checkAll,
-        checkPeer: options.checkPeer,
+        sections: options.sections,
         ignoredPackages: options.ignoredPackages,
       }),
     ),

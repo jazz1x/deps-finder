@@ -136,48 +136,6 @@ export const STORY_PATTERNS = [
   '**/*.story.*',
 ] as const;
 
-export const NODE_BUILTIN_MODULES = [
-  'fs',
-  'path',
-  'http',
-  'https',
-  'util',
-  'events',
-  'stream',
-  'crypto',
-  'os',
-  'child_process',
-  'url',
-  'querystring',
-  'buffer',
-  'process',
-  'assert',
-  'zlib',
-  'net',
-  'tls',
-  'dns',
-  'dgram',
-  'cluster',
-  'vm',
-  'v8',
-  'timers',
-  'readline',
-  'repl',
-  'module',
-] as const;
-
-export const BUN_BUILTIN_MODULES = ['bun', 'bun:test', 'bun:sqlite', 'bun:ffi', 'bun:jsc'] as const;
-
-/**
- * Pre-computed lookup set for built-in modules — O(1) membership check.
- * Includes `node:`-prefixed forms of every Node builtin.
- */
-export const BUILTIN_MODULE_SET: ReadonlySet<string> = new Set([
-  ...NODE_BUILTIN_MODULES,
-  ...NODE_BUILTIN_MODULES.map((m) => `node:${m}`),
-  ...BUN_BUILTIN_MODULES,
-]);
-
 export const getAllExcludedPatterns = (
   projectRoot: string,
   autoDetect = true,
