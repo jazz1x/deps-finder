@@ -160,6 +160,25 @@ describe('console-reporter', () => {
       expect(paintFor(isTerminal, noColor)).toBe(expected);
     });
 
+    test('counts files, not import lines, in "used in N files"', () => {
+      const importStatement = "import c from 'chalk'";
+      const result: AnalysisResult = {
+        ...empty,
+        misplaced: [
+          {
+            packageName: 'chalk',
+            locations: [
+              { file: 'src/a.ts', line: 1, importStatement },
+              { file: 'src/a.ts', line: 5, importStatement },
+              { file: 'src/b.ts', line: 2, importStatement },
+            ],
+          },
+        ],
+        totalIssues: 1,
+      };
+      expect(report(result, 'text', [], plain)).toContain('used in 2 files');
+    });
+
     test('plain paint writes no ANSI escape codes', () => {
       const result: AnalysisResult = { ...empty, unused: ['react'], totalIssues: 1 };
       expect(report(result, 'text', [], plain)).not.toContain('\x1b[');

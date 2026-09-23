@@ -42,8 +42,9 @@ const formatIssueSection =
 const formatUsage =
   (paint: Paint) =>
   (usage: DependencyUsage): ReadonlyArray<string> => {
-    const count = usage.locations.length;
-    const usageText = count === 1 ? 'used in 1 file' : `used in ${count} files`;
+    const usageText = MESSAGES.USED_IN_FILES(
+      Array.dedupe(Array.map(usage.locations, (loc) => loc.file)).length,
+    );
     return [
       `  ${paint('•', 'yellow')} ${usage.packageName} ${paint(`(${usageText})`, 'gray')}`,
       ...Array.flatMap(usage.locations, (loc) => [

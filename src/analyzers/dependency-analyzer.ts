@@ -92,15 +92,20 @@ export const analyzeDependencies = (
   const notIgnored = (name: PackageName): boolean => !Array.contains(options.ignoredPackages, name);
   const declared = declaredIn(packageJson, options.sections);
 
+  const peers = pipe(
+    declared('peerDependencies'),
+    Array.filter((dep) => !Array.contains(packageJson.dependencies, dep)),
+  );
+
   const unused = pipe(
     declared('dependencies', 'devDependencies'),
+    Array.filter((dep) => !Array.contains(peers, dep)),
     Array.filter(isUnused(runtime, typeOnly)),
     Array.filter(notIgnored),
   );
 
   const unusedPeer = pipe(
-    declared('peerDependencies'),
-    Array.filter((dep) => !Array.contains(packageJson.dependencies, dep)),
+    peers,
     Array.filter(isUnused(runtime, typeOnly)),
     Array.filter(notIgnored),
   );

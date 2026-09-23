@@ -101,7 +101,7 @@ deps-finder [options] [<root>]
 |--------|-------|-------------|
 | `--text` | `-t` | Output as text (default) |
 | `--json` | `-j` | Output as JSON |
-| `--all` | `-a` | Check `dependencies`, `peerDependencies`, and `devDependencies` |
+| `--all` | `-a` | Also report unused `devDependencies` and `peerDependencies` (peers only under `unusedPeer`; misplaced checks stay on) |
 | `--check-peer` | `-p` | Also check `peerDependencies` (off by default; on with `--all`) — see [peerDependencies note](#peerdependencies-note) |
 | `--ignore <pkgs>` | `-i` | Ignore packages (comma-separated, repeatable, `--ignore=a,b`) |
 | `--exclude <globs>` | `-e` | Exclude files/dirs by glob (comma-separated, repeatable) |

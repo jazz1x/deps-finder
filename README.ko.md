@@ -102,7 +102,7 @@ deps-finder [options] [<root>]
 |------|------|------|
 | `--text` | `-t` | 텍스트로 출력 (기본값) |
 | `--json` | `-j` | JSON으로 출력 |
-| `--all` | `-a` | `dependencies`, `peerDependencies`, `devDependencies` 모두 검사 |
+| `--all` | `-a` | 미사용 `devDependencies`·`peerDependencies`도 보고 (peer는 `unusedPeer`에만, misplaced 검사는 그대로) |
 | `--check-peer` | `-p` | `peerDependencies`도 함께 검사 (기본 off, `--all` 시 on) — [peerDependencies 안내](#peerdependencies-안내) 참고 |
 | `--ignore <pkgs>` | `-i` | 패키지 무시 (쉼표로 구분, 반복 가능, `--ignore=a,b`) |
 | `--exclude <globs>` | `-e` | glob으로 파일/디렉토리 제외 (쉼표로 구분, 반복 가능) |

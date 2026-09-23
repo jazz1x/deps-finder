@@ -429,6 +429,15 @@ describe('dependency-analyzer: section classification', () => {
     expect(result.unused).toEqual(['lodash']);
   });
 
+  test('an unused peer kept in devDependencies is reported once, as a peer', () => {
+    const result = analyzeDependencies(pkg({ devDependencies: ['x'], peerDependencies: ['x'] }), [], {
+      sections: ALL,
+      ignoredPackages: [],
+    });
+    expect(result.unused).toEqual([]);
+    expect(result.unusedPeer).toEqual(['x']);
+  });
+
   test('a package also listed in dependencies is not misplaced', () => {
     const result = analyzeDependencies(pkg({ dependencies: ['lodash'], devDependencies: ['lodash'] }), [use('lodash')], {
       sections: ['dependencies'],
