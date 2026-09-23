@@ -197,11 +197,11 @@ describe('walkProject', () => {
     await put('apps/web/.next/server/chunk.js');
     await put('apps/web/public/sw.js');
     await put('src/public/icon.ts');
-    await put('apps/web/.vscode/settings.js');
+    await put('src/.vscode/settings.js');
     await put('tools/.claude/worktrees/feat/src/index.ts');
     await put('tools/py/.venv/lib/site-packages/x.js');
     await put('android/.gradle/cache.js');
-    await put('apps/web/.idea/x.js');
+    await put('tools/.idea/x.js');
 
     expect(walked()).toEqual(['src/index.ts', 'src/public/icon.ts']);
 
@@ -209,13 +209,13 @@ describe('walkProject', () => {
 
     expect(walked()).toEqual([
       'android/.gradle/cache.js',
-      'apps/web/.idea/x.js',
       'apps/web/.next/server/chunk.js',
-      'apps/web/.vscode/settings.js',
       'apps/web/public/sw.js',
+      'src/.vscode/settings.js',
       'src/index.ts',
       'src/public/icon.ts',
       'tools/.claude/worktrees/feat/src/index.ts',
+      'tools/.idea/x.js',
       'tools/py/.venv/lib/site-packages/x.js',
     ]);
   });

@@ -44,10 +44,10 @@ export const DEVELOPMENT_FILENAME_PATTERNS = [
   'test-setup.',
 ] as const;
 
-// .gitignore syntax: a leading slash anchors the entry at rootDir.
+// .gitignore syntax. An entry without a leading slash matches at any depth.
 export const ALWAYS_EXCLUDED = ['.git/', 'node_modules/'] as const;
 
-// Anchored at every layout root (see project-walk.ts).
+// A leading slash anchors the entry at every layout root (see project-walk.ts).
 export const BUILD_OUTPUT_DIRECTORIES = ['/dist/', '/build/', '/out/', '/coverage/'] as const;
 
 export const EXCLUDED_WITHOUT_GITIGNORE = [

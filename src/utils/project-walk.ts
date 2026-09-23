@@ -70,7 +70,7 @@ const PnpmWorkspace = Schema.NullOr(
   Schema.Struct({ packages: Schema.optionalKey(Schema.NullOr(Globs)) }),
 );
 
-const INSTALL_MARKERS: ReadonlyArray<string> = [
+const INSTALL_MARKERS = [
   'package-lock.json',
   'npm-shrinkwrap.json',
   'yarn.lock',
@@ -78,7 +78,7 @@ const INSTALL_MARKERS: ReadonlyArray<string> = [
   'bun.lock',
   'bun.lockb',
   'node_modules',
-];
+] as const;
 
 const isNxProject = (json: unknown): boolean =>
   Match.value(json).pipe(
