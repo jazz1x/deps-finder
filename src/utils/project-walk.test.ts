@@ -164,11 +164,12 @@ describe('walkProject', () => {
 
     const skipped = skippedIn(testDir);
     const packages = packagesOf();
+    const warnings = emitWarning.mock.calls.length;
     emitWarning.mockRestore();
 
     expect(skipped).toEqual([]);
     expect(packages).toEqual(['packages/a']);
-    expect(emitWarning).not.toHaveBeenCalled();
+    expect(warnings).toBe(0);
   });
 
   test.each(['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'node_modules/'])(
