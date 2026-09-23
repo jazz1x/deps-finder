@@ -8,7 +8,7 @@ Thanks for your interest. This document covers what you need to know to send a u
 git clone https://github.com/jazz1x/deps-finder.git
 cd deps-finder
 bun install
-bun run validate   # typecheck + lint + tests
+bun run validate   # typecheck + lint + format + tests
 ```
 
 Requires Node.js ≥ 22 (use `.nvmrc`) and [Bun](https://bun.sh).
@@ -20,9 +20,9 @@ Requires Node.js ≥ 22 (use `.nvmrc`) and [Bun](https://bun.sh).
 | `bun test`            | Run the test suite |
 | `bun test --watch`    | Re-run tests on file change |
 | `bun run typecheck`   | `tsc --noEmit` (TypeScript 7 native compiler) |
-| `bun run lint`        | Biome lint over `src/` |
-| `bun run format`      | Biome format `src/` (writes) |
-| `bun run validate`    | typecheck + lint + tests (the canonical gate) |
+| `bun run lint`        | oxlint over `src/` (`.oxlintrc.json`) |
+| `bun run format`      | oxfmt `src/` (writes, `.oxfmtrc.json`) |
+| `bun run validate`    | typecheck + lint + format check + tests (the canonical gate) |
 | `bun run bench`       | Run the parser micro-benchmark |
 | `bun run build`       | Emit `dist/` via `tsc -p tsconfig.build.json` |
 

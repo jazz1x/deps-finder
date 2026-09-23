@@ -69,10 +69,10 @@ const execAll = (regex: RegExp, text: string): RegExpExecArray[] => {
   const matches: RegExpExecArray[] = [];
   regex.lastIndex = 0;
 
-  let match = regex.exec(text);
-  while (match !== null) {
-    matches.push(match);
-    match = regex.exec(text);
+  let found = regex.exec(text);
+  while (found !== null) {
+    matches.push(found);
+    found = regex.exec(text);
   }
   return matches;
 };
@@ -92,29 +92,13 @@ export const isExcludedPath = (filePath: string): boolean => {
   const normalizedPath = S.startsWith(rawNormalized, '/') ? rawNormalized : `/${rawNormalized}`;
   const filename = path.basename(filePath);
 
-  return match({ normalizedPath, filename })
-    .with(
-      P.when(({ normalizedPath }) =>
-        A.some(EXCLUDED_DIRECTORY_PATTERNS, (pattern) => {
-          const cleanPattern = S.startsWith(pattern, '/') ? pattern : `/${pattern}`;
-          return S.includes(normalizedPath, cleanPattern);
-        }),
-      ),
-      () => true,
-    )
-    .with(
-      P.when(({ filename }) =>
-        A.some(EXCLUDED_FILENAME_PATTERNS, (pattern) => S.includes(filename, pattern)),
-      ),
-      () => true,
-    )
-    .with(
-      P.when(({ filename }) =>
-        A.some(DEV_CONFIG_PATTERNS, (pattern) => S.includes(filename, pattern)),
-      ),
-      () => true,
-    )
-    .otherwise(() => false);
+  return (
+    A.some(EXCLUDED_DIRECTORY_PATTERNS, (pattern) =>
+      S.includes(normalizedPath, S.startsWith(pattern, '/') ? pattern : `/${pattern}`),
+    ) ||
+    A.some(EXCLUDED_FILENAME_PATTERNS, (pattern) => S.includes(filename, pattern)) ||
+    A.some(DEV_CONFIG_PATTERNS, (pattern) => S.includes(filename, pattern))
+  );
 };
 
 export const shouldAnalyzeFile = (filePath: string): boolean => {
