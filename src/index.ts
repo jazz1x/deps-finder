@@ -1,55 +1,33 @@
-import { Array, Result, pipe } from 'effect';
-import { analyzeDependencies } from './analyzers/dependency-analyzer.js';
-import { parseCliOptions, printHelp } from './cli/options.js';
-import { MESSAGES } from './constants/messages.js';
-import type { CliOptions } from './domain/types.js';
-import { findFiles, parseMultipleFiles } from './parsers/import-parser.js';
-import { readPackageJson } from './parsers/package-parser.js';
-import { hasIssues, report } from './reporters/console-reporter.js';
-import { formatFileError } from './reporters/error-reporter.js';
+import { fileURLToPath } from 'node:url';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Effect, Exit, Option, Predicate, Result, Schema, pipe } from 'effect';
+import { Command } from 'effect/unstable/cli';
+import { depsFinder } from './cli/command.js';
+import { readJsonFile } from './utils/file-reader.js';
 
-const showHelp = (): number => {
-  printHelp();
-  return 0;
-};
+const version = pipe(
+  readJsonFile(Schema.Struct({ version: Schema.String }))(
+    fileURLToPath(new URL('../package.json', import.meta.url)),
+  ),
+  Result.map((pkg) => pkg.version),
+  Result.getOrElse(() => 'unknown'),
+);
 
-const analyze = (options: CliOptions): number => {
-  Array.forEach(options.warnings, (w) => console.error(`${MESSAGES.WARNING_PREFIX} ${w}`));
+const exitCodeOf = <A, E>(exit: Exit.Exit<A, E>): number =>
+  Exit.match(exit, {
+    onSuccess: () => 0,
+    onFailure: () =>
+      Option.exists(Exit.findErrorOption(exit), Predicate.isTagged('IssuesFound')) ? 1 : 2,
+  });
 
-  return pipe(
-    readPackageJson(options.packageJsonPath),
-    Result.map((packageJson) =>
-      analyzeDependencies(
-        packageJson,
-        parseMultipleFiles(
-          findFiles(options.rootDir, {
-            excludePatterns: options.excludePatterns,
-            noAutoDetect: options.noAutoDetect,
-          }),
-        ),
-        {
-          checkAll: options.checkAll,
-          checkPeer: options.checkPeer,
-          ignoredPackages: options.ignoredPackages,
-        },
-      ),
-    ),
-    Result.match({
-      onSuccess: (result) => {
-        console.log(report(result, options.format, options.ignoredPackages));
-        return hasIssues(result) ? 1 : 0;
-      },
-      onFailure: (error) => {
-        console.error(formatFileError(error));
-        return 1;
-      },
-    }),
-  );
-};
-
-const main = (args: ReadonlyArray<string>): number => {
-  const options = parseCliOptions(args);
-  return options.showHelp ? showHelp() : analyze(options);
-};
-
-process.exitCode = main(process.argv.slice(2));
+Command.run(depsFinder, { version }).pipe(
+  Effect.provide(NodeServices.layer),
+  NodeRuntime.runMain({
+    disableErrorReporting: true,
+    // runMain calls process.exit on a non-zero code, which drops stdout Node has not flushed yet.
+    teardown: (exit, onExit) => {
+      process.exitCode = exitCodeOf(exit);
+      onExit(0);
+    },
+  }),
+);

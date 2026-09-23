@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import pkg from '../package.json';
 
 const REPO_ROOT = path.resolve(import.meta.dir, '..');
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'cli.js');
@@ -50,8 +51,29 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('--help prints usage and exits 0', () => {
     const r = runCli(['--help'], tmpDir);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('Usage: deps-finder');
+    expect(r.stdout).toContain('USAGE');
     expect(r.stdout).toContain('--ignore');
+  });
+
+  test('--version prints the package version and exits 0', () => {
+    const r = runCli(['--version'], tmpDir);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(pkg.version);
+  });
+
+  test('analyzes the project directory given as an argument', async () => {
+    await mkdir(path.join(tmpDir, 'app'));
+    await writeFile(path.join(tmpDir, 'app/package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    const r = runCli(['--json', 'app'], tmpDir);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
+  });
+
+  test('accepts --flag=value', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    const r = runCli(['--json', '--ignore=lodash'], tmpDir);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).ignored).toEqual(['lodash']);
   });
 
   test('exits 0 on a clean project (no issues)', async () => {
@@ -84,18 +106,18 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(parsed.totalIssues).toBeGreaterThan(0);
   });
 
-  test('formats missing package.json error without leaking tagged-union shape', () => {
+  test('a missing package.json is a run failure (exit 2), not a finding', () => {
     const r = runCli([], tmpDir);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain('package.json not found');
-    expect(r.stderr).not.toContain('FILE_NOT_FOUND');
-    expect(r.stderr).not.toContain('type:');
+    expect(r.stderr).not.toContain('FileNotFound');
+    expect(r.stderr).not.toContain('_tag');
   });
 
   test('formats malformed package.json error without leaking stack trace', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), 'not json {{');
     const r = runCli([], tmpDir);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain('Failed to parse');
     expect(r.stderr).not.toContain('at JSON.parse');
     expect(r.stderr).not.toContain('SyntaxError');
@@ -104,7 +126,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('malformed package.json error points at the broken position', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), '{ "dependencies": { "a": "1", } }');
     const r = runCli([], tmpDir);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain('position');
   });
 
@@ -115,19 +137,18 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.stderr).not.toContain('Error: EISDIR');
   });
 
-  test('warns on unknown flag but still runs', async () => {
+  test('an unknown flag fails the run (exit 2) instead of being ignored', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0' }));
     const r = runCli(['--bogus'], tmpDir);
-    expect(r.stderr).toContain('warning:');
     expect(r.stderr).toContain('--bogus');
-    expect(r.status).toBe(0);
+    expect(r.status).toBe(2);
   });
 
-  test('warns when --ignore is missing its value', async () => {
+  test('--ignore without a value fails the run (exit 2)', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0' }));
     const r = runCli(['--ignore'], tmpDir);
-    expect(r.stderr).toContain('warning:');
     expect(r.stderr).toContain('--ignore');
+    expect(r.status).toBe(2);
   });
 
   test('--ignore filters unused entries', async () => {

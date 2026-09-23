@@ -90,7 +90,13 @@ deps-finder --all
 
 ## 옵션
 
-> `--help`와 이 표가 다르다면 `--help`가 정답입니다 — 이슈를 열어 주세요. 기준 소스는 [`src/constants/messages.ts:HELP_TEXT`](src/constants/messages.ts)입니다.
+```sh
+deps-finder [options] [<root>]
+```
+
+`<root>`는 `package.json`이 있는 프로젝트 디렉토리입니다 (기본값: 현재 디렉토리).
+
+> `--help`와 이 표가 다르다면 `--help`가 정답입니다 — 이슈를 열어 주세요. 기준 소스는 [`src/cli/command.ts`](src/cli/command.ts)입니다.
 
 | 옵션 | 별칭 | 설명 |
 |------|------|------|
@@ -98,10 +104,21 @@ deps-finder --all
 | `--json` | `-j` | JSON으로 출력 |
 | `--all` | `-a` | `dependencies`, `peerDependencies`, `devDependencies` 모두 검사 |
 | `--check-peer` | `-p` | `peerDependencies`도 함께 검사 (기본 off, `--all` 시 on) — [peerDependencies 안내](#peerdependencies-안내) 참고 |
-| `--ignore <pkgs>` | `-i` | 특정 패키지 무시 (쉼표로 구분) |
-| `--exclude <globs>` | `-e` | 특정 파일/디렉토리 제외 (쉼표로 구분된 glob) |
+| `--ignore <pkgs>` | `-i` | 패키지 무시 (쉼표로 구분, 반복 가능, `--ignore=a,b`) |
+| `--exclude <globs>` | `-e` | glob으로 파일/디렉토리 제외 (쉼표로 구분, 반복 가능) |
 | `--no-auto-detect` | — | 빌드 디렉토리 자동 감지 비활성화 |
+| `--version` | `-v` | 버전 출력 |
 | `--help` | `-h` | 도움말 표시 |
+
+모르는 플래그나 값이 빠진 플래그는 경고가 아니라 오류입니다.
+
+**종료 코드**
+
+| 코드 | 의미 |
+|------|------|
+| `0` | 이슈 없음 |
+| `1` | 이슈 발견 |
+| `2` | 실행 실패 (잘못된 플래그, `package.json` 없음·손상) |
 
 ---
 
@@ -185,17 +202,16 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 
 ## CI 통합
 
-deps-finder를 비차단(non-blocking) 린트 단계로 추가하거나, 결과가 있을 때 빌드를 실패시키도록 구성할 수 있습니다:
+이슈가 하나라도 있으면 빌드를 실패시키려면:
 
 ```yaml
-# .github/workflows/lint.yml
-- run: npx deps-finder --json > deps-report.json
-- run: |
-    issues=$(jq '.totalIssues' deps-report.json)
-    if [ "$issues" -gt 0 ]; then
-      echo "::error::deps-finder found $issues issues"
-      exit 1
-    fi
+- run: npx deps-finder
+```
+
+이슈로는 막지 않고 리포트만 남기되, 실행 자체가 실패하면(종료 코드 `2`) 막으려면:
+
+```yaml
+- run: npx deps-finder --json > deps-report.json || [ $? -eq 1 ]
 ```
 
 ---

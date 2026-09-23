@@ -44,8 +44,5 @@ export type CliOptions = {
   readonly ignoredPackages: ReadonlyArray<string>;
   readonly excludePatterns: ReadonlyArray<string>;
   readonly noAutoDetect: boolean;
-  readonly showHelp: boolean;
   readonly rootDir: string;
-  readonly packageJsonPath: string;
-  readonly warnings: ReadonlyArray<string>;
 };

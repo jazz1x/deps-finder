@@ -17,28 +17,16 @@ export const MESSAGES = {
   PACKAGE_JSON_PARSE_ERROR: (path: string, message: string) =>
     `Failed to parse ${path}: ${message}`,
   PACKAGE_JSON_READ_ERROR: (path: string, message: string) => `Failed to read ${path}: ${message}`,
-  WARNING_PREFIX: 'warning:',
 } as const;
 
-export const HELP_TEXT = `
-Usage: deps-finder [options]
-
-Options:
-  -t, --text             Output as text (default)
-  -j, --json             Output as JSON
-  -a, --all              Check dependencies, peerDependencies, and devDependencies
-  -p, --check-peer       Also check peerDependencies (off by default; on with --all)
-  -i, --ignore <pkgs>    Ignore specific packages (comma-separated)
-  -e, --exclude <globs>  Exclude specific files/dirs (comma-separated globs)
-  --no-auto-detect       Disable automatic build directory detection
-  -h, --help             Show this help message
-
-Examples:
-  deps-finder
-  deps-finder --json
-  deps-finder --all
-  deps-finder --check-peer
-  deps-finder --ignore eslint,prettier
-  deps-finder --exclude "custom-dist/**,.cache/**"
-  deps-finder -j --all
-` as const;
+export const CLI_TEXT = {
+  COMMAND: 'Find unused and misplaced dependencies in a package.json project.',
+  ROOT: 'Project directory containing package.json (default: current directory)',
+  TEXT: 'Output as text (default)',
+  JSON: 'Output as JSON',
+  ALL: 'Check dependencies, peerDependencies, and devDependencies',
+  CHECK_PEER: 'Also check peerDependencies (off by default; on with --all)',
+  IGNORE: 'Ignore packages (comma-separated, repeatable)',
+  EXCLUDE: 'Exclude files/dirs by glob (comma-separated, repeatable)',
+  NO_AUTO_DETECT: 'Disable automatic build directory detection',
+} as const;

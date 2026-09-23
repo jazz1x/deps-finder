@@ -89,7 +89,13 @@ Expected output (truncated):
 
 ## Options
 
-> If `--help` and this table disagree, `--help` wins — please open an issue. The source of truth is [`src/constants/messages.ts:HELP_TEXT`](src/constants/messages.ts).
+```sh
+deps-finder [options] [<root>]
+```
+
+`<root>` is the project directory that holds `package.json` (default: the current directory).
+
+> If `--help` and this table disagree, `--help` wins — please open an issue. The source of truth is [`src/cli/command.ts`](src/cli/command.ts).
 
 | Option | Alias | Description |
 |--------|-------|-------------|
@@ -97,10 +103,21 @@ Expected output (truncated):
 | `--json` | `-j` | Output as JSON |
 | `--all` | `-a` | Check `dependencies`, `peerDependencies`, and `devDependencies` |
 | `--check-peer` | `-p` | Also check `peerDependencies` (off by default; on with `--all`) — see [peerDependencies note](#peerdependencies-note) |
-| `--ignore <pkgs>` | `-i` | Ignore specific packages (comma-separated) |
-| `--exclude <globs>` | `-e` | Exclude specific files/dirs (comma-separated globs) |
+| `--ignore <pkgs>` | `-i` | Ignore packages (comma-separated, repeatable, `--ignore=a,b`) |
+| `--exclude <globs>` | `-e` | Exclude files/dirs by glob (comma-separated, repeatable) |
 | `--no-auto-detect` | — | Disable automatic build directory detection |
+| `--version` | `-v` | Print the version |
 | `--help` | `-h` | Show help message |
+
+Unknown flags and flags missing their value are errors, not warnings.
+
+**Exit codes**
+
+| Code | Meaning |
+|------|---------|
+| `0` | No issues |
+| `1` | Issues found |
+| `2` | The run failed (bad flags, missing or malformed `package.json`) |
 
 ---
 
@@ -184,17 +201,16 @@ With `--check-peer` (or `--all`), an additional section appears for declared pee
 
 ## CI integration
 
-Add deps-finder as a non-blocking lint step, or fail the build on any finding:
+Fail the build on any finding:
 
 ```yaml
-# .github/workflows/lint.yml
-- run: npx deps-finder --json > deps-report.json
-- run: |
-    issues=$(jq '.totalIssues' deps-report.json)
-    if [ "$issues" -gt 0 ]; then
-      echo "::error::deps-finder found $issues issues"
-      exit 1
-    fi
+- run: npx deps-finder
+```
+
+Or keep a report without blocking on findings, while still failing when the run itself breaks (exit `2`):
+
+```yaml
+- run: npx deps-finder --json > deps-report.json || [ $? -eq 1 ]
 ```
 
 ---

@@ -7,3 +7,7 @@ export type FileError = Data.TaggedEnum<{
 }>;
 
 export const FileError = Data.taggedEnum<FileError>();
+
+export type IssuesFound = { readonly _tag: 'IssuesFound'; readonly total: number };
+
+export const IssuesFound = (total: number): IssuesFound => ({ _tag: 'IssuesFound', total });
