@@ -4,7 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/deps-finder.svg)](https://www.npmjs.com/package/deps-finder)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](https://nodejs.org)
+[![Node ≥22.12](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)](https://nodejs.org)
 [![Bun](https://img.shields.io/badge/runtime-bun-black.svg)](https://bun.sh)
 [![CI](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml)
 
@@ -53,7 +53,7 @@ Or run once without installing:
 npx deps-finder
 ```
 
-Requires Node.js ≥ 22.
+Requires Node.js ≥ 22.12.
 
 ---
 
