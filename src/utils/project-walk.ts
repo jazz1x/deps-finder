@@ -11,6 +11,7 @@ import {
   readDirectory,
   readFile,
   readJsonFile,
+  readJsoncFile,
   readStats,
   readYamlFile,
 } from './file-reader.js';
@@ -25,7 +26,8 @@ type WalkRules = {
 // prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
 type Gitignore = { readonly prefix: string; readonly base: string; readonly rules: Ignore };
 
-// layoutRoots: rootDir and every directory above with a named package.json or an Nx project.json, relative to rootDir.
+// layoutRoots: rootDir and every directory above with a named package.json, an Nx project.json
+// or a left-out package, relative to rootDir.
 type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
@@ -330,7 +332,7 @@ const walkSubdirectory = (
         path.join(walk.rootDir, dir),
         entries,
         'project.json',
-        readJsonFile(Schema.Unknown),
+        readJsoncFile(Schema.Unknown),
       );
       const names = Array.map(entries, (entry) => entry.name);
       const role = roleOf({

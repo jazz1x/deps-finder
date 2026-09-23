@@ -361,6 +361,14 @@ describe('file contexts', () => {
     expect(result.misplaced).toEqual([]);
   });
 
+  test('an Nx project.json written as JSONC is a layout root', async () => {
+    await write('libs/x/project.json', '{ // jsonc\n "name":"x",}');
+    await write('libs/x/vite.config.ts', "import { defineConfig } from 'vite';");
+
+    expect(findFiles(testDir).skipped).toEqual([]);
+    expect(analyze(pkg({ devDependencies: ['vite'] })).misplaced).toEqual([]);
+  });
+
   test('only an Nx project.json makes a layout root, not a data file of that name', async () => {
     await write('apps/web/project.json', '{"targets":{}}');
     await write('apps/web/dist/main.js', "require('is-odd');");
@@ -369,8 +377,10 @@ describe('file contexts', () => {
     await write('src/fixtures/project.json', '{"id":1,"title":"Sample project"}');
     await write('src/fixtures/build/make.ts', "import 'lodash';");
     await write('src/fixtures/schema.config.ts', "import 'zod';");
+    await write('src/people/project.json', '{"name":{"first":"x"}}');
+    await write('src/people/build/list.ts', "import 'ramda';");
 
-    const result = analyze(pkg({ dependencies: ['lodash', 'is-odd', 'is-even'], devDependencies: ['zod'] }));
+    const result = analyze(pkg({ dependencies: ['lodash', 'is-odd', 'is-even', 'ramda'], devDependencies: ['zod'] }));
 
     expect(result.unused).toEqual(['is-odd', 'is-even']);
     expect(result.misplaced.map((m) => m.packageName)).toEqual(['zod']);
