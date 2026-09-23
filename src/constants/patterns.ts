@@ -1,8 +1,7 @@
+export const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'] as const;
+
 export const ANALYZABLE_EXTENSIONS = [
-  '.ts',
-  '.tsx',
-  '.mts',
-  '.cts',
+  ...TYPESCRIPT_EXTENSIONS,
   '.js',
   '.jsx',
   '.mjs',
@@ -10,6 +9,8 @@ export const ANALYZABLE_EXTENSIONS = [
 ] as const;
 
 export const DECLARATION_FILE_PATTERN = /\.d\.[cm]?ts$/;
+
+export const TSCONFIG_FILE_PATTERN = /^tsconfig.*\.json$/;
 
 export const ROOT_TOOL_CONFIG_PATTERN = /\.(config|preset)\./;
 

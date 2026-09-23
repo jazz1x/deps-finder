@@ -7,6 +7,7 @@ import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.j
 import type { CliOptions, DependencyType } from '../domain/types.js';
 import { findFiles, parseHoistedImports, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
+import { readTsConfigImports } from '../parsers/tsconfig-parser.js';
 import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
 import { formatSkippedInput, formatSkippedSource } from '../reporters/error-reporter.js';
 
@@ -90,14 +91,15 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
       files,
       own: parseMultipleFiles(files.found),
       hoisted: parseHoistedImports(files.packages),
+      tsconfig: readTsConfigImports(options.rootDir),
     })),
-    Effect.map(({ packageJson, files, own, hoisted }) => ({
+    Effect.map(({ packageJson, files, own, hoisted, tsconfig }) => ({
       packageJson,
-      // The walk and the hoisting credit both read a left-out package.json.
-      skippedInputs: Array.dedupe([...files.skipped, ...hoisted.skipped]),
+      // The walk, the hoisting credit and the tsconfig reader can each read the same file.
+      skippedInputs: Array.dedupe([...files.skipped, ...hoisted.skipped, ...tsconfig.skipped]),
       packagesLeftOut: Array.map(files.packages, (leftOut) => leftOut.dir),
       sources: {
-        imports: [...own.imports, ...hoisted.imports],
+        imports: [...own.imports, ...hoisted.imports, ...tsconfig.found],
         unreadable: [...own.unreadable, ...hoisted.unreadable],
       },
     })),

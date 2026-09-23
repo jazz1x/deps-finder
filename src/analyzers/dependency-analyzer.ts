@@ -1,4 +1,5 @@
-import { Array, Option, Order, Record, pipe } from 'effect';
+import { builtinModules } from 'node:module';
+import { Array, Match, Option, Order, Record, String, pipe } from 'effect';
 import type {
   AnalysisResult,
   DependencyType,
@@ -36,10 +37,29 @@ const bySourcePosition = Order.combine(
   Order.mapInput(Order.Number, (loc: ImportLocation) => loc.line),
 );
 
+const isBuiltin = (name: PackageName): boolean => Array.contains(builtinModules, name);
+
+const isBun = (name: PackageName): boolean => name === 'bun' || String.startsWith('bun:')(name);
+
+const typesPackagesOf = (name: PackageName): ReadonlyArray<PackageName> =>
+  Match.value(name).pipe(
+    Match.when(String.startsWith('node:'), () => ['@types/node']),
+    Match.when(isBun, () => ['@types/bun']),
+    Match.when(isBuiltin, (builtin) => ['@types/node', `@types/${builtin}`]),
+    Match.when(String.startsWith('@'), (scoped) => [
+      `@types/${String.replace('/', '__')(scoped.slice(1))}`,
+    ]),
+    Match.orElse((bare) => [`@types/${bare}`]),
+  );
+
+// An @types package is used through the package it types, which never makes it misplaced or typeOnly.
+const usedNames = (used: UsageIndex): ReadonlySet<PackageName> =>
+  new Set(Array.flatMap(Record.keys(used), (name) => [name, ...typesPackagesOf(name)]));
+
 const isUnused =
-  (used: UsageIndex) =>
+  (used: ReadonlySet<PackageName>) =>
   (dep: PackageName): boolean =>
-    !Record.has(used, dep);
+    !used.has(dep);
 
 const findMisplaced = (
   packageJson: PackageJson,
@@ -84,7 +104,7 @@ export const analyzeDependencies = (
   allImports: ReadonlyArray<ImportDetails>,
   options: AnalyzeOptions,
 ): AnalysisResult => {
-  const used = indexUsage(allImports);
+  const used = usedNames(indexUsage(allImports));
   const production = Array.filter(allImports, (detail) => detail.context === 'production');
   const productionRuntime = indexUsage(Array.filter(production, ofType('runtime')));
   const productionTypeOnly = indexUsage(Array.filter(production, ofType('type-only')));

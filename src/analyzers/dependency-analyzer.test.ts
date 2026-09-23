@@ -91,7 +91,7 @@ describe('dependency-analyzer', () => {
   });
 
   test('should check devDependencies for unused when checkAll is true', async () => {
-    await writeFile(`${testDir}/index.ts`, `console.log('test');`);
+    await writeFile(`${testDir}/index.js`, `console.log('test');`);
 
     const packageJson: PackageJson = {
       dependencies: [],
@@ -312,7 +312,7 @@ describe('dependency-analyzer: peerDependencies', () => {
   });
 
   test('--check-peer: peerDeps not imported are reported in unusedPeer (not in unused)', async () => {
-    await writeFile(`${testDir}/index.ts`, "import React from 'react'; export default React;");
+    await writeFile(`${testDir}/index.js`, "import React from 'react'; export default React;");
     const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
@@ -328,7 +328,7 @@ describe('dependency-analyzer: peerDependencies', () => {
   });
 
   test('--all implies --check-peer (peerDeps reported when not imported)', async () => {
-    await writeFile(`${testDir}/index.ts`, 'export const x = 1;');
+    await writeFile(`${testDir}/index.js`, 'export const x = 1;');
     const files = findFiles(testDir).found;
     const imports = parseMultipleFiles(files).imports;
 
@@ -494,5 +494,43 @@ describe('dependency-analyzer: section classification', () => {
       },
     );
     expect(result.misplaced[0]?.locations.map((l) => `${l.file}:${l.line}`)).toEqual(['src/a.ts:2', 'src/a.ts:9', 'src/b.ts:3']);
+  });
+});
+
+describe('dependency-analyzer: @types pairing', () => {
+  test('an @types package is used when its package, a subpath or a builtin it types is imported', () => {
+    const result = analyzeDependencies(
+      pkg({
+        devDependencies: ['@types/react-dom', '@types/scope__name', '@types/node', '@types/bun', '@types/events', '@types/uuid'],
+      }),
+      [
+        use('react-dom', 'type-only'),
+        use('@scope/name', 'runtime', 'src/a.test.ts', 1, 'development'),
+        use('node:fs'),
+        use('events'),
+        use('bun:test', 'runtime', 'src/a.test.ts', 1, 'development'),
+      ],
+      { sections: ALL, ignoredPackages: [] },
+    );
+    expect(result.unused).toEqual(['@types/uuid']);
+  });
+
+  test.each(['fs', 'node:fs'])('%s alone credits @types/node', (builtin) => {
+    const result = analyzeDependencies(pkg({ devDependencies: ['@types/node'] }), [use(builtin)], { sections: ALL, ignoredPackages: [] });
+    expect(result.unused).toEqual([]);
+  });
+
+  test('pairing alone never makes an @types package misplaced or typeOnly', () => {
+    const result = analyzeDependencies(
+      pkg({ dependencies: ['react', '@types/react'], devDependencies: ['@types/lodash'] }),
+      [use('react'), use('lodash')],
+      {
+        sections: ALL,
+        ignoredPackages: [],
+      },
+    );
+    expect(result.misplaced).toEqual([]);
+    expect(result.typeOnly).toEqual([]);
+    expect(result.unused).toEqual([]);
   });
 });

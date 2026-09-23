@@ -178,7 +178,7 @@ describe('findFiles', () => {
 
     const files = findFiles(testDir).found;
 
-    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts', 'tsconfig.json']);
   });
 
   test('excludes a detected outDir only at the project root', async () => {
@@ -190,7 +190,7 @@ describe('findFiles', () => {
 
     const files = findFiles(testDir).found;
 
-    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/lib/util.ts']);
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/lib/util.ts', 'tsconfig.json']);
   });
 
   test('takes --exclude paths written with ./ or as absolute paths under rootDir', async () => {
@@ -215,19 +215,19 @@ describe('findFiles', () => {
 
     const { found, skipped } = findFiles(testDir);
 
-    expect(found.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
+    expect(found.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts', 'tsconfig.json']);
     const relativeTo = (e: FileError) => path.relative(testDir, e.path);
     expect(skipped.filter(FileError.$is('ParseFailed')).map(relativeTo)).toEqual(['tsconfig.json']);
     expect(skipped.filter(FileError.$is('ReadFailed')).map(relativeTo)).toEqual(['src/.gitignore']);
     expect(skipped).toHaveLength(2);
   });
 
-  test('should exclude .d.ts files', async () => {
+  test('includes hand-written .d.ts files', async () => {
     await writeFile(`${testDir}/src/index.d.ts`, 'export declare const x: number;');
-    await writeFile(`${testDir}/src/types.d.ts`, 'export type T = string;');
+    await writeFile(`${testDir}/src/types.d.mts`, 'export type T = string;');
 
     const files = findFiles(`${testDir}/src`).found;
-    expect(files.length).toBe(0);
+    expect(files.length).toBe(2);
   });
 });
 
@@ -269,12 +269,12 @@ describe('parseMultipleFiles', () => {
   });
 
   test('aggregates imports from multiple files, each tagged with its file context', async () => {
-    await writeFile(`${testDir}/a.ts`, "import { a } from 'pkg-a';");
-    await writeFile(`${testDir}/b.ts`, "import { b } from 'pkg-b';");
+    await writeFile(`${testDir}/a.js`, "import { a } from 'pkg-a';");
+    await writeFile(`${testDir}/b.js`, "import { b } from 'pkg-b';");
 
     const result = parseMultipleFiles([
-      { path: `${testDir}/a.ts`, context: 'production' },
-      { path: `${testDir}/b.ts`, context: 'development' },
+      { path: `${testDir}/a.js`, context: 'production' },
+      { path: `${testDir}/b.js`, context: 'development' },
     ]).imports;
     expect(result.map((r) => [r.packageName, r.context])).toEqual([
       ['pkg-a', 'production'],
@@ -283,11 +283,11 @@ describe('parseMultipleFiles', () => {
   });
 
   test('keeps imports from readable files and reports the unreadable ones', async () => {
-    await writeFile(`${testDir}/a.ts`, "import { a } from 'pkg-a';");
+    await writeFile(`${testDir}/a.js`, "import { a } from 'pkg-a';");
     await mkdir(`${testDir}/dir.ts`);
 
     const result = parseMultipleFiles([
-      { path: `${testDir}/a.ts`, context: 'production' },
+      { path: `${testDir}/a.js`, context: 'production' },
       { path: `${testDir}/dir.ts`, context: 'production' },
     ]);
     expect(result.imports.map((i) => i.packageName)).toEqual(['pkg-a']);
@@ -564,14 +564,106 @@ describe('fileContextOf', () => {
 });
 
 describe('shouldAnalyzeFile', () => {
-  test('analyzes .mts and .cts sources but not their declaration files', () => {
+  test('analyzes sources, declaration files and tsconfig files', () => {
     expect(shouldAnalyzeFile('src/a.mts')).toBe(true);
     expect(shouldAnalyzeFile('src/b.cts')).toBe(true);
-    expect(shouldAnalyzeFile('src/a.d.mts')).toBe(false);
-    expect(shouldAnalyzeFile('src/b.d.cts')).toBe(false);
+    expect(shouldAnalyzeFile('src/types.d.ts')).toBe(true);
+    expect(shouldAnalyzeFile('src/a.d.mts')).toBe(true);
+    expect(shouldAnalyzeFile('libs/x/tsconfig.lib.json')).toBe(true);
+    expect(shouldAnalyzeFile('package.json')).toBe(false);
+  });
+});
+
+const typeOnly = (content: string, file = 'src/a.ts') =>
+  extractImports(content, file).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
+
+describe('extractImports type positions', () => {
+  test('a type import sits beside an import() expression', () => {
+    expect(typeOnly('export const lazy = () => import("lazy");\nexport type A = import("zod").ZodType;')).toEqual([
+      'lazy:runtime:1',
+      'zod:type-only:2',
+    ]);
   });
 
-  test('should NOT analyze .d.ts files', () => {
-    expect(shouldAnalyzeFile('src/types.d.ts')).toBe(false);
+  test('spacing before the parenthesis hides neither import form', () => {
+    expect(typeOnly('export const lazy = () => import ("lazy");\nexport type A = import ("zod").ZodType;')).toEqual([
+      'lazy:runtime:1',
+      'zod:type-only:2',
+    ]);
+  });
+
+  test('import("x") types and typeof import("x") are type-only', () => {
+    expect(typeOnly('export type A = import("zod").ZodType;\nexport type B = typeof import("foo/sub");')).toEqual([
+      'zod:type-only:1',
+      'foo:type-only:2',
+    ]);
+  });
+
+  test('JSDoc import("x") is type-only, a commented-out import() is not', () => {
+    const content = '/** @type {import("express").Handler} */\nconst h = 1;\n/* import("left-over") */\nmodule.exports = h;';
+    expect(typeOnly(content, 'src/a.js')).toEqual(['express:type-only:1']);
+    expect(extractImports(content, 'src/a.js')[0]?.importStatement).toBe('import("express")');
+  });
+
+  test('a JSDoc @import tag is type-only', () => {
+    const content = '/**\n * @import { A } from "alpha"\n * @import * as B from \'beta/sub\'\n */\nexport const f = (x) => x;';
+    expect(typeOnly(content, 'src/a.js')).toEqual(['alpha:type-only:2', 'beta:type-only:3']);
+  });
+
+  test('/// <reference types> names a type-only package', () => {
+    expect(typeOnly('/// <reference types="vite/client" />\nexport const x = 1;')).toEqual(['vite:type-only:1']);
+  });
+
+  test('/// <reference> finds types after another attribute', () => {
+    expect(typeOnly('/// <reference resolution-mode="import" types="alpha" />\nexport {};')).toEqual(['alpha:type-only:1']);
+  });
+
+  test('a comment between import and its parenthesis hides no type import', () => {
+    expect(typeOnly('export type A = import /* c */ ("zod").ZodType;')).toEqual(['zod:type-only:1']);
+  });
+
+  test('JSDoc prose that mentions import("x") outside a {type} is no usage', () => {
+    const content = '/** Loads heavy lazily, e.g. import("heavy"). @type {Map<string, import("zod").ZodType>} */\nexport const v = 1;';
+    expect(typeOnly(content, 'src/a.js')).toEqual(['zod:type-only:1']);
+  });
+
+  test('declare module is found with any whitespace between the keywords', () => {
+    expect(typeOnly('export {};\ndeclare  module "express" {}')).toEqual(['express:type-only:2']);
+  });
+
+  test('declare module "x" counts in a module file, not in an ambient script', () => {
+    expect(typeOnly('declare module "express" { interface Request { user?: string } }\nexport {};')).toEqual(['express:type-only:1']);
+    expect(typeOnly('declare module "untyped-lib" { const x: number; }')).toEqual([]);
+  });
+});
+
+describe('parseFile source kinds', () => {
+  const testDir = './test-parse-file-kinds';
+
+  beforeEach(async () => {
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  const parsed = (file: string) =>
+    Result.getOrThrow(parseFile({ path: `${testDir}/${file}`, context: 'production' })).map(
+      (found) => `${found.packageName}:${found.importType}:${found.context}`,
+    );
+
+  test('a declaration file contributes type-only usage in its own context', async () => {
+    await writeFile(`${testDir}/types.d.ts`, "import { Properties } from 'csstype';\nexport type P = Properties;");
+    expect(parsed('types.d.ts')).toEqual(['csstype:type-only:production', 'typescript:runtime:development']);
+  });
+
+  test('TypeScript sources and tsconfig files are development usage of typescript, JavaScript is not', async () => {
+    await writeFile(`${testDir}/a.ts`, "import x from 'pkg';");
+    await writeFile(`${testDir}/b.js`, "import x from 'pkg';");
+    await writeFile(`${testDir}/tsconfig.app.json`, '{}');
+    expect(parsed('a.ts')).toEqual(['pkg:runtime:production', 'typescript:runtime:development']);
+    expect(parsed('b.js')).toEqual(['pkg:runtime:production']);
+    expect(parsed('tsconfig.app.json')).toEqual(['typescript:runtime:development']);
   });
 });
