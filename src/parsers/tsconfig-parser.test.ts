@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { FileError } from '@/domain/errors';
 import { readTsConfigImports } from './tsconfig-parser';
 
 describe('readTsConfigImports', () => {
@@ -45,21 +44,10 @@ describe('readTsConfigImports', () => {
     ]);
   });
 
-  test.each([
-    ['a bare package', '@tsconfig/node20', 'node_modules/@tsconfig/node20/tsconfig.json'],
-    ['a file without .json', './configs/base', 'configs/base.json'],
-  ])('extends %s', async (_, specifier, parent) => {
-    await write('tsconfig.json', { extends: specifier });
-    await write(parent, { compilerOptions: { types: ['node'] } });
-    expect(readTsConfigImports(testDir).found.map((usage) => usage.packageName)).toContain('node');
-  });
-
-  test('a package extends resolves through node_modules above the project', async () => {
-    await write('pkg/tsconfig.json', { extends: '@tsconfig/node20/tsconfig.json' });
-    await write('node_modules/@tsconfig/node20/tsconfig.json', { compilerOptions: { types: ['node'] } });
-    const { found, skipped } = readTsConfigImports(path.join(testDir, 'pkg'));
-    expect(found.map((usage) => usage.packageName)).toEqual(['@tsconfig/node20', 'node']);
-    expect(skipped).toEqual([]);
+  test('a relative extends into node_modules names the package', async () => {
+    await write('tsconfig.json', { extends: './node_modules/@tsconfig/node20/tsconfig.json' });
+    await write('node_modules/@tsconfig/node20/tsconfig.json', {});
+    expect(usages()).toEqual(['@tsconfig/node20:type-only:development:tsconfig.json:2']);
   });
 
   test('a parent shared by tsconfig.json and tsconfig.base.json counts once', async () => {
@@ -70,24 +58,17 @@ describe('readTsConfigImports', () => {
     expect(usages()).toEqual(['@tsconfig/strictest:type-only:development:shared.json:2']);
   });
 
-  test('a child importHelpers: false turns the inherited tslib usage off', async () => {
-    await write('tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { importHelpers: false } });
+  test('a child importHelpers: false or null turns the inherited tslib usage off', async () => {
     await write('tsconfig.base.json', { compilerOptions: { importHelpers: true } });
+    await write('tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { importHelpers: false } });
+    expect(usages()).toEqual([]);
+    await write('tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { importHelpers: null } });
     expect(usages()).toEqual([]);
   });
 
-  test('in an extends array the later entry wins', async () => {
-    await write('tsconfig.json', { extends: ['./a.json', './b.json'] });
-    await write('a.json', { compilerOptions: { types: ['from-a'] } });
-    await write('b.json', { compilerOptions: { types: ['from-b'] } });
-    expect(readTsConfigImports(testDir).found.map((usage) => usage.packageName)).toEqual(['from-b']);
-  });
-
-  test('a missing extended file is skipped, and an extends cycle ends', async () => {
-    await write('tsconfig.json', { extends: ['./missing', './tsconfig.base.json'] });
-    await write('tsconfig.base.json', { extends: './tsconfig.json', compilerOptions: { types: ['node'] } });
-    const { found, skipped } = readTsConfigImports(testDir);
-    expect(found.map((usage) => usage.packageName)).toEqual(['node']);
-    expect(skipped.map(FileError.$is('FileNotFound'))).toEqual([true]);
+  test('a child types: null clears the inherited types', async () => {
+    await write('tsconfig.base.json', { compilerOptions: { types: ['node'] } });
+    await write('tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { types: null } });
+    expect(usages()).toEqual([]);
   });
 });

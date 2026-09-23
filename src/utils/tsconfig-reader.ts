@@ -1,17 +1,22 @@
 import path from 'node:path';
-import { Array, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Effect, Match, Option, Result, Schema, pipe } from 'effect';
 import { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
 import { decodeJsonc, gatherAll, gatherOptional, readFile, readStats } from './file-reader.js';
 import { lineage } from './project-walk.js';
 
+// tsc accepts null (it clears an inherited option); a value that fits no field leaves the rest usable.
+const option = <S extends Schema.Top>(schema: S) =>
+  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
+
 const TsConfig = Schema.Struct({
-  extends: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  extends: option(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
   compilerOptions: Schema.optionalKey(
     Schema.Struct({
-      outDir: Schema.optionalKey(Schema.NonEmptyString),
-      types: Schema.optionalKey(Schema.Array(Schema.String)),
-      importHelpers: Schema.optionalKey(Schema.Boolean),
+      outDir: option(Schema.NonEmptyString),
+      declarationDir: option(Schema.NonEmptyString),
+      types: option(Schema.NullOr(Schema.Array(Schema.String))),
+      importHelpers: option(Schema.NullOr(Schema.Boolean)),
     }),
   ),
 });
@@ -47,7 +52,10 @@ export const readRootTsConfigs = (projectRoot: string): Gathered<TsConfig> => {
 
 export const outDirsOf = (configs: ReadonlyArray<TsConfig>): ReadonlyArray<string> =>
   Array.flatMap(configs, (config) =>
-    Option.toArray(Option.fromNullishOr(config.compilerOptions?.outDir)),
+    Array.getSomes([
+      Option.fromNullishOr(config.compilerOptions?.outDir),
+      Option.fromNullishOr(config.compilerOptions?.declarationDir),
+    ]),
   );
 
 export const extendsOf = (config: TsConfig): ReadonlyArray<string> =>

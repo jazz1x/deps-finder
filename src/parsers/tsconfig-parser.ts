@@ -1,4 +1,4 @@
-import { Array, Option, pipe } from 'effect';
+import { Array, Option, String, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
 import type {
   FileContext,
@@ -45,7 +45,7 @@ const nearest = <A>(
   pick: (config: TsConfig) => A | undefined,
 ): Option.Option<readonly [TsConfigFile, A]> =>
   Array.findFirst(chain, (file) =>
-    Option.map(Option.fromNullishOr(pick(file.config)), (value) => [file, value] as const),
+    Option.map(Option.fromUndefinedOr(pick(file.config)), (value) => [file, value] as const),
   );
 
 const packageUses = (
@@ -60,19 +60,27 @@ const packageUses = (
     Array.map((packageName) => ({ packageName, importType, context })),
   );
 
+const INTO_NODE_MODULES = /node_modules[/\\]/;
+
+// A relative path into node_modules extends the package it lands in.
+const extendedSpecifier = (specifier: string): string =>
+  Array.lastNonEmpty(String.split(INTO_NODE_MODULES)(specifier));
+
 const extendsImports = (file: TsConfigFile): ReadonlyArray<ImportDetails> =>
   Array.map(
-    packageUses(extendsOf(file.config), 'type-only', 'development'),
+    packageUses(Array.map(extendsOf(file.config), extendedSpecifier), 'type-only', 'development'),
     usageAt(file, ['extends']),
   );
 
 const typesImports = (chain: TsConfigChain): ReadonlyArray<ImportDetails> =>
   pipe(
     nearest(chain, (config) => config.compilerOptions?.types),
-    Option.map(([file, types]) =>
-      Array.map(
-        packageUses(types, 'type-only', 'development'),
-        usageAt(file, ['compilerOptions', 'types']),
+    Option.flatMap(([file, types]) =>
+      Option.map(Option.fromNullOr(types), (listed) =>
+        Array.map(
+          packageUses(listed, 'type-only', 'development'),
+          usageAt(file, ['compilerOptions', 'types']),
+        ),
       ),
     ),
     Option.getOrElse((): ReadonlyArray<ImportDetails> => []),
@@ -82,7 +90,7 @@ const typesImports = (chain: TsConfigChain): ReadonlyArray<ImportDetails> =>
 const helperImports = (chain: TsConfigChain): ReadonlyArray<ImportDetails> =>
   pipe(
     nearest(chain, (config) => config.compilerOptions?.importHelpers),
-    Option.filter(([, importHelpers]) => importHelpers),
+    Option.filter(([, importHelpers]) => importHelpers === true),
     Option.map(([file]) =>
       usageAt(file, ['compilerOptions', 'importHelpers'])({
         packageName: 'tslib',
