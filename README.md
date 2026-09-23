@@ -114,8 +114,8 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 ```
 
 1. Read `package.json` to get declared `dependencies`, `peerDependencies`, and `devDependencies`.
-2. Glob `src/**` for `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, while skipping comments and auto-detected build outputs.
-3. Parse `import` / `require` / dynamic `import()` statements; resolve to package roots (e.g. `lodash/fp` → `lodash`).
+2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping tests and auto-detected build outputs.
+3. Parse each file with [oxc](https://oxc.rs) and collect `import`, `export … from`, `require()`, `import x = require()`, and dynamic `import()` with a string literal; resolve to package roots (e.g. `lodash/fp` → `lodash`).
 4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**.
 
 ---

@@ -115,8 +115,8 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 ```
 
 1. `package.json`을 읽어 선언된 `dependencies`, `peerDependencies`, `devDependencies`를 가져옵니다.
-2. `src/**`에서 `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`를 글롭(glob)하며, 주석과 자동 감지된 빌드 출력은 건너뜁니다.
-3. `import` / `require` / 동적 `import()` 구문을 파싱해 패키지 루트로 정규화합니다 (예: `lodash/fp` → `lodash`).
+2. 프로젝트에서 `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`를 글롭(glob)하며, 시험 파일과 자동 감지된 빌드 출력은 건너뜁니다.
+3. 파일마다 [oxc](https://oxc.rs)로 파싱해 `import`, `export … from`, `require()`, `import x = require()`, 문자열 리터럴 동적 `import()`를 모으고 패키지 루트로 정규화합니다 (예: `lodash/fp` → `lodash`).
 4. 두 집합의 차집합을 구해 네 가지 버킷을 만듭니다: **unused**, **unusedPeer** (`--check-peer` 시), **misplaced**, **typeOnly**.
 
 ---
