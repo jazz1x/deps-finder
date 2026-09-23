@@ -61,14 +61,16 @@ const Manifest = Schema.Struct({ name: Schema.optionalKey(Schema.String) });
 const Globs = Schema.Array(Schema.String);
 
 const RootManifest = Schema.Struct({
-  workspaces: Schema.optionalKey(Schema.Union([Globs, Schema.Struct({ packages: Globs })])),
+  workspaces: Schema.optionalKey(
+    Schema.NullOr(Schema.Union([Globs, Schema.Struct({ packages: Globs })])),
+  ),
 });
 
 const PnpmWorkspace = Schema.NullOr(
   Schema.Struct({ packages: Schema.optionalKey(Schema.NullOr(Globs)) }),
 );
 
-const INSTALL_MARKERS = [
+const INSTALL_MARKERS: ReadonlyArray<string> = [
   'package-lock.json',
   'npm-shrinkwrap.json',
   'yarn.lock',
@@ -100,17 +102,20 @@ const workspaceGlobOf = (glob: string): WorkspaceGlob => {
 };
 
 // npm and pnpm glob `${pattern}/package.json`, so `libs/**` also claims libs itself.
-// Later globs win, so a negation drops what an earlier glob matched.
-const isMemberOf =
-  (globs: ReadonlyArray<WorkspaceGlob>) =>
-  (dir: string): boolean =>
-    Array.reduce(globs, false, (member, { negated, pattern }) =>
-      minimatch(`${dir}/package.json`, `${pattern}/package.json`) ? !negated : member,
-    );
+// A negation excludes wherever it sits in the list (npm 11, pnpm 11).
+const isMemberOf = (globs: ReadonlyArray<WorkspaceGlob>) => {
+  const negations = Array.filter(globs, ({ negated }) => negated);
+  const positives = Array.filter(globs, ({ negated }) => !negated);
+  return (dir: string): boolean => {
+    const matches = ({ pattern }: WorkspaceGlob) =>
+      minimatch(`${dir}/package.json`, `${pattern}/package.json`);
+    return Array.some(positives, matches) && !Array.some(negations, matches);
+  };
+};
 
 const workspacesOf = (manifest: typeof RootManifest.Type): ReadonlyArray<string> =>
   Match.value(manifest.workspaces).pipe(
-    Match.when(Match.undefined, (): ReadonlyArray<string> => []),
+    Match.whenOr(Match.undefined, Match.null, (): ReadonlyArray<string> => []),
     Match.when({ packages: Match.any }, (declared) => declared.packages),
     Match.orElse((globs) => globs),
   );

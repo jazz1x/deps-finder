@@ -55,7 +55,7 @@ describe('walkProject', () => {
   const packagesOf = (root = testDir) => walkProject(root, RULES).packages.toSorted();
 
   test('leaves out array-form workspace members, honouring negation', async () => {
-    await put('package.json', '{"workspaces":["./packages/*/","!packages/keep"]}');
+    await put('package.json', '{"workspaces":["!packages/keep","./packages/*/"]}');
     await put('pnpm-workspace.yaml', 'packages:\n# none yet\n');
     await put('packages/a/package.json', '{"name":"a"}');
     await put('packages/a/index.ts');
@@ -91,7 +91,7 @@ describe('walkProject', () => {
   });
 
   test('leaves out pnpm-workspace.yaml members, honouring negation', async () => {
-    await put('pnpm-workspace.yaml', "packages:\n  - 'packages/**'\n  - '!**/test/**'\n");
+    await put('pnpm-workspace.yaml', "packages:\n  - '!**/test/**'\n  - 'packages/**'\n");
     await put('packages/a/package.json', '{}');
     await put('packages/a/index.ts');
     await put('packages/b/test/pkg/package.json', '{"name":"pkg"}');
@@ -99,6 +99,15 @@ describe('walkProject', () => {
 
     expect(packagesOf()).toEqual(['packages/a']);
     expect(walked()).toEqual(['packages/b/test/pkg/index.ts']);
+  });
+
+  test('a null workspaces field declares no members', async () => {
+    await put('package.json', '{"workspaces":null}');
+    await put('packages/a/package.json', '{"name":"a"}');
+    await put('packages/a/index.ts');
+
+    expect(walked()).toEqual(['packages/a/index.ts']);
+    expect(skippedIn(testDir)).toEqual([]);
   });
 
   test('warns about a malformed workspace declaration instead of guessing', async () => {
