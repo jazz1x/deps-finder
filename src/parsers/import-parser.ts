@@ -11,6 +11,7 @@ import { Array, Match, Option, Result, String, pipe } from 'effect';
 import {
   type Comment,
   type DynamicImport,
+  type ParseResult,
   type StaticExport,
   type StaticImport,
   Visitor,
@@ -237,16 +238,28 @@ const astReferences = (program: Program): AstReferences => {
 
 const AST_MARKERS = ['require', 'declare module'] as const;
 
-// The module record already holds every import() expression; walking a file only for those
-// cost foodspring-front 20-30ms. A surplus import( is a type import (or JSDoc).
-const hasTypeImport = (content: string, dynamicImports: number): boolean =>
-  content.split('import(').length - 1 > dynamicImports;
+const IMPORT_CALL = /\bimport\s*\(/g;
+
+const importCalls = (text: string): number => [...text.matchAll(IMPORT_CALL)].length;
+
+// The module record already holds every import() expression and the comments are read anyway;
+// building the program only for those cost foodspring-front 20-30ms and a JSDoc-heavy tree 2.4x.
+const hasTypeImport = (content: string, parsed: ParseResult): boolean => {
+  const surplus = importCalls(content) - parsed.module.dynamicImports.length;
+  return (
+    surplus > 0 &&
+    surplus > Array.reduce(parsed.comments, 0, (sum, comment) => sum + importCalls(comment.value))
+  );
+};
 
 const TYPE_REFERENCE = /^\/\s*<reference\s+types\s*=\s*(['"])([^'"]+)\1/;
 
-const JSDOC_IMPORT = /import\(\s*(['"])([^'"]+)\1\s*\)/g;
+const JSDOC_IMPORTS = [
+  /import\s*\(\s*(['"])([^'"]+)\1\s*\)/g,
+  /@import\s[^@]*?\bfrom\s*(['"])([^'"]+)\1/g,
+] as const;
 
-const COMMENT_MARKERS = ['<reference', 'import('] as const;
+const COMMENT_MARKER = /<reference|@import|import\s*\(/;
 
 // A comment's value starts after its `//` or `/*`.
 const commentMatchReference =
@@ -270,7 +283,9 @@ const commentReferences = (comment: Comment): ReadonlyArray<ModuleReference> =>
     ),
     Match.when({ type: 'Block', value: String.startsWith('*') }, (jsdoc) =>
       Array.getSomes(
-        Array.map([...jsdoc.value.matchAll(JSDOC_IMPORT)], commentMatchReference(jsdoc)),
+        Array.flatMap(JSDOC_IMPORTS, (pattern) =>
+          Array.map([...jsdoc.value.matchAll(pattern)], commentMatchReference(jsdoc)),
+        ),
       ),
     ),
     Match.orElse((): ReadonlyArray<ModuleReference> => []),
@@ -282,7 +297,7 @@ const containsAny = (content: string, markers: ReadonlyArray<string>): boolean =
 const moduleReferences = (content: string, filePath: string): ReadonlyArray<ModuleReference> => {
   const parsed = parseSync(filePath, content);
   const ast =
-    containsAny(content, AST_MARKERS) || hasTypeImport(content, parsed.module.dynamicImports.length)
+    containsAny(content, AST_MARKERS) || hasTypeImport(content, parsed)
       ? astReferences(parsed.program)
       : NO_AST_REFERENCES;
   return [
@@ -291,9 +306,7 @@ const moduleReferences = (content: string, filePath: string): ReadonlyArray<Modu
     ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
     ...ast.references,
     ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
-    ...(containsAny(content, COMMENT_MARKERS)
-      ? Array.flatMap(parsed.comments, commentReferences)
-      : []),
+    ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
   ];
 };
 
@@ -350,7 +363,12 @@ export const parseFile = (
 ): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
   Match.value(sourceKindOf(source.path)).pipe(
     Match.when('tsconfig', () => Result.succeed([typescriptUse(source.path)])),
-    Match.when('declaration', () => Result.map(readImports(source), Array.map(asTypeOnly))),
+    Match.when('declaration', () =>
+      Result.map(readImports(source), (found) => [
+        ...Array.map(found, asTypeOnly),
+        typescriptUse(source.path),
+      ]),
+    ),
     Match.when('typescript', () =>
       Result.map(readImports(source), Array.append(typescriptUse(source.path))),
     ),

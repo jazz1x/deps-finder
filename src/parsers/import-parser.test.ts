@@ -585,6 +585,13 @@ describe('extractImports type positions', () => {
     ]);
   });
 
+  test('spacing before the parenthesis hides neither import form', () => {
+    expect(typeOnly('export const lazy = () => import ("lazy");\nexport type A = import ("zod").ZodType;')).toEqual([
+      'lazy:runtime:1',
+      'zod:type-only:2',
+    ]);
+  });
+
   test('import("x") types and typeof import("x") are type-only', () => {
     expect(typeOnly('export type A = import("zod").ZodType;\nexport type B = typeof import("foo/sub");')).toEqual([
       'zod:type-only:1',
@@ -595,6 +602,12 @@ describe('extractImports type positions', () => {
   test('JSDoc import("x") is type-only, a commented-out import() is not', () => {
     const content = '/** @type {import("express").Handler} */\nconst h = 1;\n/* import("left-over") */\nmodule.exports = h;';
     expect(typeOnly(content, 'src/a.js')).toEqual(['express:type-only:1']);
+    expect(extractImports(content, 'src/a.js')[0]?.importStatement).toBe('import("express")');
+  });
+
+  test('a JSDoc @import tag is type-only', () => {
+    const content = '/**\n * @import { A } from "alpha"\n * @import * as B from \'beta/sub\'\n */\nexport const f = (x) => x;';
+    expect(typeOnly(content, 'src/a.js')).toEqual(['alpha:type-only:2', 'beta:type-only:3']);
   });
 
   test('/// <reference types> names a type-only package', () => {
@@ -625,7 +638,7 @@ describe('parseFile source kinds', () => {
 
   test('a declaration file contributes type-only usage in its own context', async () => {
     await writeFile(`${testDir}/types.d.ts`, "import { Properties } from 'csstype';\nexport type P = Properties;");
-    expect(parsed('types.d.ts')).toEqual(['csstype:type-only:production']);
+    expect(parsed('types.d.ts')).toEqual(['csstype:type-only:production', 'typescript:runtime:development']);
   });
 
   test('TypeScript sources and tsconfig files are development usage of typescript, JavaScript is not', async () => {

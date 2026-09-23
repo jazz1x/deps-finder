@@ -515,8 +515,8 @@ describe('dependency-analyzer: @types pairing', () => {
     expect(result.unused).toEqual(['@types/uuid']);
   });
 
-  test('a bare builtin credits @types/node', () => {
-    const result = analyzeDependencies(pkg({ devDependencies: ['@types/node'] }), [use('fs')], { sections: ALL, ignoredPackages: [] });
+  test.each(['fs', 'node:fs'])('%s alone credits @types/node', (builtin) => {
+    const result = analyzeDependencies(pkg({ devDependencies: ['@types/node'] }), [use(builtin)], { sections: ALL, ignoredPackages: [] });
     expect(result.unused).toEqual([]);
   });
 
