@@ -254,11 +254,11 @@ export const findFiles = (
       ...Array.map(options.excludePatterns ?? [], anchoredExclude(path.resolve(rootDir))),
     ],
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
+    isSource: shouldAnalyzeFile,
   });
   return {
     found: pipe(
       walked.found,
-      Array.filter(shouldAnalyzeFile),
       Array.map((relativePath) => ({
         path: path.resolve(rootDir, relativePath),
         context: fileContextOf(relativePath),

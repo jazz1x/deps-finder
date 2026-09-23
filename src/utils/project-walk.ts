@@ -16,6 +16,7 @@ import {
 export type WalkRules = {
   readonly always: ReadonlyArray<string>;
   readonly withoutGitignore: ReadonlyArray<string>;
+  readonly isSource: (relativePath: string) => boolean;
 };
 
 // prefix: from the file's directory down to rootDir. base: from rootDir down to the file's directory.
@@ -24,6 +25,7 @@ type Gitignore = { readonly prefix: string; readonly base: string; readonly rule
 type Walk = {
   readonly rootDir: string;
   readonly excluded: Ignore;
+  readonly isSource: (relativePath: string) => boolean;
 };
 
 type EntryKind = 'directory' | 'file' | 'unfollowed';
@@ -111,6 +113,7 @@ const walkEntries = (
     Array.map((entry) => ({ entry, relativePath: path.posix.join(dir, entry.name) })),
     Array.filter(
       ({ entry, relativePath }) =>
+        (entry.isDirectory() || walk.isSource(relativePath)) &&
         !walk.excluded.ignores(relativePath + slashFor(entry)) &&
         !isGitignored(gitignores, relativePath, slashFor(entry)),
     ),
@@ -209,7 +212,7 @@ const inheritedGitignores = (rootDir: string): Inherited => {
 };
 
 export const walkProject = (rootDir: string, rules: WalkRules): Gathered<string> => {
-  const walk: Walk = { rootDir, excluded: rulesOf(rules.always) };
+  const walk: Walk = { rootDir, excluded: rulesOf(rules.always), isSource: rules.isSource };
   const inherited = inheritedGitignores(path.resolve(rootDir));
   return Result.match(readDirectory(rootDir), {
     onFailure: (error) => skippedOnly([error]),

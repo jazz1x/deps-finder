@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ALWAYS_EXCLUDED, EXCLUDED_WITHOUT_GITIGNORE } from '@/constants/patterns';
 import { FileError } from '@/domain/errors';
+import { shouldAnalyzeFile } from '@/parsers/import-parser';
 import { walkProject } from './project-walk';
 
-const RULES = { always: ALWAYS_EXCLUDED, withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE };
+const RULES = { always: ALWAYS_EXCLUDED, withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE, isSource: shouldAnalyzeFile };
 
 const tagOf = FileError.$match({
   FileNotFound: () => 'FileNotFound',
@@ -52,7 +53,7 @@ describe('walkProject', () => {
     await put('pkgs/bad/package.json', '{"name":');
     await put('pkgs/bad/index.ts');
 
-    expect(walked()).toEqual(['pkgs/bad/index.ts', 'pkgs/bad/package.json', 'src/index.ts', 'src/ui/index.ts', 'src/ui/package.json']);
+    expect(walked()).toEqual(['pkgs/bad/index.ts', 'src/index.ts', 'src/ui/index.ts']);
     expect(skippedIn(testDir)).toEqual([['ParseFailed', 'pkgs/bad/package.json']]);
   });
 
@@ -65,7 +66,7 @@ describe('walkProject', () => {
     await put('tools/cache/chunk.js');
     await put('tools/keep.gen.ts');
 
-    expect(walked()).toEqual(['.gitignore', 'src/index.ts', 'tools/.gitignore', 'tools/keep.gen.ts']);
+    expect(walked()).toEqual(['src/index.ts', 'tools/keep.gen.ts']);
   });
 
   test('uses the built-in cache and IDE exclusions only when no .gitignore exists', async () => {
@@ -76,7 +77,7 @@ describe('walkProject', () => {
 
     await put('.gitignore', 'logs\n');
 
-    expect(walked()).toEqual(['.gitignore', '.vscode/settings.js', 'src/index.ts']);
+    expect(walked()).toEqual(['.vscode/settings.js', 'src/index.ts']);
   });
 
   test('applies .gitignore files above rootDir up to the repository top, and info/exclude', async () => {
@@ -89,7 +90,7 @@ describe('walkProject', () => {
     await put('apps/web/generated/g.ts');
     await put('apps/web/scratch/x.ts');
 
-    expect(walked(path.join(testDir, 'apps/web'))).toEqual(['.gitignore', 'src/index.ts']);
+    expect(walked(path.join(testDir, 'apps/web'))).toEqual(['src/index.ts']);
   });
 
   test('scans a rootDir that its repository ignores', async () => {
@@ -107,11 +108,11 @@ describe('walkProject', () => {
     expect(skippedIn(testDir)).toEqual([]);
   });
 
-  test('matches .gitignore patterns case-sensitively, as git does by default', async () => {
+  test('matches .gitignore patterns case-sensitively, whatever core.ignorecase says', async () => {
     await put('.gitignore', 'Generated/\n');
     await put('src/generated/x.ts');
 
-    expect(walked()).toEqual(['.gitignore', 'src/generated/x.ts']);
+    expect(walked()).toEqual(['src/generated/x.ts']);
   });
 
   test('follows symlinked files, including a symlinked .gitignore', async () => {
@@ -126,7 +127,7 @@ describe('walkProject', () => {
     const found = walked();
     await rm(outside, { recursive: true, force: true });
 
-    expect(found).toEqual(['.gitignore', 'src/index.ts', 'src/shared.ts']);
+    expect(found).toEqual(['src/index.ts', 'src/shared.ts']);
   });
 
   test('reports a dangling symlink', async () => {
@@ -134,6 +135,14 @@ describe('walkProject', () => {
     await symlink(path.join(testDir, 'missing.ts'), path.join(testDir, 'src/gone.ts'));
 
     expect(skippedIn(testDir)).toEqual([['FileNotFound', 'src/gone.ts']]);
+  });
+
+  test('ignores a dangling symlink to a file it would not analyze', async () => {
+    await put('src/index.ts');
+    await symlink('/nonexistent/README.md', path.join(testDir, 'docs-link.md'));
+    await symlink('../nope', path.join(testDir, 'src/brokendir'));
+
+    expect(skippedIn(testDir)).toEqual([]);
   });
 
   test('reports an unreadable .gitignore and an unreadable directory', async () => {
@@ -146,7 +155,7 @@ describe('walkProject', () => {
     const { found, skipped } = walkProject(testDir, RULES);
     await chmod(path.join(testDir, 'locked'), 0o755);
 
-    expect(found.toSorted()).toEqual(['src/.gitignore', 'src/index.ts']);
+    expect(found.toSorted()).toEqual(['src/index.ts']);
     expect(skipped.every(FileError.$is('ReadFailed'))).toBe(true);
     expect(skipped.map((e) => path.relative(testDir, e.path)).toSorted()).toEqual(['locked', 'src/.gitignore']);
   });
