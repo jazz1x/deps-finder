@@ -2,6 +2,7 @@ import { type Dirent, existsSync } from 'node:fs';
 import path from 'node:path';
 import { Array, Data, Match, Option, Result, Schema, String, pipe } from 'effect';
 import ignore, { type Ignore } from 'ignore';
+import { minimatch } from 'minimatch';
 import type { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
 import {
@@ -63,7 +64,9 @@ const RootManifest = Schema.Struct({
   workspaces: Schema.optionalKey(Schema.Union([Globs, Schema.Struct({ packages: Globs })])),
 });
 
-const PnpmWorkspace = Schema.NullOr(Schema.Struct({ packages: Schema.optionalKey(Globs) }));
+const PnpmWorkspace = Schema.NullOr(
+  Schema.Struct({ packages: Schema.optionalKey(Schema.NullOr(Globs)) }),
+);
 
 const INSTALL_MARKERS = [
   'package-lock.json',
@@ -92,20 +95,17 @@ const workspaceGlobOf = (glob: string): WorkspaceGlob => {
   const negated = String.startsWith('!')(glob);
   return {
     negated,
-    pattern: pipe(
-      negated ? glob.slice(1) : glob,
-      String.replace(/^\.\//, ''),
-      String.replace(/\/+$/, ''),
-    ),
+    pattern: String.replace(/^\.\//, '')(negated ? glob.slice(1) : glob),
   };
 };
 
+// npm and pnpm glob `${pattern}/package.json`, so `libs/**` also claims libs itself.
 // Later globs win, so a negation drops what an earlier glob matched.
 const isMemberOf =
   (globs: ReadonlyArray<WorkspaceGlob>) =>
   (dir: string): boolean =>
     Array.reduce(globs, false, (member, { negated, pattern }) =>
-      path.posix.matchesGlob(dir, pattern) ? !negated : member,
+      minimatch(`${dir}/package.json`, `${pattern}/package.json`) ? !negated : member,
     );
 
 const workspacesOf = (manifest: typeof RootManifest.Type): ReadonlyArray<string> =>
@@ -121,6 +121,12 @@ const pnpmPackagesOf = (workspace: typeof PnpmWorkspace.Type): ReadonlyArray<str
     Match.orElse((declared) => declared.packages ?? []),
   );
 
+// Only the declaration is dropped; package.json itself is still read for dependencies.
+const workspacesError = (error: FileError): FileError => ({
+  ...error,
+  path: `${error.path}#workspaces`,
+});
+
 const workspaceGlobsIn = (
   rootDir: string,
   entries: ReadonlyArray<Dirent>,
@@ -132,7 +138,7 @@ const workspaceGlobsIn = (
       [...Array.flatMap(npm.found, workspacesOf), ...Array.flatMap(pnpm.found, pnpmPackagesOf)],
       workspaceGlobOf,
     ),
-    skipped: [...npm.skipped, ...pnpm.skipped],
+    skipped: [...Array.map(npm.skipped, workspacesError), ...pnpm.skipped],
   };
 };
 

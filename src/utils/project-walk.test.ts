@@ -55,7 +55,8 @@ describe('walkProject', () => {
   const packagesOf = (root = testDir) => walkProject(root, RULES).packages.toSorted();
 
   test('leaves out array-form workspace members, honouring negation', async () => {
-    await put('package.json', '{"workspaces":["./packages/*","!packages/keep"]}');
+    await put('package.json', '{"workspaces":["./packages/*/","!packages/keep"]}');
+    await put('pnpm-workspace.yaml', 'packages:\n# none yet\n');
     await put('packages/a/package.json', '{"name":"a"}');
     await put('packages/a/index.ts');
     await put('packages/keep/package.json', '{"name":"keep"}');
@@ -66,14 +67,26 @@ describe('walkProject', () => {
 
     expect(packagesOf()).toEqual(['packages/a']);
     expect(walked()).toEqual(['packages/docs/index.ts', 'packages/group/nested/index.ts', 'packages/keep/index.ts']);
+    expect(skippedIn(testDir)).toEqual([]);
   });
 
   test('leaves out object-form workspace members', async () => {
     await put('package.json', '{"workspaces":{"packages":["apps/*"],"nohoist":["**/x"]}}');
+    await put('pnpm-workspace.yaml', '# none yet\n');
     await put('apps/web/package.json', '{"name":"web"}');
     await put('apps/web/index.ts');
 
     expect(packagesOf()).toEqual(['apps/web']);
+    expect(walked()).toEqual([]);
+    expect(skippedIn(testDir)).toEqual([]);
+  });
+
+  test('a globstar workspace glob also claims its base directory', async () => {
+    await put('package.json', '{"workspaces":["libs/**"]}');
+    await put('libs/package.json', '{"name":"libs"}');
+    await put('libs/top.ts');
+
+    expect(packagesOf()).toEqual(['libs']);
     expect(walked()).toEqual([]);
   });
 
@@ -96,7 +109,7 @@ describe('walkProject', () => {
 
     expect(packagesOf()).toEqual([]);
     expect(skippedIn(testDir)).toEqual([
-      ['ParseFailed', 'package.json'],
+      ['ParseFailed', 'package.json#workspaces'],
       ['ParseFailed', 'pnpm-workspace.yaml'],
     ]);
   });
