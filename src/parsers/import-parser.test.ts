@@ -163,6 +163,19 @@ describe('findFiles', () => {
     expect(files.some((f) => f.includes('node_modules'))).toBe(false);
   });
 
+  test('matches excluded directory names only below rootDir', async () => {
+    const rootDir = `${testDir}/e2e/app`;
+    await mkdir(`${rootDir}/src`, { recursive: true });
+    await mkdir(`${rootDir}/e2e`, { recursive: true });
+    await writeFile(`${rootDir}/src/index.ts`, 'console.log("app");');
+    await writeFile(`${rootDir}/e2e/flow.ts`, 'console.log("e2e");');
+
+    const files = findFiles(rootDir);
+
+    expect(files.some((f) => f.endsWith('src/index.ts'))).toBe(true);
+    expect(files.some((f) => f.endsWith('e2e/flow.ts'))).toBe(false);
+  });
+
   test('should exclude .d.ts files', async () => {
     await writeFile(`${testDir}/src/index.d.ts`, 'export declare const x: number;');
     await writeFile(`${testDir}/src/types.d.ts`, 'export type T = string;');
