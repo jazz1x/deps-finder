@@ -83,12 +83,23 @@ describe('walkProject', () => {
   test('uses the built-in cache and IDE exclusions only when no .gitignore exists', async () => {
     await put('src/index.ts');
     await put('.vscode/settings.js');
+    await put('.claude/worktrees/feat/src/index.ts');
+    await put('tools/py/.venv/lib/site-packages/x.js');
+    await put('android/.gradle/cache.js');
+    await put('apps/web/.idea/x.js');
 
     expect(walked()).toEqual(['src/index.ts']);
 
     await put('.gitignore', 'logs\n');
 
-    expect(walked()).toEqual(['.vscode/settings.js', 'src/index.ts']);
+    expect(walked()).toEqual([
+      '.claude/worktrees/feat/src/index.ts',
+      '.vscode/settings.js',
+      'android/.gradle/cache.js',
+      'apps/web/.idea/x.js',
+      'src/index.ts',
+      'tools/py/.venv/lib/site-packages/x.js',
+    ]);
   });
 
   test('applies .gitignore files above rootDir up to the repository top, and info/exclude', async () => {
