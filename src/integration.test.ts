@@ -313,13 +313,16 @@ describe('file contexts', () => {
     await write('src/index.ts', 'export const x = 1;');
     await write('functions/package.json', '{"name":"functions","dependencies":{"firebase-functions":"6"}}');
     await write('functions/dist/index.js', "require('typescript');");
+    await write('functions/src/index.ts', "import 'is-odd';");
     await write('packages/a/package.json', '{"name":"a","optionalDependencies":{"fsevents":"2"}}');
     await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
     await write('packages/a/src/index.ts', "import 'left-pad';");
+    await write('packages/p/package.json', '{"name":"p","peerDependencies":{"react":"19"}}');
+    await write('packages/p/index.ts', "import 'ramda';");
 
-    const result = analyze(pkg({ dependencies: ['left-pad'], devDependencies: ['typescript', 'vite'] }));
+    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd', 'ramda'], devDependencies: ['typescript', 'vite'] }));
 
-    expect(result.unused).toEqual(['left-pad', 'typescript', 'vite']);
+    expect(result.unused).toEqual(['left-pad', 'is-odd', 'ramda', 'typescript', 'vite']);
     expect(result.misplaced).toEqual([]);
   });
 
@@ -329,12 +332,17 @@ describe('file contexts', () => {
     await write('libs/ui/vite.config.ts', "import { defineConfig } from 'vite';");
     await write('libs/ui/scripts/release.ts', "import 'execa';");
     await write('libs/ui/dist/index.js', "require('left-pad');");
+    await write('libs/ui/build/index.js', "require('is-odd');");
+    await write('libs/ui/out/index.js', "require('ramda');");
+    await write('libs/ui/coverage/prettify.js', "require('dayjs');");
     await write('libs/ui/test/fixtures/pkg/package.json', '{"name":"fixture"}');
     await write('libs/ui/test/fixtures/pkg/index.ts', "import 'nock';");
 
-    const result = analyze(pkg({ dependencies: ['chalk', 'left-pad'], devDependencies: ['vite', 'execa', 'nock'] }));
+    const result = analyze(
+      pkg({ dependencies: ['chalk', 'left-pad', 'is-odd', 'ramda', 'dayjs'], devDependencies: ['vite', 'execa', 'nock'] }),
+    );
 
-    expect(result.unused).toEqual(['left-pad']);
+    expect(result.unused).toEqual(['left-pad', 'is-odd', 'ramda', 'dayjs']);
     expect(result.misplaced).toEqual([]);
   });
 
