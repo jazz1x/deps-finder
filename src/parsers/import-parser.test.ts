@@ -178,7 +178,7 @@ describe('findFiles', () => {
 
     const files = findFiles(testDir).found;
 
-    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['tsconfig.json', 'src/index.ts']);
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts', 'tsconfig.json']);
   });
 
   test('excludes a detected outDir only at the project root', async () => {
@@ -190,7 +190,7 @@ describe('findFiles', () => {
 
     const files = findFiles(testDir).found;
 
-    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['tsconfig.json', 'src/lib/util.ts']);
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/lib/util.ts', 'tsconfig.json']);
   });
 
   test('takes --exclude paths written with ./ or as absolute paths under rootDir', async () => {
@@ -215,7 +215,7 @@ describe('findFiles', () => {
 
     const { found, skipped } = findFiles(testDir);
 
-    expect(found.map((f) => path.relative(testDir, f.path))).toEqual(['tsconfig.json', 'src/index.ts']);
+    expect(found.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts', 'tsconfig.json']);
     const relativeTo = (e: FileError) => path.relative(testDir, e.path);
     expect(skipped.filter(FileError.$is('ParseFailed')).map(relativeTo)).toEqual(['tsconfig.json']);
     expect(skipped.filter(FileError.$is('ReadFailed')).map(relativeTo)).toEqual(['src/.gitignore']);

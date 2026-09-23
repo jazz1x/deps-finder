@@ -7,7 +7,7 @@ import type {
   TSImportEqualsDeclaration,
   TSModuleDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Result, String, pipe } from 'effect';
+import { Array, Match, Option, Order, Result, String, pipe } from 'effect';
 import {
   type Comment,
   type DynamicImport,
@@ -412,6 +412,8 @@ const anchoredExclude =
       Match.orElse((kept) => kept),
     );
 
+const byPath = Order.mapInput(Order.String, (file: SourceFile) => file.path);
+
 export const findFiles = (
   rootDir: string,
   options: {
@@ -437,6 +439,7 @@ export const findFiles = (
         path: path.resolve(rootDir, source.path),
         context: fileContextOf(source),
       })),
+      (files) => Array.sort(files, byPath),
     ),
     skipped: [...detected.skipped, ...walked.skipped],
     packages: Array.map(walked.packages, ({ dir, files }) => ({
