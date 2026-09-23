@@ -46,7 +46,7 @@ User-facing strings live in [src/constants/messages.ts](src/constants/messages.t
 1. Open an issue first for larger changes so we can agree on direction.
 2. One logical change per PR — split refactor / feature / formatting commits.
 3. Run `bun run validate` locally before pushing. CI will run the same on Node 22 and 24.
-4. Update [README.md](README.md) and [README.ko.md](README.ko.md) together if user-visible behaviour changes (the `--help` output and the README options table must stay in sync — `src/constants/messages.ts:HELP_TEXT` is the source of truth).
+4. Update [README.md](README.md) and [README.ko.md](README.ko.md) together if user-visible behaviour changes (the `--help` output and the README options table must stay in sync — `src/cli/command.ts` is the source of truth).
 5. Commit messages: short imperative subject; the body explains the *why*.
 
 ## Reporting bugs

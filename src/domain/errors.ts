@@ -7,3 +7,10 @@ export type FileError = Data.TaggedEnum<{
 }>;
 
 export const FileError = Data.taggedEnum<FileError>();
+
+// Not an error: Command.run discards the handler's value, so a failing check travels the error channel.
+export type RunOutcome = Data.TaggedEnum<{
+  IssuesFound: { readonly total: number };
+}>;
+
+export const { IssuesFound } = Data.taggedEnum<RunOutcome>();

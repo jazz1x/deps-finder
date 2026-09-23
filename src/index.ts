@@ -1,55 +1,41 @@
-import { Array, Result, pipe } from 'effect';
-import { analyzeDependencies } from './analyzers/dependency-analyzer.js';
-import { parseCliOptions, printHelp } from './cli/options.js';
-import { MESSAGES } from './constants/messages.js';
-import type { CliOptions } from './domain/types.js';
-import { findFiles, parseMultipleFiles } from './parsers/import-parser.js';
-import { readPackageJson } from './parsers/package-parser.js';
-import { hasIssues, report } from './reporters/console-reporter.js';
+import { fileURLToPath } from 'node:url';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Console, Effect, Exit, Layer, Match, Schema, pipe } from 'effect';
+import { CliConfig, type CliError, Command, GlobalFlag } from 'effect/unstable/cli';
+import { depsFinder } from './cli/command.js';
+import { exitCodeOf } from './cli/exit-code.js';
+import type { FileError, RunOutcome } from './domain/errors.js';
 import { formatFileError } from './reporters/error-reporter.js';
+import { readJsonFile } from './utils/file-reader.js';
 
-const showHelp = (): number => {
-  printHelp();
-  return 0;
-};
+const readVersion = readJsonFile(Schema.Struct({ version: Schema.String }));
 
-const analyze = (options: CliOptions): number => {
-  Array.forEach(options.warnings, (w) => console.error(`${MESSAGES.WARNING_PREFIX} ${w}`));
-
-  return pipe(
-    readPackageJson(options.packageJsonPath),
-    Result.map((packageJson) =>
-      analyzeDependencies(
-        packageJson,
-        parseMultipleFiles(
-          findFiles(options.rootDir, {
-            excludePatterns: options.excludePatterns,
-            noAutoDetect: options.noAutoDetect,
-          }),
-        ),
-        {
-          checkAll: options.checkAll,
-          checkPeer: options.checkPeer,
-          ignoredPackages: options.ignoredPackages,
-        },
-      ),
+const reportFailure = (error: FileError | RunOutcome | CliError.CliError): Effect.Effect<void> =>
+  Match.value(error).pipe(
+    Match.tag('FileNotFound', 'ReadFailed', 'ParseFailed', (e) =>
+      Console.error(formatFileError(e)),
     ),
-    Result.match({
-      onSuccess: (result) => {
-        console.log(report(result, options.format, options.ignoredPackages));
-        return hasIssues(result) ? 1 : 0;
-      },
-      onFailure: (error) => {
-        console.error(formatFileError(error));
-        return 1;
-      },
-    }),
+    Match.orElse(() => Effect.void),
   );
-};
 
-const main = (args: ReadonlyArray<string>): number => {
-  const options = parseCliOptions(args);
-  return options.showHelp ? showHelp() : analyze(options);
-};
+const CliLayer = Layer.mergeAll(
+  NodeServices.layer,
+  CliConfig.layer({ builtIns: [GlobalFlag.Help, GlobalFlag.Version] }),
+);
 
-process.exitCode = main(process.argv.slice(2));
+pipe(
+  Effect.fromResult(readVersion(fileURLToPath(new URL('../package.json', import.meta.url)))),
+  Effect.flatMap((pkg) => Command.run(depsFinder, { version: pkg.version })),
+  Effect.tapError(reportFailure),
+  Effect.tapDefect((defect) => Console.error(defect)),
+  Effect.provide(CliLayer),
+  NodeRuntime.runMain({
+    disableErrorReporting: true,
+    // runMain calls process.exit on a non-zero code, which drops stdout Node has not flushed yet.
+    // It also exits with this code after a signal, so pass the real code only then.
+    teardown: (exit, onExit) => {
+      process.exitCode = exitCodeOf(exit);
+      onExit(Exit.hasInterrupts(exit) ? process.exitCode : 0);
+    },
+  }),
+);
