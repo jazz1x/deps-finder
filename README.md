@@ -73,14 +73,10 @@ deps-finder --all
 Expected output (truncated):
 
 ```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Dependency Analysis Report
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠ Unused Dependencies:
+⚠  Unused Dependencies:
   • moment
 
-⚠ Misplaced Dependencies:
+⚠  Misplaced Dependencies:
   • zod (used in 1 file)
     └─ src/api/schema.ts:5
 ```
@@ -146,56 +142,60 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
   Dependency Analysis Report
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠ Unused Dependencies:
+⚠  Unused Dependencies:
   (declared but not imported in source code)
+
   • moment
 
-⚠ Misplaced Dependencies:
+⚠  Misplaced Dependencies:
   (in devDependencies but used in source code)
+
   • zod (used in 1 file)
     └─ src/api/schema.ts:5
-       import { z } from 'zod'
+       import { z } from 'zod';
 
-  Type Imports Only (TypeScript)
-  ○ typescript
-  ○ @types/react
+ℹ️  Type-Only Imports:
+  (used only for type definitions)
+
+  ○ type-fest
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Total Issues: 2
+  Total Issues: 3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+A `dependencies` entry that is only ever imported as a type is listed under **Type-Only Imports** and counts as an issue: it could live in `devDependencies`. Colours are used only when stdout is a terminal and `NO_COLOR` is unset.
 
 With `--check-peer` (or `--all`), an additional section appears for declared peers that no source file imports:
 
 ```
-⚠ Unused peerDependencies:
+⚠  Unused peerDependencies:
   (declared as a consumer contract but not imported in source code)
-  • react
+
+  • react-dom
 ```
 
-**JSON format** (`--json`, truncated):
+**JSON format** (`--json --check-peer`; `file` paths are absolute):
 
 ```json
 {
   "unused": ["moment"],
-  "unusedPeer": ["react"],
+  "unusedPeer": ["react-dom"],
   "misplaced": [
     {
       "packageName": "zod",
       "locations": [
-        { "file": "src/api/schema.ts", "line": 5, "importStatement": "import { z } from 'zod'" }
+        { "file": "/path/to/project/src/api/schema.ts", "line": 5, "importStatement": "import { z } from 'zod';" }
       ]
     }
   ],
-  "ignored": {
-    "typeOnly": ["typescript", "@types/react"],
-    "byOption": ["eslint"]
-  },
-  "totalIssues": 3
+  "typeOnly": ["type-fest"],
+  "ignored": [],
+  "totalIssues": 4
 }
 ```
 
-`unusedPeer` is `[]` when `--check-peer` is off (default).
+`unusedPeer` is `[]` when `--check-peer` is off (default). `ignored` lists the packages passed to `--ignore`.
 
 ---
 
@@ -224,6 +224,8 @@ Or keep a report without blocking on findings, while still failing when the run 
 ## Honest-use notice
 
 deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages loaded only via config files outside `src/`. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
+
+A bare builtin name such as `buffer` or `events` is matched against a declared package of that name (the npm polyfill a bundler would use). Write `node:buffer` when you mean the Node builtin.
 
 ---
 

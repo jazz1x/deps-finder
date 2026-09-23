@@ -74,14 +74,10 @@ deps-finder --all
 예상 출력 (일부 생략):
 
 ```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Dependency Analysis Report
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠ Unused Dependencies:
+⚠  Unused Dependencies:
   • moment
 
-⚠ Misplaced Dependencies:
+⚠  Misplaced Dependencies:
   • zod (used in 1 file)
     └─ src/api/schema.ts:5
 ```
@@ -147,56 +143,60 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
   Dependency Analysis Report
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠ Unused Dependencies:
+⚠  Unused Dependencies:
   (declared but not imported in source code)
+
   • moment
 
-⚠ Misplaced Dependencies:
+⚠  Misplaced Dependencies:
   (in devDependencies but used in source code)
+
   • zod (used in 1 file)
     └─ src/api/schema.ts:5
-       import { z } from 'zod'
+       import { z } from 'zod';
 
-  Type Imports Only (TypeScript)
-  ○ typescript
-  ○ @types/react
+ℹ️  Type-Only Imports:
+  (used only for type definitions)
+
+  ○ type-fest
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Total Issues: 2
+  Total Issues: 3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+`dependencies`에 있지만 타입으로만 import되는 패키지는 **Type-Only Imports**에 나오고 이슈로 셉니다 — `devDependencies`로 옮길 수 있기 때문입니다. 색은 stdout이 터미널이고 `NO_COLOR`가 비어 있을 때만 씁니다.
 
 `--check-peer` (또는 `--all`)을 켜면, 어떤 소스에서도 import하지 않은 declared peer가 별도 섹션으로 보입니다:
 
 ```
-⚠ Unused peerDependencies:
+⚠  Unused peerDependencies:
   (declared as a consumer contract but not imported in source code)
-  • react
+
+  • react-dom
 ```
 
-**JSON 형식** (`--json`, 일부 생략):
+**JSON 형식** (`--json --check-peer`, `file` 경로는 절대 경로):
 
 ```json
 {
   "unused": ["moment"],
-  "unusedPeer": ["react"],
+  "unusedPeer": ["react-dom"],
   "misplaced": [
     {
       "packageName": "zod",
       "locations": [
-        { "file": "src/api/schema.ts", "line": 5, "importStatement": "import { z } from 'zod'" }
+        { "file": "/path/to/project/src/api/schema.ts", "line": 5, "importStatement": "import { z } from 'zod';" }
       ]
     }
   ],
-  "ignored": {
-    "typeOnly": ["typescript", "@types/react"],
-    "byOption": ["eslint"]
-  },
-  "totalIssues": 3
+  "typeOnly": ["type-fest"],
+  "ignored": [],
+  "totalIssues": 4
 }
 ```
 
-`unusedPeer`는 `--check-peer`가 꺼져 있는 기본 상태에선 `[]`입니다.
+`unusedPeer`는 `--check-peer`가 꺼져 있는 기본 상태에선 `[]`입니다. `ignored`에는 `--ignore`로 넘긴 패키지가 들어갑니다.
 
 ---
 
@@ -225,6 +225,8 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 ## 정직한 사용 안내
 
 deps-finder는 정적 AST 스캔을 사용하므로 동적 패턴은 보이지 않습니다: `require(variable)`, `import(expr)`, `eval`, 번들러 플러그인이 만드는 가상 모듈, `src/` 바깥의 설정 파일을 통해서만 로드되는 패키지 등이 그렇습니다. 도구는 과보고보다 누락 보고를 선호하지만, 그래도 오탐은 발생할 수 있습니다. 그럴 때는 `--ignore <pkg>`가 탈출구이며 — 이슈 리포트도 환영합니다.
+
+`buffer`, `events` 같은 내장 모듈 이름을 접두사 없이 쓰면, 같은 이름으로 선언된 패키지(번들러가 쓰는 npm 폴리필)와 맞춰 봅니다. Node 내장 모듈을 뜻한다면 `node:buffer`처럼 쓰세요.
 
 ---
 
