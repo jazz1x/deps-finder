@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Array, Data, Match, Option, Result, Schema, pipe } from 'effect';
 import ignore, { type Ignore } from 'ignore';
 import type { FileError } from '../domain/errors.js';
+import { DependencySection } from '../parsers/package-parser.js';
 import type { Gathered } from '../domain/types.js';
 import {
   gatherAll,
@@ -52,8 +53,6 @@ const skippedOnly = (skipped: ReadonlyArray<FileError>): Gathered<never> => ({
   found: [],
   skipped,
 });
-
-const DependencySection = Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown));
 
 const Manifest = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
@@ -110,11 +109,11 @@ const readPresent = <A>(
 };
 
 const gitignoresIn = (
-  walk: Walk,
+  rootDir: string,
   dir: string,
   entries: ReadonlyArray<Dirent>,
 ): Gathered<Gitignore> => {
-  const read = readPresent(path.join(walk.rootDir, dir), entries, '.gitignore', readGitignore);
+  const read = readPresent(path.join(rootDir, dir), entries, '.gitignore', readGitignore);
   return { ...read, found: Array.map(read.found, (rules) => ({ prefix: '', base: dir, rules })) };
 };
 
@@ -193,7 +192,7 @@ const walkFolder = (
   inherited: ReadonlyArray<Gitignore>,
   entries: ReadonlyArray<Dirent>,
 ): Gathered<Walked> => {
-  const own = gitignoresIn(walk, dir, entries);
+  const own = gitignoresIn(walk.rootDir, dir, entries);
   return gatherAll([
     skippedOnly(own.skipped),
     walkEntries(walk, dir, [...inherited, ...own.found], entries),
@@ -280,24 +279,24 @@ const inheritedGitignores = (rootDir: string): Inherited => {
 };
 
 const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
-  const walk: Walk = {
-    rootDir,
-    excluded: rulesOf(rules.always),
-    atLayoutRoot: rulesOf(rules.atLayoutRoots),
-    layoutRoots: [''],
-    isSource: rules.isSource,
-  };
   const inherited = inheritedGitignores(path.resolve(rootDir));
   return Result.match(readDirectory(rootDir), {
     onFailure: (error) => skippedOnly([error]),
     onSuccess: (entries) => {
-      const own = gitignoresIn(walk, '', entries);
-      const gitignores = Array.match([...inherited.gitignores.found, ...own.found], {
-        onEmpty: (): ReadonlyArray<Gitignore> => [
-          { prefix: '', base: '', rules: rulesOf(rules.withoutGitignore) },
-        ],
-        onNonEmpty: (found) => found,
-      });
+      const own = gitignoresIn(rootDir, '', entries);
+      const gitignores = [...inherited.gitignores.found, ...own.found];
+      const walk: Walk = {
+        rootDir,
+        excluded: rulesOf(rules.always),
+        atLayoutRoot: rulesOf(
+          Array.match(gitignores, {
+            onEmpty: () => [...rules.atLayoutRoots, ...rules.withoutGitignore],
+            onNonEmpty: () => rules.atLayoutRoots,
+          }),
+        ),
+        layoutRoots: [''],
+        isSource: rules.isSource,
+      };
       return gatherAll([
         skippedOnly(inherited.exclude.skipped),
         skippedOnly(inherited.gitignores.skipped),

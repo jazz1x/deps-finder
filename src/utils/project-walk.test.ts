@@ -62,9 +62,11 @@ describe('walkProject', () => {
     await put('src/ui/index.ts');
     await put('pkgs/bad/package.json', '{"name":');
     await put('pkgs/bad/index.ts');
+    await put('pkgs/nulls/package.json', '{"name":"n","devDependencies":null,"dependencies":{"x":"1"}}');
+    await put('pkgs/nulls/index.ts');
 
     expect(walked()).toEqual(['libs/b/src/index.ts', 'pkgs/bad/index.ts', 'src/index.ts', 'src/ui/index.ts']);
-    expect(walkProject(testDir, RULES).packages).toEqual(['packages/a']);
+    expect(walkProject(testDir, RULES).packages.toSorted()).toEqual(['packages/a', 'pkgs/nulls']);
     expect(skippedIn(testDir)).toEqual([['ParseFailed', 'pkgs/bad/package.json']]);
   });
 
@@ -82,21 +84,28 @@ describe('walkProject', () => {
 
   test('uses the built-in cache and IDE exclusions only when no .gitignore exists', async () => {
     await put('src/index.ts');
+    await put('apps/web/package.json', '{"name":"web"}');
+    await put('apps/web/.next/server/chunk.js');
+    await put('apps/web/public/sw.js');
+    await put('src/public/icon.ts');
     await put('apps/web/.vscode/settings.js');
     await put('tools/.claude/worktrees/feat/src/index.ts');
     await put('tools/py/.venv/lib/site-packages/x.js');
     await put('android/.gradle/cache.js');
     await put('apps/web/.idea/x.js');
 
-    expect(walked()).toEqual(['src/index.ts']);
+    expect(walked()).toEqual(['src/index.ts', 'src/public/icon.ts']);
 
     await put('.gitignore', 'logs\n');
 
     expect(walked()).toEqual([
       'android/.gradle/cache.js',
       'apps/web/.idea/x.js',
+      'apps/web/.next/server/chunk.js',
       'apps/web/.vscode/settings.js',
+      'apps/web/public/sw.js',
       'src/index.ts',
+      'src/public/icon.ts',
       'tools/.claude/worktrees/feat/src/index.ts',
       'tools/py/.venv/lib/site-packages/x.js',
     ]);
