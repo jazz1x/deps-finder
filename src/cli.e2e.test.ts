@@ -12,6 +12,7 @@ const runCli = (args: ReadonlyArray<string>, cwd: string) => {
   const result = spawnSync('node', [CLI_PATH, ...args], {
     cwd,
     encoding: 'utf-8',
+    maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
   });
   return {
@@ -227,5 +228,14 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.misplaced.some((d: { packageName: string }) => d.packageName === 'lodash')).toBe(true);
+  });
+
+  test('--json output larger than one pipe read arrives whole before a failing exit', async () => {
+    const dependencies = Object.fromEntries(Array.from({ length: 50000 }, (_, i) => [`unused-package-${i}`, '^1.0.0']));
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies }));
+
+    const r = runCli(['--json'], tmpDir);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout).unused.length).toBe(50000);
   });
 });

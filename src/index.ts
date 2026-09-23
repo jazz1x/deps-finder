@@ -43,9 +43,7 @@ const main = (): void => {
   const output = report(analysisResult, options.format, options.ignoredPackages);
   console.log(output);
 
-  if (hasIssues(analysisResult)) {
-    process.exit(1);
-  }
+  process.exitCode = hasIssues(analysisResult) ? 1 : 0;
 };
 
 main();
