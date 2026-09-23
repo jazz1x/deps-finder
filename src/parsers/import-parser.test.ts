@@ -224,19 +224,20 @@ describe('parseMultipleFiles', () => {
     await writeFile(`${testDir}/a.ts`, "import { a } from 'pkg-a';");
     await writeFile(`${testDir}/b.ts`, "import { b } from 'pkg-b';");
 
-    const result = parseMultipleFiles([`${testDir}/a.ts`, `${testDir}/b.ts`]);
+    const result = parseMultipleFiles([`${testDir}/a.ts`, `${testDir}/b.ts`]).imports;
     expect(result).toHaveLength(2);
     const names = result.map((r) => r.packageName);
     expect(names).toContain('pkg-a');
     expect(names).toContain('pkg-b');
   });
 
-  test('should skip failed files', async () => {
+  test('keeps imports from readable files and reports the unreadable ones', async () => {
     await writeFile(`${testDir}/a.ts`, "import { a } from 'pkg-a';");
+    await mkdir(`${testDir}/dir.ts`);
 
-    const result = parseMultipleFiles([`${testDir}/a.ts`, `${testDir}/non-existent.ts`]);
-    expect(result).toHaveLength(1);
-    expect(result[0]!.packageName).toBe('pkg-a');
+    const result = parseMultipleFiles([`${testDir}/a.ts`, `${testDir}/dir.ts`]);
+    expect(result.imports.map((i) => i.packageName)).toEqual(['pkg-a']);
+    expect(result.unreadable.map((e) => e.path)).toEqual([`${testDir}/dir.ts`]);
   });
 });
 

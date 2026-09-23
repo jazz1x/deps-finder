@@ -199,6 +199,16 @@ describe('package-parser', () => {
       ).toContain('dependencies');
     });
 
+    test('stays strict JSON (comments are rejected, unlike tsconfig)', async () => {
+      await writeFile(testFile, '{\n  // note\n  "dependencies": {}\n}');
+      expect(Result.isFailure(readPackageJson(testFile))).toBe(true);
+    });
+
+    test('accepts a UTF-8 byte order mark, as npm does', async () => {
+      await writeFile(testFile, `${String.fromCharCode(0xfeff)}{"dependencies":{"lodash":"^4.0.0"}}`);
+      expect(Result.getOrThrow(readPackageJson(testFile)).dependencies).toEqual(['lodash']);
+    });
+
     test('returns ParseFailed for json with trailing garbage', async () => {
       await writeFile(testFile, '{"name":"x"}garbage');
       const result = readPackageJson(testFile);

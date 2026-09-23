@@ -64,7 +64,7 @@ describe('Integration Tests', () => {
 
     // 3. Run Analysis
     const files = findFiles(testDir);
-    const imports = parseMultipleFiles(files);
+    const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       checkAll: false,
       ignoredPackages: [],
@@ -83,7 +83,7 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/src/utils/oops.ts`, `import { something } from 'typescript';`);
 
     const files2 = findFiles(testDir);
-    const imports2 = parseMultipleFiles(files2);
+    const imports2 = parseMultipleFiles(files2).imports;
     const result2 = analyzeDependencies(packageJson, imports2, {
       checkAll: false,
       ignoredPackages: [],
@@ -104,7 +104,7 @@ describe('Integration Tests', () => {
     };
 
     const files = findFiles(testDir);
-    const imports = parseMultipleFiles(files);
+    const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       checkAll: false,
       ignoredPackages: [],
@@ -125,7 +125,7 @@ describe('Integration Tests', () => {
     };
 
     const files = findFiles(testDir);
-    const imports = parseMultipleFiles(files);
+    const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       checkAll: false,
       ignoredPackages: [],
@@ -144,7 +144,7 @@ describe('Integration Tests', () => {
     };
 
     const files = findFiles(testDir);
-    const imports = parseMultipleFiles(files);
+    const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       checkAll: false,
       ignoredPackages: [],
@@ -164,7 +164,7 @@ describe('Integration Tests', () => {
     };
 
     const files = findFiles(testDir);
-    const imports = parseMultipleFiles(files);
+    const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       checkAll: false,
       ignoredPackages: [],
@@ -185,7 +185,7 @@ describe('Integration Tests', () => {
     const files = findFiles(testDir);
     expect(files.length).toBe(0);
 
-    const imports = parseMultipleFiles(files);
+    const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
       checkAll: false,
       ignoredPackages: [],

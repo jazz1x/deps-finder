@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pkg from '../package.json';
@@ -17,7 +17,7 @@ const runCli = (args: ReadonlyArray<string>, cwd: string) => {
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
   });
   return {
-    stdout: (result.stdout ?? '').replace(STRIP_ANSI, ''),
+    stdout: result.stdout ?? '',
     stderr: (result.stderr ?? '').replace(STRIP_ANSI, ''),
     status: result.status,
   };
@@ -95,6 +95,17 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('Unused Dependencies');
     expect(r.stdout).toContain('lodash');
+    expect(r.stdout).not.toContain(String.fromCharCode(27));
+  });
+
+  test('warns about source files it cannot read', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await mkdir(path.join(tmpDir, 'src'));
+    await writeFile(path.join(tmpDir, 'src/broken.ts'), "import _ from 'lodash';");
+    await chmod(path.join(tmpDir, 'src/broken.ts'), 0o000);
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr).toContain('src/broken.ts');
+    expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
   });
 
   test('--json emits parseable JSON with totalIssues and exits 1 when issues exist', async () => {

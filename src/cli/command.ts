@@ -7,7 +7,8 @@ import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.j
 import type { CliOptions } from '../domain/types.js';
 import { findFiles, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
-import { hasIssues, report } from '../reporters/console-reporter.js';
+import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
+import { formatSkippedSource } from '../reporters/error-reporter.js';
 
 const toggle = (name: string, alias: string, description: string) =>
   Flag.Boolean(name).pipe(
@@ -60,26 +61,37 @@ const toCliOptions = (flags: ParsedFlags): CliOptions => ({
   rootDir: flags.root,
 });
 
+const paintForStdout = Effect.sync(() =>
+  paintFor(process.stdout.isTTY === true, process.env['NO_COLOR']),
+);
+
 const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | RunOutcome> =>
   pipe(
     Effect.fromResult(readPackageJson(join(options.rootDir, 'package.json'))),
-    Effect.map((packageJson) =>
-      analyzeDependencies(
-        packageJson,
-        parseMultipleFiles(
-          findFiles(options.rootDir, {
-            excludePatterns: options.excludePatterns,
-            noAutoDetect: options.noAutoDetect,
-          }),
-        ),
-        {
-          checkAll: options.checkAll,
-          checkPeer: options.checkPeer,
-          ignoredPackages: options.ignoredPackages,
-        },
+    Effect.map((packageJson) => ({
+      packageJson,
+      sources: parseMultipleFiles(
+        findFiles(options.rootDir, {
+          excludePatterns: options.excludePatterns,
+          noAutoDetect: options.noAutoDetect,
+        }),
+      ),
+    })),
+    Effect.tap(({ sources }) =>
+      Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),
+    ),
+    Effect.map(({ packageJson, sources }) =>
+      analyzeDependencies(packageJson, sources.imports, {
+        checkAll: options.checkAll,
+        checkPeer: options.checkPeer,
+        ignoredPackages: options.ignoredPackages,
+      }),
+    ),
+    Effect.tap((result) =>
+      Effect.flatMap(paintForStdout, (paint) =>
+        Console.log(report(result, options.format, options.ignoredPackages, paint)),
       ),
     ),
-    Effect.tap((result) => Console.log(report(result, options.format, options.ignoredPackages))),
     Effect.flatMap((result) =>
       hasIssues(result) ? Effect.fail(IssuesFound({ total: result.totalIssues })) : Effect.void,
     ),
