@@ -26,7 +26,7 @@ import {
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
 import {
-  DEPENDENCY_TYPES,
+  type DependencyType,
   type FileContext,
   type Gathered,
   type ImportDetails,
@@ -300,12 +300,18 @@ export const findFiles = (
   };
 };
 
-const declares =
+// A peer declaration installs nothing in the package itself.
+const INSTALLED_SECTIONS = [
+  'dependencies',
+  'devDependencies',
+] as const satisfies ReadonlyArray<DependencyType>;
+
+const installs =
   (packageJson: PackageJson) =>
   (name: PackageName): boolean =>
-    Array.some(DEPENDENCY_TYPES, (section) => Array.contains(packageJson[section], name));
+    Array.some(INSTALLED_SECTIONS, (section) => Array.contains(packageJson[section], name));
 
-// Node resolves what a left-out package does not declare from the root install. Read as
+// Node resolves what a left-out package does not install from the root install. Read as
 // development use, such an import marks a root dependency used but never misplaced or type-only.
 const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileError> =>
   Result.map(readPackageJson(path.join(leftOut.dir, 'package.json')), (declared) => {
@@ -314,7 +320,7 @@ const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileEr
     );
     return {
       ...parsed,
-      imports: Array.filter(parsed.imports, (detail) => !declares(declared)(detail.packageName)),
+      imports: Array.filter(parsed.imports, (detail) => !installs(declared)(detail.packageName)),
     };
   });
 

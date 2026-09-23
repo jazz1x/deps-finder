@@ -338,6 +338,14 @@ describe('file contexts', () => {
     expect(result.typeOnly).toEqual([]);
   });
 
+  test('a peer-only declaration in a left-out package still credits the root install', async () => {
+    await write('package.json', '{"workspaces":["packages/*"]}');
+    await write('packages/ui/package.json', '{"name":"ui","peerDependencies":{"react":"^19"}}');
+    await write('packages/ui/src/index.ts', "import { useState } from 'react';");
+
+    expect(analyze(pkg({ devDependencies: ['react'] })).unused).toEqual([]);
+  });
+
   test('an Nx lib with a name and dependencies but no install of its own is scanned', async () => {
     await write('libs/common/package.json', '{"name":"@x/common","dependencies":{"dotenv":"16"}}');
     await write('libs/common/project.json', '{}');
