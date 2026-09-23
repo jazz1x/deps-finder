@@ -157,9 +157,12 @@ describe('walkProject', () => {
     ]);
   });
 
-  test('a YAML warning keeps the declaration and stays off process warnings', async () => {
+  test.each([
+    ['an unknown directive', '%FOO bar\n---\npackages:\n  - "packages/*"\n'],
+    ['a collection key', 'packages:\n  - "packages/*"\n? [a, b]\n: c\n'],
+  ])('a YAML warning (%s) keeps the declaration and stays off process warnings', async (_, yaml) => {
     const emitWarning = spyOn(process, 'emitWarning');
-    await put('pnpm-workspace.yaml', '%FOO bar\n---\npackages:\n  - "packages/*"\n');
+    await put('pnpm-workspace.yaml', yaml);
     await put('packages/a/package.json', '{"name":"a"}');
 
     const skipped = skippedIn(testDir);
