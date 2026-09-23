@@ -32,8 +32,8 @@ Typecheck and emit both use `tsc` from `typescript@7`, the Go-based native compi
 
 The project follows strict contracts. Read [CLAUDE.md](CLAUDE.md) `Project contracts` (C1–C6) before adding code:
 
-- Errors are values (`R.Result<T, E>`); no throws.
-- Pattern matching is exhaustive (`match(...).exhaustive()` from `ts-pattern`).
+- Errors are values (`Result.Result<T, E>` from `effect`); no throws.
+- Branching on unions is exhaustive (`Match.exhaustive` or `Data.taggedEnum`'s `$match`).
 - Functional style only (arrow `const` exports; no `class`).
 - Tests are co-located (`foo.ts` ↔ `foo.test.ts`) using `bun:test`.
 - No speculative exports — if nothing in `src/` uses it today, do not add it.

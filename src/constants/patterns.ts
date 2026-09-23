@@ -1,4 +1,4 @@
-import { A } from '@mobily/ts-belt';
+import { Array } from 'effect';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
 
 export const ANALYZABLE_EXTENSIONS = [
@@ -195,5 +195,5 @@ export const getAllExcludedPatterns = (
     ? [...detectBuildDirectories(projectRoot), ...detectByHeuristic(projectRoot)]
     : [];
 
-  return A.uniq([...staticPatterns, ...dynamicPatterns]);
+  return Array.dedupe([...staticPatterns, ...dynamicPatterns]);
 };

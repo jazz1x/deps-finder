@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { R } from '@mobily/ts-belt';
+import { Result } from 'effect';
 import { readTsConfig } from './tsconfig-reader';
 
 describe('tsconfig-reader', () => {
@@ -18,12 +18,12 @@ describe('tsconfig-reader', () => {
     await writeFile(`${testDir}/tsconfig.json`, JSON.stringify({ compilerOptions: { outDir: 'dist' } }));
 
     const result = readTsConfig(testDir);
-    expect(R.isOk(result)).toBe(true);
-    expect(R.getExn(result).compilerOptions?.outDir).toBe('dist');
+    expect(Result.isSuccess(result)).toBe(true);
+    expect(Result.getOrThrow(result).compilerOptions?.outDir).toBe('dist');
   });
 
   test('readTsConfig - returns Error for missing tsconfig.json', () => {
     const result = readTsConfig(testDir);
-    expect(R.isError(result)).toBe(true);
+    expect(Result.isFailure(result)).toBe(true);
   });
 });

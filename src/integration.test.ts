@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
 import { findFiles, parseMultipleFiles } from '@/parsers/import-parser';
-import { O } from '@mobily/ts-belt';
 import type { PackageJson } from '@/domain/types';
 
 describe('Integration Tests', () => {
@@ -58,22 +57,9 @@ describe('Integration Tests', () => {
 
     // 2. Setup Package.json
     const packageJson: PackageJson = {
-      name: O.Some('test-project'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        react: '^18.0.0',
-        lodash: '^4.17.0',
-        'styled-components': '^5.3.0',
-        'date-fns': '^2.0.0',
-        'unused-dep': '^1.0.0',
-      }),
-      devDependencies: O.Some({
-        'type-fest': '^2.0.0',
-        jest: '^29.0.0',
-        typescript: '^5.0.0',
-        compression: '^1.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: ['react', 'lodash', 'styled-components', 'date-fns', 'unused-dep'],
+      devDependencies: ['type-fest', 'jest', 'typescript', 'compression'],
+      peerDependencies: [],
     };
 
     // 3. Run Analysis
@@ -112,13 +98,9 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/index.ts`, `import type { A } from 'dep-a';`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        'dep-a': '^1.0.0',
-      }),
-      devDependencies: O.None,
-      peerDependencies: O.None,
+      dependencies: ['dep-a'],
+      devDependencies: [],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -137,13 +119,9 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/b.ts`, `import { a } from './a'; import { x } from 'pkg-x'; export const b = 2;`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        'pkg-x': '^1.0.0',
-      }),
-      devDependencies: O.None,
-      peerDependencies: O.None,
+      dependencies: ['pkg-x'],
+      devDependencies: [],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -160,13 +138,9 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/tailwind.config.js`, `const colors = require('tailwindcss/colors');`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        tailwindcss: '^3.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['tailwindcss'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -184,13 +158,9 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/postcss.config.cjs`, `const autoprefixer = require('autoprefixer');`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        autoprefixer: '^10.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['autoprefixer'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -207,13 +177,9 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/happydom.ts`, `import { GlobalWindow } from 'happy-dom';`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        'happy-dom': '^6.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['happy-dom'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);

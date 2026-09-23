@@ -1,27 +1,25 @@
 import { readFileSync } from 'node:fs';
-import { R, pipe } from '@mobily/ts-belt';
-import type { FileError } from '../domain/errors.js';
+import { Match, Result, Schema, pipe } from 'effect';
+import { FileError } from '../domain/errors.js';
 
-export const readFile = (path: string): R.Result<string, FileError> => {
-  return pipe(
-    R.fromExecution(() => readFileSync(path, 'utf-8')),
-    R.mapError((error) => {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return { type: 'FILE_NOT_FOUND', path } as const;
-      }
-      return { type: 'READ_ERROR', path, error: error as Error } as const;
-    }),
+const readFailure = (path: string) => (cause: unknown) =>
+  Match.value(cause).pipe(
+    Match.when({ code: 'ENOENT' }, () => FileError.FileNotFound({ path })),
+    Match.orElse(() => FileError.ReadFailed({ path, reason: String(cause) })),
   );
-};
 
-export const readJSONFile = <T>(path: string): R.Result<T, FileError> => {
-  return pipe(
-    readFile(path),
-    R.flatMap((content) =>
-      pipe(
-        R.fromExecution(() => JSON.parse(content) as T),
-        R.mapError((error) => ({ type: 'PARSE_ERROR', path, error: error as Error }) as const),
+export const readFile = (path: string): Result.Result<string, FileError> =>
+  Result.try({ try: () => readFileSync(path, 'utf-8'), catch: readFailure(path) });
+
+export const readJsonFile =
+  <S extends Schema.Decoder<unknown>>(schema: S) =>
+  (path: string): Result.Result<S['Type'], FileError> =>
+    pipe(
+      readFile(path),
+      Result.flatMap((text) =>
+        pipe(
+          Schema.decodeUnknownResult(Schema.fromJsonString(schema))(text),
+          Result.mapError((error) => FileError.ParseFailed({ path, reason: error.message })),
+        ),
       ),
-    ),
-  );
-};
+    );

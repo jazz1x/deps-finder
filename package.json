@@ -58,9 +58,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@mobily/ts-belt": "4.0.0-rc.5",
+    "effect": "4.0.0-rc.117",
     "glob": "^13.0.6",
-    "oxc-parser": "^0.151.0",
-    "ts-pattern": "^5.9.0"
+    "oxc-parser": "^0.151.0"
   }
 }

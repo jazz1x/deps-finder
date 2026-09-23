@@ -1,19 +1,9 @@
-import { O } from '@mobily/ts-belt';
-
 export type PackageName = string;
-export type FilePath = string;
-export type ImportStatement = string;
 
 export const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
 
-export type PackageJson = {
-  readonly name: O.Option<string>;
-  readonly version: O.Option<string>;
-  readonly dependencies: O.Option<Record<PackageName, string>>;
-  readonly devDependencies: O.Option<Record<PackageName, string>>;
-  readonly peerDependencies: O.Option<Record<PackageName, string>>;
-};
+export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> };
 
 export type ImportType = 'runtime' | 'type-only';
 
@@ -29,11 +19,11 @@ export type DependencyUsage = {
 };
 
 export type ImportDetails = {
-  packageName: PackageName;
-  importType: ImportType;
-  file: string;
-  line: number;
-  importStatement: string;
+  readonly packageName: PackageName;
+  readonly importType: ImportType;
+  readonly file: string;
+  readonly line: number;
+  readonly importStatement: string;
 };
 
 export type AnalysisResult = {

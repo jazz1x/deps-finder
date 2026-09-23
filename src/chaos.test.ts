@@ -11,13 +11,13 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { O, R } from '@mobily/ts-belt';
+import { Option, Result, Schema } from 'effect';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
 import { extractImports, extractPackageName, parseFile } from '@/parsers/import-parser';
-import { extractAllDependencies, extractDependencies, readPackageJson } from '@/parsers/package-parser';
+import { readPackageJson } from '@/parsers/package-parser';
 import type { PackageJson } from '@/domain/types';
 import { makeRng } from '@/test-utils/random';
-import { readFile, readJSONFile } from '@/utils/file-reader';
+import { readFile, readJsonFile } from '@/utils/file-reader';
 
 const FUZZ_ITERATIONS = 200;
 const FIXTURE_DIR = './test-chaos';
@@ -50,18 +50,16 @@ const randomImportLikeContent = (rng: () => number): string => {
 };
 
 const randomPackageJsonShape = (rng: () => number): PackageJson => {
-  const maybeDeps = (): O.Option<Record<string, string>> => {
-    if (rng() < 0.3) return O.None;
+  const maybeDeps = (): ReadonlyArray<string> => {
+    if (rng() < 0.3) return [];
     const count = Math.floor(rng() * 30);
-    const obj: Record<string, string> = {};
+    const names: string[] = [];
     for (let i = 0; i < count; i++) {
-      obj[randomString(rng, 16) || `pkg${i}`] = '1.0.0';
+      names.push(randomString(rng, 16) || `pkg${i}`);
     }
-    return O.Some(obj);
+    return names;
   };
   return {
-    name: rng() < 0.5 ? O.Some(randomString(rng, 16)) : O.None,
-    version: rng() < 0.5 ? O.Some('1.0.0') : O.None,
     dependencies: maybeDeps(),
     devDependencies: maybeDeps(),
     peerDependencies: maybeDeps(),
@@ -70,17 +68,13 @@ const randomPackageJsonShape = (rng: () => number): PackageJson => {
 
 describe('chaos: extractPackageName never throws', () => {
   const rng = makeRng(0xc0ffee);
-  test(`returns string|null on ${FUZZ_ITERATIONS} random inputs`, () => {
+  test(`returns Option<string> on ${FUZZ_ITERATIONS} random inputs`, () => {
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
       const input = randomString(rng, 80);
       const result = extractPackageName(input);
-      expect(result === null || typeof result === 'string').toBe(true);
+      expect(Option.isOption(result)).toBe(true);
+      expect(Option.match(result, { onNone: () => true, onSome: (name) => typeof name === 'string' })).toBe(true);
     }
-  });
-
-  test('handles null and undefined explicitly', () => {
-    expect(extractPackageName(null)).toBe(null);
-    expect(extractPackageName(undefined)).toBe(null);
   });
 });
 
@@ -106,26 +100,6 @@ describe('chaos: extractImports never throws', () => {
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
       const garbage = randomString(rng2, 200);
       expect(() => extractImports(garbage, 'garbage.ts')).not.toThrow();
-    }
-  });
-});
-
-describe('chaos: extractDependencies / extractAllDependencies handle arbitrary shapes', () => {
-  const rng = makeRng(0xabcdef);
-  test(`returns string[] on ${FUZZ_ITERATIONS} random package.json shapes`, () => {
-    for (let i = 0; i < FUZZ_ITERATIONS; i++) {
-      const pkg = randomPackageJsonShape(rng);
-      const all = extractAllDependencies(pkg);
-      expect(Array.isArray(all)).toBe(true);
-      // 중복 없음 보장
-      expect(new Set(all).size).toBe(all.length);
-
-      const deps = extractDependencies(pkg, 'dependencies');
-      const devDeps = extractDependencies(pkg, 'devDependencies');
-      const peer = extractDependencies(pkg, 'peerDependencies');
-      expect(Array.isArray(deps)).toBe(true);
-      expect(Array.isArray(devDeps)).toBe(true);
-      expect(Array.isArray(peer)).toBe(true);
     }
   });
 });
@@ -171,7 +145,7 @@ describe('chaos: file-reader on random file contents', () => {
 
   const rng = makeRng(0xfeedface);
 
-  test('readFile + readJSONFile do not throw on random byte content', async () => {
+  test('readFile + readJsonFile do not throw on random byte content', async () => {
     const fileCount = 50;
     const paths = Array.from({ length: fileCount }, (_, i) => `${FIXTURE_DIR}/fuzz-${i}.bin`);
     await Promise.all(paths.map((p) => writeFile(p, randomString(rng, 256))));
@@ -180,7 +154,7 @@ describe('chaos: file-reader on random file contents', () => {
     let touched = 0;
     for (const filePath of paths) {
       readFile(filePath);
-      readJSONFile(filePath);
+      readJsonFile(Schema.Unknown)(filePath);
       touched++;
     }
     expect(touched).toBe(fileCount);
@@ -214,8 +188,8 @@ describe('chaos: file-reader on random file contents', () => {
 
     for (const filePath of paths) {
       const result = parseFile(filePath);
-      if (R.isOk(result)) {
-        expect(Array.isArray(R.getExn(result))).toBe(true);
+      if (Result.isSuccess(result)) {
+        expect(Array.isArray(Result.getOrThrow(result))).toBe(true);
       }
     }
   });
