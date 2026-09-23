@@ -614,6 +614,23 @@ describe('extractImports type positions', () => {
     expect(typeOnly('/// <reference types="vite/client" />\nexport const x = 1;')).toEqual(['vite:type-only:1']);
   });
 
+  test('/// <reference> finds types after another attribute', () => {
+    expect(typeOnly('/// <reference resolution-mode="import" types="alpha" />\nexport {};')).toEqual(['alpha:type-only:1']);
+  });
+
+  test('a comment between import and its parenthesis hides no type import', () => {
+    expect(typeOnly('export type A = import /* c */ ("zod").ZodType;')).toEqual(['zod:type-only:1']);
+  });
+
+  test('JSDoc prose that mentions import("x") outside a {type} is no usage', () => {
+    const content = '/** Loads heavy lazily, e.g. import("heavy"). @type {Map<string, import("zod").ZodType>} */\nexport const v = 1;';
+    expect(typeOnly(content, 'src/a.js')).toEqual(['zod:type-only:1']);
+  });
+
+  test('declare module is found with any whitespace between the keywords', () => {
+    expect(typeOnly('export {};\ndeclare  module "express" {}')).toEqual(['express:type-only:2']);
+  });
+
   test('declare module "x" counts in a module file, not in an ambient script', () => {
     expect(typeOnly('declare module "express" { interface Request { user?: string } }\nexport {};')).toEqual(['express:type-only:1']);
     expect(typeOnly('declare module "untyped-lib" { const x: number; }')).toEqual([]);

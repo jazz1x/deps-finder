@@ -236,9 +236,9 @@ const astReferences = (program: Program): AstReferences => {
   return { references, augmentations };
 };
 
-const AST_MARKERS = ['require', 'declare module'] as const;
+const AST_MARKER = /require|declare\s+module/;
 
-const IMPORT_CALL = /\bimport\s*\(/g;
+const IMPORT_CALL = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/g;
 
 const importCalls = (text: string): number => [...text.matchAll(IMPORT_CALL)].length;
 
@@ -252,12 +252,22 @@ const hasTypeImport = (content: string, parsed: ParseResult): boolean => {
   );
 };
 
-const TYPE_REFERENCE = /^\/\s*<reference\s+types\s*=\s*(['"])([^'"]+)\1/;
+const TYPE_REFERENCE = /^\/\s*<reference\b[^>]*?\btypes\s*=\s*(['"])([^'"]+)\1/;
 
-const JSDOC_IMPORTS = [
-  /import\s*\(\s*(['"])([^'"]+)\1\s*\)/g,
-  /@import\s[^@]*?\bfrom\s*(['"])([^'"]+)\1/g,
-] as const;
+const JSDOC_TYPE_IMPORT = /import\s*\(\s*(['"])([^'"]+)\1\s*\)/g;
+
+const JSDOC_IMPORT_TAG = /@import\s[^@]*?\bfrom\s*(['"])([^'"]+)\1/g;
+
+const isInsideBraces = (before: string): boolean =>
+  before.split('{').length > before.split('}').length;
+
+// TypeScript reads import("x") in JSDoc only inside a {type}; elsewhere it is prose.
+const jsdocImports = (jsdoc: string): ReadonlyArray<RegExpExecArray> => [
+  ...Array.filter([...jsdoc.matchAll(JSDOC_TYPE_IMPORT)], (match) =>
+    isInsideBraces(jsdoc.slice(0, match.index)),
+  ),
+  ...jsdoc.matchAll(JSDOC_IMPORT_TAG),
+];
 
 const COMMENT_MARKER = /<reference|@import|import\s*\(/;
 
@@ -282,22 +292,15 @@ const commentReferences = (comment: Comment): ReadonlyArray<ModuleReference> =>
       ),
     ),
     Match.when({ type: 'Block', value: String.startsWith('*') }, (jsdoc) =>
-      Array.getSomes(
-        Array.flatMap(JSDOC_IMPORTS, (pattern) =>
-          Array.map([...jsdoc.value.matchAll(pattern)], commentMatchReference(jsdoc)),
-        ),
-      ),
+      Array.getSomes(Array.map(jsdocImports(jsdoc.value), commentMatchReference(jsdoc))),
     ),
     Match.orElse((): ReadonlyArray<ModuleReference> => []),
   );
 
-const containsAny = (content: string, markers: ReadonlyArray<string>): boolean =>
-  Array.some(markers, (marker) => content.includes(marker));
-
 const moduleReferences = (content: string, filePath: string): ReadonlyArray<ModuleReference> => {
   const parsed = parseSync(filePath, content);
   const ast =
-    containsAny(content, AST_MARKERS) || hasTypeImport(content, parsed)
+    AST_MARKER.test(content) || hasTypeImport(content, parsed)
       ? astReferences(parsed.program)
       : NO_AST_REFERENCES;
   return [
