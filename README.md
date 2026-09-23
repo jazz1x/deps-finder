@@ -35,7 +35,8 @@ deps-finder reads your `package.json`, walks the project's source files, and tel
 - Detects **misplaced** dependencies — used in source but living in `devDependencies`.
 - Detects **orphan peers** — declared as `peerDependencies` but never imported (opt-in via `--check-peer`).
 - Reports **type-only** imports separately so they don't pollute the unused list.
-- Auto-detects build output directories (`dist`, `build`, etc.) at the project root and excludes them.
+- Honours `.gitignore` and auto-detects build output directories (`dist`, `build`, etc.) at the project root, and excludes them.
+- Checks one package per run. In a monorepo, run it inside each workspace package.
 - Outputs colorized text or machine-readable JSON.
 - **Friendly errors and warnings** — actionable messages when files are missing, JSON is malformed, or a flag is given without its required value.
 
@@ -68,6 +69,9 @@ deps-finder --json
 
 # also check peerDependencies and devDependencies
 deps-finder --all
+
+# monorepo: one run per workspace package
+deps-finder apps/web
 ```
 
 Expected output (truncated):
@@ -100,7 +104,7 @@ deps-finder [options] [<root>]
 | `--all` | `-a` | Also report unused `devDependencies` and `peerDependencies` (peers only under `unusedPeer`; misplaced checks stay on) |
 | `--check-peer` | `-p` | Also check `peerDependencies` (off by default; on with `--all`) — see [peerDependencies note](#peerdependencies-note) |
 | `--ignore <pkgs>` | `-i` | Ignore packages (comma-separated, repeatable, `--ignore=a,b`) |
-| `--exclude <globs>` | `-e` | Exclude files/dirs by glob (comma-separated, repeatable) |
+| `--exclude <globs>` | `-e` | Exclude files/dirs by `.gitignore`-style pattern (comma-separated, repeatable) |
 | `--no-auto-detect` | — | Disable automatic build directory detection |
 | `--version` | `-v` | Print the version |
 | `--help` | `-h` | Show help message |
@@ -122,12 +126,12 @@ Unknown flags and flags missing their value are errors, not warnings.
 ```
 package.json ──┐
                ├─→  declared deps  ──┐
-glob project ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
+walk project ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
                └─→  parsed imports  ─┘
 ```
 
 1. Read `package.json` to get declared `dependencies`, `peerDependencies`, and `devDependencies`.
-2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping `node_modules`, caches, and build outputs (`dist/`, `build/`, `out/` and the like) at the project root and at every workspace package root (declared by `workspaces` in `package.json` or by `pnpm-workspace.yaml`), plus auto-detected output dirs. Hidden directories are skipped except `.storybook/`, `.husky/` and `.scripts/`, so generated trees such as `.next/`, `.vercel/` or `.gradle/` never count as usage. Each file is tagged **development** or **production**. Development files are tests, specs, stories, and test setup files; anything under `test/`, `tests/`, `__tests__/`, `__mocks__/`, `stories/`, `e2e/`, `cypress/`, `playwright/`, `.storybook/`, `.husky/` or `.scripts/`; and, at the project root or a workspace package root, `*.config.*` and `*.preset.*` files and the `scripts/` directory. Everything else is production, including `src/app.config.ts` and `src/scripts/`.
+2. Walk the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, hidden files and directories included. The walk skips `.git/` and `node_modules/`, anything the project's `.gitignore` files ignore (the root one and nested ones, with git's rules), and build outputs at the project root: `dist/`, `build/`, `out/`, `coverage/` and the auto-detected output dirs (tsconfig `outDir`, `--outDir` in scripts, `*-dist`-style names). A project without a root `.gitignore` also skips common framework and cache dirs at its root (`.next/`, `.turbo/`, `.cache/`, `storybook-static/` and the like). A subdirectory whose `package.json` has a `name` is a separate package, so its whole tree is left out; marker files such as `{"sideEffects": false}` do not count. Each file is tagged **development** or **production**. Development files are tests, specs, stories, and test setup files; anything under `test/`, `tests/`, `__tests__/`, `__mocks__/`, `e2e/`, `cypress/`, `playwright/` or `.storybook/` at any depth; and, at the project root only, `*.config.*` and `*.preset.*` files, dotfiles such as `.eslintrc.js`, the `scripts/` directory and hidden directories such as `.husky/` or `.github/`. Everything else is production, including `src/app.config.ts`, `src/scripts/`, `src/.generated/` and a feature folder named `stories/`.
 3. Parse each file with [oxc](https://oxc.rs) and collect `import`, `export … from`, `require()`, `import x = require()`, and dynamic `import()` with a string literal; resolve to package roots (e.g. `lodash/fp` → `lodash`).
 4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**. An import from any file counts as usage. **misplaced** and **typeOnly** look only at production files, so a `devDependency` used only in tests or tooling is never misplaced.
 

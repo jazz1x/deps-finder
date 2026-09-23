@@ -36,7 +36,8 @@ deps-finder는 `package.json`을 읽고 프로젝트의 소스 파일을 순회�
 - **잘못 배치된(misplaced)** 의존성 감지 — 소스에서 사용 중이지만 `devDependencies`에 들어 있는 패키지.
 - **고아 peer(orphan peers)** 감지 — `peerDependencies`에 선언되었지만 import되지 않음 (`--check-peer`로 옵트인).
 - **타입 전용(type-only)** import는 별도로 보고하여 미사용 목록을 오염시키지 않습니다.
-- 프로젝트 루트의 빌드 출력 디렉토리(`dist`, `build` 등)를 자동 감지해 제외합니다.
+- `.gitignore`를 따르고, 프로젝트 루트의 빌드 출력 디렉토리(`dist`, `build` 등)를 자동 감지해 제외합니다.
+- 한 번에 패키지 하나를 검사합니다. 모노레포에서는 워크스페이스 패키지마다 그 안에서 실행하세요.
 - 컬러 텍스트 또는 머신 판독 가능한 JSON으로 출력합니다.
 - **친절한 에러·경고 메시지** — 파일이 없거나 JSON이 잘못됐거나 플래그에 값을 빠뜨린 경우, 어떻게 고치면 되는지 알려주는 한 줄 메시지로 출력합니다.
 
@@ -69,6 +70,9 @@ deps-finder --json
 
 # also check peerDependencies and devDependencies
 deps-finder --all
+
+# monorepo: one run per workspace package
+deps-finder apps/web
 ```
 
 예상 출력 (일부 생략):
@@ -101,7 +105,7 @@ deps-finder [options] [<root>]
 | `--all` | `-a` | 미사용 `devDependencies`·`peerDependencies`도 보고 (peer는 `unusedPeer`에만, misplaced 검사는 그대로) |
 | `--check-peer` | `-p` | `peerDependencies`도 함께 검사 (기본 off, `--all` 시 on) — [peerDependencies 안내](#peerdependencies-안내) 참고 |
 | `--ignore <pkgs>` | `-i` | 패키지 무시 (쉼표로 구분, 반복 가능, `--ignore=a,b`) |
-| `--exclude <globs>` | `-e` | glob으로 파일/디렉토리 제외 (쉼표로 구분, 반복 가능) |
+| `--exclude <globs>` | `-e` | `.gitignore` 형식 패턴으로 파일/디렉토리 제외 (쉼표로 구분, 반복 가능) |
 | `--no-auto-detect` | — | 빌드 디렉토리 자동 감지 비활성화 |
 | `--version` | `-v` | 버전 출력 |
 | `--help` | `-h` | 도움말 표시 |
@@ -123,12 +127,12 @@ deps-finder [options] [<root>]
 ```
 package.json ──┐
                ├─→  declared deps  ──┐
-glob project ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
+walk project ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
                └─→  parsed imports  ─┘
 ```
 
 1. `package.json`을 읽어 선언된 `dependencies`, `peerDependencies`, `devDependencies`를 가져옵니다.
-2. 프로젝트에서 `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`를 글롭(glob)합니다. `node_modules`, 캐시, 그리고 프로젝트 루트와 워크스페이스 패키지 루트(`package.json`의 `workspaces`나 `pnpm-workspace.yaml`로 선언된 곳)의 빌드 출력(`dist/`, `build/`, `out/` 등)과 자동 감지된 출력 디렉토리는 건너뜁니다. 숨김 디렉토리는 `.storybook/`, `.husky/`, `.scripts/`만 읽으므로, `.next/`, `.vercel/`, `.gradle/` 같은 생성물은 사용으로 세지 않습니다. 파일마다 **development**와 **production** 중 하나로 표시합니다. development는 시험·spec·스토리·시험 설정 파일, 깊이와 상관없이 `test/`, `tests/`, `__tests__/`, `__mocks__/`, `stories/`, `e2e/`, `cypress/`, `playwright/`, `.storybook/`, `.husky/`, `.scripts/` 아래의 파일, 그리고 프로젝트 루트나 워크스페이스 패키지 루트에 있는 `*.config.*`·`*.preset.*` 파일과 `scripts/` 디렉토리입니다. 나머지는 모두 production이며, `src/app.config.ts`와 `src/scripts/`도 여기에 들어갑니다.
+2. 프로젝트를 돌며 `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs` 파일을 모읍니다. 숨김 파일과 숨김 디렉토리도 포함합니다. `.git/`과 `node_modules/`, 프로젝트의 `.gitignore`(루트와 하위 디렉토리의 것 모두, git 규칙 그대로)가 무시하는 파일, 그리고 프로젝트 루트의 빌드 출력인 `dist/`, `build/`, `out/`, `coverage/`와 자동 감지된 출력 디렉토리(tsconfig `outDir`, 스크립트의 `--outDir`, `*-dist` 같은 이름)는 건너뜁니다. 루트에 `.gitignore`가 없는 프로젝트는 루트의 흔한 프레임워크·캐시 디렉토리(`.next/`, `.turbo/`, `.cache/`, `storybook-static/` 등)도 건너뜁니다. 하위 디렉토리의 `package.json`에 `name`이 있으면 별도 패키지이므로 그 아래 전체를 뺍니다. `{"sideEffects": false}` 같은 표식 파일은 해당하지 않습니다. 파일마다 **development**와 **production** 중 하나로 표시합니다. development는 시험·spec·스토리·시험 설정 파일, 깊이와 상관없이 `test/`, `tests/`, `__tests__/`, `__mocks__/`, `e2e/`, `cypress/`, `playwright/`, `.storybook/` 아래의 파일, 그리고 프로젝트 루트에만 해당하는 `*.config.*`·`*.preset.*` 파일, `.eslintrc.js` 같은 dotfile, `scripts/` 디렉토리, `.husky/`나 `.github/` 같은 숨김 디렉토리입니다. 나머지는 모두 production이며, `src/app.config.ts`, `src/scripts/`, `src/.generated/`, 그리고 `stories/`라는 이름의 기능 폴더도 여기에 들어갑니다.
 3. 파일마다 [oxc](https://oxc.rs)로 파싱해 `import`, `export … from`, `require()`, `import x = require()`, 문자열 리터럴 동적 `import()`를 모으고 패키지 루트로 정규화합니다 (예: `lodash/fp` → `lodash`).
 4. 두 집합의 차집합을 구해 네 가지 버킷을 만듭니다: **unused**, **unusedPeer** (`--check-peer` 시), **misplaced**, **typeOnly**. 어느 파일에서 import해도 사용으로 칩니다. **misplaced**와 **typeOnly**는 production 파일만 보므로, 시험이나 도구에서만 쓰는 `devDependency`는 misplaced로 나오지 않습니다.
 
