@@ -8,7 +8,7 @@
 [![Bun](https://img.shields.io/badge/runtime-bun-black.svg)](https://bun.sh)
 [![CI](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml)
 
-deps-finder reads your `package.json`, walks `src/**`, and tells you which declared packages no source file actually imports — and which packages your code does import that live in the wrong section. It runs entirely on your machine, never phones home, and treats `peerDependencies` as a consumer contract by default (since real peers like `typescript` are intentionally never imported by the library itself). Opt in with `--check-peer` when you want orphan-peer detection.
+deps-finder reads your `package.json`, walks the project's source files, and tells you which declared packages no source file actually imports — and which packages your code does import that live in the wrong section. It runs entirely on your machine, never phones home, and treats `peerDependencies` as a consumer contract by default (since real peers like `typescript` are intentionally never imported by the library itself). Opt in with `--check-peer` when you want orphan-peer detection.
 
 [한국어](./README.ko.md) · English
 
@@ -122,12 +122,12 @@ Unknown flags and flags missing their value are errors, not warnings.
 ```
 package.json ──┐
                ├─→  declared deps  ──┐
-glob src/**  ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
+glob project ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
                └─→  parsed imports  ─┘
 ```
 
 1. Read `package.json` to get declared `dependencies`, `peerDependencies`, and `devDependencies`.
-2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping `node_modules`, `.git`, caches, and build outputs at the project root (`dist/`, `build/`, `out/`, and auto-detected output dirs). Each file is tagged **development** or **production**. Development files are tests, specs, stories, and test setup files; anything under `test/`, `tests/`, `__tests__/`, `__mocks__/`, `stories/`, `e2e/`, `cypress/`, `playwright/`, or a dot-directory such as `.storybook/`; root-level `*.config.*` files; and the top-level `scripts/` directory. Everything else is production, including `src/app.config.ts` and `src/scripts/`.
+2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping `node_modules`, caches, and build outputs (`dist/`, `build/`, `out/` and the like) at the project root and at every directory with its own `package.json`, plus auto-detected output dirs. Hidden directories are skipped except `.storybook/`, `.husky/` and `.scripts/`, so generated trees such as `.next/`, `.vercel/` or `.gradle/` never count as usage. Each file is tagged **development** or **production**. Development files are tests, specs, stories, and test setup files; anything under `test/`, `tests/`, `__tests__/`, `__mocks__/`, `stories/`, `e2e/`, `cypress/`, `playwright/`, `.storybook/`, `.husky/` or `.scripts/`; and, at the project root or a workspace package root, `*.config.*` and `*.preset.*` files and the `scripts/` directory. Everything else is production, including `src/app.config.ts` and `src/scripts/`.
 3. Parse each file with [oxc](https://oxc.rs) and collect `import`, `export … from`, `require()`, `import x = require()`, and dynamic `import()` with a string literal; resolve to package roots (e.g. `lodash/fp` → `lodash`).
 4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**. An import from any file counts as usage. **misplaced** and **typeOnly** look only at production files, so a `devDependency` used only in tests or tooling is never misplaced.
 
@@ -223,7 +223,7 @@ Or keep a report without blocking on findings, while still failing when the run 
 
 ## Honest-use notice
 
-deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages loaded only via config files outside `src/`. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
+deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages a config names only as a string (plugin or preset names). Test files that a runner config points at from an unusual place (a Playwright `testDir`, a `codegen.ts` run only from a script, `src/mocks/` imported only by tests) are treated as production. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
 
 Packages that are used without being imported are reported as unused: CLIs run from `package.json` scripts (e.g. `husky` in `prepare`) and packages declared only to satisfy another package's optional peer (e.g. `@opentelemetry/api` for Next.js tracing). Pass them to `--ignore`.
 

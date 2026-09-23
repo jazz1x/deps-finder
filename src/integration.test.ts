@@ -297,6 +297,41 @@ describe('file contexts', () => {
     ]);
   });
 
+  test('a workspace package root is a root for build output, tool configs and scripts/', async () => {
+    await write('packages/a/package.json', '{}');
+    await write('packages/a/dist/index.js', "require('webpack'); require('left-pad');");
+    await write('packages/a/vite.config.ts', "import { defineConfig } from 'vite';");
+    await write('packages/a/scripts/gen.ts', "import 'tsx';");
+    await write('packages/a/src/app.config.ts', "import { z } from 'zod';");
+
+    const result = analyze(pkg({ devDependencies: ['webpack', 'left-pad', 'vite', 'tsx', 'zod'] }));
+
+    expect(result.unused).toEqual(['webpack', 'left-pad']);
+    expect(result.misplaced.map((m) => m.packageName)).toEqual(['zod']);
+  });
+
+  test('generated and foreign dot directories are not scanned', async () => {
+    await write('src/index.ts', 'export const x = 1;');
+    await write('.vercel/output/functions/api.func/index.js', "require('left-pad');");
+    await write('apps/web/.next/server/chunk.js', "require('is-odd');");
+    await write('.claude/worktrees/agent-x/src/x.ts', "import 'ts-morph';");
+    await write('.gradle/build/report.js', "require('lodash');");
+
+    const result = analyze(pkg({ dependencies: ['left-pad', 'is-odd', 'lodash'], devDependencies: ['ts-morph'] }));
+
+    expect(result.unused).toEqual(['left-pad', 'is-odd', 'lodash', 'ts-morph']);
+  });
+
+  test('root presets and happy-dom setup files are development', async () => {
+    await write('jest.preset.js', "require('@nrwl/jest/preset');");
+    await write('src/happydom-setup.ts', "import { GlobalRegistrator } from '@happy-dom/global-registrator';");
+
+    const result = analyze(pkg({ devDependencies: ['@nrwl/jest', '@happy-dom/global-registrator'] }));
+
+    expect(result.unused).toEqual([]);
+    expect(result.misplaced).toEqual([]);
+  });
+
   test('build output is excluded only at the project root', async () => {
     await write('dist/index.js', "import 'dist-only';");
     await write('src/build/index.ts', "import _ from 'lodash';");

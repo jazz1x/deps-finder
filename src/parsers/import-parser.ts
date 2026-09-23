@@ -5,7 +5,7 @@ import type {
   Program,
   TSImportEqualsDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Result, String, pipe } from 'effect';
+import { Array, Match, Option, Order, Result, String, pipe } from 'effect';
 import { globSync } from 'glob';
 import {
   type DynamicImport,
@@ -16,8 +16,10 @@ import {
 } from 'oxc-parser';
 import {
   ANALYZABLE_EXTENSIONS,
+  BUILD_OUTPUT_PATTERNS,
   DECLARATION_FILE_PATTERN,
   DEVELOPMENT_DIRECTORIES,
+  DEVELOPMENT_DOT_DIRECTORIES,
   DEVELOPMENT_FILENAME_PATTERNS,
   ROOT_TOOLING_DIRECTORIES,
   ROOT_TOOL_CONFIG_PATTERN,
@@ -41,24 +43,56 @@ export const shouldAnalyzeFile = (filePath: string): boolean =>
 
 type PathSegments = Array.NonEmptyReadonlyArray<string>;
 
-const isDevelopmentPath: ReadonlyArray<(segments: PathSegments) => boolean> = [
-  (segments) =>
+type LocatedPath = {
+  readonly segments: PathSegments;
+  readonly withinPackage: PathSegments;
+};
+
+const splitPath = (relativePath: string): PathSegments => String.split(relativePath, /[\\/]/);
+
+const isDevelopmentPath: ReadonlyArray<(located: LocatedPath) => boolean> = [
+  ({ segments }) =>
     Array.some(Array.initNonEmpty(segments), (dir) => Array.contains(DEVELOPMENT_DIRECTORIES, dir)),
-  (segments) => Array.some(segments, String.startsWith('.')),
-  (segments) =>
+  ({ segments }) =>
     Array.some(DEVELOPMENT_FILENAME_PATTERNS, (pattern) =>
       Array.lastNonEmpty(segments).includes(pattern),
     ),
-  (segments) => segments.length === 1 && ROOT_TOOL_CONFIG_PATTERN.test(segments[0]),
-  (segments) =>
-    segments.length > 1 && Array.contains(ROOT_TOOLING_DIRECTORIES, Array.headNonEmpty(segments)),
+  ({ withinPackage }) =>
+    withinPackage.length === 1 && ROOT_TOOL_CONFIG_PATTERN.test(withinPackage[0]),
+  ({ withinPackage }) =>
+    withinPackage.length > 1 &&
+    Array.contains(ROOT_TOOLING_DIRECTORIES, Array.headNonEmpty(withinPackage)),
 ];
 
-export const fileContextOf = (relativePath: string): FileContext => {
-  const segments = String.split(relativePath, /[\\/]/);
-  return Array.some(isDevelopmentPath, (matches) => matches(segments))
-    ? 'development'
-    : 'production';
+const isInside =
+  (segments: PathSegments) =>
+  (root: PathSegments): boolean =>
+    root.length < segments.length && Array.every(root, (dir, i) => segments[i] === dir);
+
+const locate =
+  (packageRoots: ReadonlyArray<PathSegments>) =>
+  (relativePath: string): LocatedPath => {
+    const segments = splitPath(relativePath);
+    return pipe(
+      Array.findFirst(packageRoots, isInside(segments)),
+      Option.map((root) => Array.drop(segments, root.length)),
+      Option.filter(Array.isArrayNonEmpty),
+      Option.getOrElse(() => segments),
+      (withinPackage) => ({ segments, withinPackage }),
+    );
+  };
+
+const byDepthDescending = Order.mapInput(
+  Order.flip(Order.Number),
+  (root: PathSegments) => root.length,
+);
+
+export const fileContextOf = (packageRoots: ReadonlyArray<string>) => {
+  const locateIn = locate(Array.sort(Array.map(packageRoots, splitPath), byDepthDescending));
+  return (relativePath: string): FileContext =>
+    Array.some(isDevelopmentPath, (matches) => matches(locateIn(relativePath)))
+      ? 'development'
+      : 'production';
 };
 
 type ModuleReference = {
@@ -211,20 +245,32 @@ export const findFiles = (
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): ReadonlyArray<SourceFile> =>
-  pipe(
-    globSync('**/*', {
+): ReadonlyArray<SourceFile> => {
+  const ignore = [
+    ...getAllExcludedPatterns(rootDir, !options.noAutoDetect),
+    ...(options.excludePatterns ?? []),
+  ];
+  const packageRoots = pipe(
+    globSync('*/**/package.json', { cwd: rootDir, ignore }),
+    Array.map((manifest) => path.dirname(manifest)),
+  );
+  const contextOf = fileContextOf(packageRoots);
+
+  return pipe(
+    globSync(['**/*', `**/{${DEVELOPMENT_DOT_DIRECTORIES.join(',')}}/**/*`], {
       cwd: rootDir,
       nodir: true,
-      dot: true,
       ignore: [
-        ...getAllExcludedPatterns(rootDir, !options.noAutoDetect),
-        ...(options.excludePatterns ?? []),
+        ...ignore,
+        ...Array.flatMap(packageRoots, (root) =>
+          Array.map(BUILD_OUTPUT_PATTERNS, (pattern) => path.posix.join(root, pattern)),
+        ),
       ],
     }),
     Array.filter(shouldAnalyzeFile),
     Array.map((relativePath) => ({
       path: path.resolve(rootDir, relativePath),
-      context: fileContextOf(relativePath),
+      context: contextOf(relativePath),
     })),
   );
+};

@@ -476,6 +476,14 @@ describe('dependency-analyzer: section classification', () => {
     expect(result.typeOnly).toEqual(['zod']);
   });
 
+  test('a type-only import from a development file is not typeOnly', () => {
+    const result = analyzeDependencies(pkg({ dependencies: ['dayjs'] }), [use('dayjs', 'type-only', 'src/a.test.ts', 1, 'development')], {
+      sections: ALL,
+      ignoredPackages: [],
+    });
+    expect(result.typeOnly).toEqual([]);
+  });
+
   test('misplaced locations are ordered by file then line', () => {
     const result = analyzeDependencies(
       pkg({ devDependencies: ['chalk'] }),

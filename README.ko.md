@@ -8,7 +8,7 @@
 [![Bun](https://img.shields.io/badge/runtime-bun-black.svg)](https://bun.sh)
 [![CI](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml)
 
-deps-finder는 `package.json`을 읽고 `src/**`를 순회하면서, 선언되어 있지만 어떤 소스 파일도 import하지 않는 패키지와, 코드에서 실제로 import하지만 잘못된 섹션에 들어 있는 패키지를 알려줍니다. 전부 로컬에서만 동작하며, 외부로 데이터를 보내지 않습니다. 또한 `peerDependencies`는 기본적으로 소비자(consumer)와의 계약으로 취급합니다 — `typescript`처럼 라이브러리 자체가 의도적으로 import하지 않는 진짜 peer가 흔하기 때문입니다. 고아 peer 탐지가 필요하면 `--check-peer`로 옵트인하세요.
+deps-finder는 `package.json`을 읽고 프로젝트의 소스 파일을 순회하면서, 선언되어 있지만 어떤 소스 파일도 import하지 않는 패키지와, 코드에서 실제로 import하지만 잘못된 섹션에 들어 있는 패키지를 알려줍니다. 전부 로컬에서만 동작하며, 외부로 데이터를 보내지 않습니다. 또한 `peerDependencies`는 기본적으로 소비자(consumer)와의 계약으로 취급합니다 — `typescript`처럼 라이브러리 자체가 의도적으로 import하지 않는 진짜 peer가 흔하기 때문입니다. 고아 peer 탐지가 필요하면 `--check-peer`로 옵트인하세요.
 
 한국어 · [English](./README.md)
 
@@ -123,12 +123,12 @@ deps-finder [options] [<root>]
 ```
 package.json ──┐
                ├─→  declared deps  ──┐
-glob src/**  ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
+glob project ──┤                     ├─→  diff  ──→  unused / unusedPeer / misplaced / typeOnly
                └─→  parsed imports  ─┘
 ```
 
 1. `package.json`을 읽어 선언된 `dependencies`, `peerDependencies`, `devDependencies`를 가져옵니다.
-2. 프로젝트에서 `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`를 글롭(glob)합니다. `node_modules`, `.git`, 캐시, 그리고 프로젝트 루트의 빌드 출력(`dist/`, `build/`, `out/`, 자동 감지된 출력 디렉토리)은 건너뜁니다. 파일마다 **development**와 **production** 중 하나로 표시합니다. development는 시험·spec·스토리·시험 설정 파일, 깊이와 상관없이 `test/`, `tests/`, `__tests__/`, `__mocks__/`, `stories/`, `e2e/`, `cypress/`, `playwright/` 아래나 `.storybook/` 같은 점(.) 디렉토리 아래의 파일, 루트의 `*.config.*` 파일, 최상위 `scripts/` 디렉토리입니다. 나머지는 모두 production이며, `src/app.config.ts`와 `src/scripts/`도 여기에 들어갑니다.
+2. 프로젝트에서 `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`를 글롭(glob)합니다. `node_modules`, 캐시, 그리고 프로젝트 루트와 자기 `package.json`이 있는 모든 디렉토리의 빌드 출력(`dist/`, `build/`, `out/` 등)과 자동 감지된 출력 디렉토리는 건너뜁니다. 숨김 디렉토리는 `.storybook/`, `.husky/`, `.scripts/`만 읽으므로, `.next/`, `.vercel/`, `.gradle/` 같은 생성물은 사용으로 세지 않습니다. 파일마다 **development**와 **production** 중 하나로 표시합니다. development는 시험·spec·스토리·시험 설정 파일, 깊이와 상관없이 `test/`, `tests/`, `__tests__/`, `__mocks__/`, `stories/`, `e2e/`, `cypress/`, `playwright/`, `.storybook/`, `.husky/`, `.scripts/` 아래의 파일, 그리고 프로젝트 루트나 워크스페이스 패키지 루트에 있는 `*.config.*`·`*.preset.*` 파일과 `scripts/` 디렉토리입니다. 나머지는 모두 production이며, `src/app.config.ts`와 `src/scripts/`도 여기에 들어갑니다.
 3. 파일마다 [oxc](https://oxc.rs)로 파싱해 `import`, `export … from`, `require()`, `import x = require()`, 문자열 리터럴 동적 `import()`를 모으고 패키지 루트로 정규화합니다 (예: `lodash/fp` → `lodash`).
 4. 두 집합의 차집합을 구해 네 가지 버킷을 만듭니다: **unused**, **unusedPeer** (`--check-peer` 시), **misplaced**, **typeOnly**. 어느 파일에서 import해도 사용으로 칩니다. **misplaced**와 **typeOnly**는 production 파일만 보므로, 시험이나 도구에서만 쓰는 `devDependency`는 misplaced로 나오지 않습니다.
 
@@ -224,7 +224,7 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 
 ## 정직한 사용 안내
 
-deps-finder는 정적 AST 스캔을 사용하므로 동적 패턴은 보이지 않습니다: `require(variable)`, `import(expr)`, `eval`, 번들러 플러그인이 만드는 가상 모듈, `src/` 바깥의 설정 파일을 통해서만 로드되는 패키지 등이 그렇습니다. 도구는 과보고보다 누락 보고를 선호하지만, 그래도 오탐은 발생할 수 있습니다. 그럴 때는 `--ignore <pkg>`가 탈출구이며 — 이슈 리포트도 환영합니다.
+deps-finder는 정적 AST 스캔을 사용하므로 동적 패턴은 보이지 않습니다: `require(variable)`, `import(expr)`, `eval`, 번들러 플러그인이 만드는 가상 모듈, 설정 파일에 문자열(플러그인·프리셋 이름)로만 적힌 패키지 등이 그렇습니다. 러너 설정이 엉뚱한 자리를 시험으로 가리키는 경우(Playwright `testDir`, 스크립트로만 돌리는 `codegen.ts`, 시험에서만 import하는 `src/mocks/`)는 production으로 취급합니다. 도구는 과보고보다 누락 보고를 선호하지만, 그래도 오탐은 발생할 수 있습니다. 그럴 때는 `--ignore <pkg>`가 탈출구이며 — 이슈 리포트도 환영합니다.
 
 import 없이 쓰이는 패키지는 unused로 보고됩니다: `package.json` 스크립트에서 실행하는 CLI(예: `prepare`의 `husky`), 다른 패키지의 optional peer를 채우려고만 선언한 패키지(예: Next.js 추적용 `@opentelemetry/api`)가 그렇습니다. `--ignore`로 넘기세요.
 

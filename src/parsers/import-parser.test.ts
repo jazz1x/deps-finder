@@ -494,22 +494,31 @@ describe('fileContextOf', () => {
     '.storybook/main.ts',
     '.scripts/run.ts',
     'packages/ui/.storybook/preview.tsx',
+    'packages/ui/vite.config.ts',
+    'packages/ui/scripts/gen.ts',
+    'jest.preset.js',
     'src/a.test.ts',
     'src/Button.stories.tsx',
     'src/happydom.ts',
+    'src/happydom-setup.ts',
     'test/setup.ts',
     'src/features/__mocks__/api.ts',
     'e2e/flow.ts',
   ])('%s is development', (file) => {
-    expect(fileContextOf(file)).toBe('development');
+    expect(fileContextOf(['packages/ui'])(file)).toBe('development');
   });
 
-  test.each(['src/index.ts', 'src/config/app.config.ts', 'src/scripts/analytics.ts', 'src/build/index.ts', 'scripts.ts'])(
-    '%s is production',
-    (file) => {
-      expect(fileContextOf(file)).toBe('production');
-    },
-  );
+  test.each([
+    'src/index.ts',
+    'src/config/app.config.ts',
+    'src/scripts/analytics.ts',
+    'src/build/index.ts',
+    'scripts.ts',
+    'packages/ui/src/app.config.ts',
+    'packages/other/vite.config.ts',
+  ])('%s is production', (file) => {
+    expect(fileContextOf(['packages/ui'])(file)).toBe('production');
+  });
 });
 
 describe('shouldAnalyzeFile', () => {

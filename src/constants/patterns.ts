@@ -14,11 +14,16 @@ export const ANALYZABLE_EXTENSIONS = [
 
 export const DECLARATION_FILE_PATTERN = /\.d\.[cm]?ts$/;
 
-export const ROOT_TOOL_CONFIG_PATTERN = /\.config\.[cm]?[jt]sx?$/;
+export const ROOT_TOOL_CONFIG_PATTERN = /\.(config|preset)\.[cm]?[jt]sx?$/;
 
 export const ROOT_TOOLING_DIRECTORIES = ['scripts'] as const;
 
+// The only dot directories globbed: other hidden trees (.next, .vercel, .gradle,
+// .claude/worktrees, .venv) hold generated output or foreign checkouts.
+export const DEVELOPMENT_DOT_DIRECTORIES = ['.storybook', '.husky', '.scripts'] as const;
+
 export const DEVELOPMENT_DIRECTORIES = [
+  ...DEVELOPMENT_DOT_DIRECTORIES,
   'test',
   'tests',
   '__tests__',
@@ -41,6 +46,8 @@ export const DEVELOPMENT_FILENAME_PATTERNS = [
   'vitest.setup.',
   'happydom.',
   'happy-dom.',
+  'happydom-setup.',
+  'happy-dom-setup.',
   'setup-tests.',
   'test-setup.',
 ] as const;
@@ -94,8 +101,6 @@ export const IDE_PATTERNS = [
   '.emacs.d/**',
 ] as const;
 
-const VCS_PATTERNS = ['.git/**'] as const;
-
 export const getAllExcludedPatterns = (
   projectRoot: string,
   autoDetect = true,
@@ -104,7 +109,6 @@ export const getAllExcludedPatterns = (
     ...BUILD_OUTPUT_PATTERNS,
     ...CACHE_PATTERNS,
     ...IDE_PATTERNS,
-    ...VCS_PATTERNS,
     '**/*.d.ts',
   ];
 
