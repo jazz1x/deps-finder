@@ -119,8 +119,7 @@ describe('chaos: analyzeDependencies on random inputs', () => {
       }));
 
       const result = analyzeDependencies(pkg, imports, {
-        checkAll: rng() < 0.5,
-        checkPeer: rng() < 0.5,
+        sections: (['dependencies', 'devDependencies', 'peerDependencies'] as const).filter(() => rng() < 0.5),
         ignoredPackages: [],
       });
 

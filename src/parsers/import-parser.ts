@@ -16,7 +16,6 @@ import {
 } from 'oxc-parser';
 import {
   ANALYZABLE_EXTENSIONS,
-  BUILTIN_MODULE_SET,
   DECLARATION_FILE_PATTERN,
   DEV_CONFIG_PATTERNS,
   EXCLUDED_DIRECTORY_PATTERNS,
@@ -33,9 +32,6 @@ const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
 export const extractPackageName = (specifier: string): Option.Option<string> =>
   Option.fromNullishOr(PACKAGE_NAME.exec(specifier)?.[1]);
-
-export const isBuiltinModule = (packageName: string): boolean =>
-  BUILTIN_MODULE_SET.has(packageName);
 
 const hasAnalyzableExtension = (filePath: string): boolean =>
   Array.contains(ANALYZABLE_EXTENSIONS, path.extname(filePath));
@@ -167,7 +163,6 @@ export const extractImports = (content: string, filePath: string): ReadonlyArray
     Array.map((ref) =>
       pipe(
         extractPackageName(ref.specifier),
-        Option.filter((packageName) => !isBuiltinModule(packageName)),
         Option.map((packageName): ImportDetails => ({
           packageName,
           importType: ref.importType,

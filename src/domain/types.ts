@@ -39,8 +39,7 @@ export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 
 export type CliOptions = {
   readonly format: OutputFormat;
-  readonly checkAll: boolean;
-  readonly checkPeer: boolean;
+  readonly sections: ReadonlyArray<DependencyType>;
   readonly ignoredPackages: ReadonlyArray<string>;
   readonly excludePatterns: ReadonlyArray<string>;
   readonly noAutoDetect: boolean;

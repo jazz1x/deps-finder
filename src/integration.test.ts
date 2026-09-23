@@ -66,7 +66,7 @@ describe('Integration Tests', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -85,7 +85,7 @@ describe('Integration Tests', () => {
     const files2 = findFiles(testDir);
     const imports2 = parseMultipleFiles(files2).imports;
     const result2 = analyzeDependencies(packageJson, imports2, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -106,7 +106,7 @@ describe('Integration Tests', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -127,7 +127,7 @@ describe('Integration Tests', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -146,7 +146,7 @@ describe('Integration Tests', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -166,7 +166,7 @@ describe('Integration Tests', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -187,7 +187,7 @@ describe('Integration Tests', () => {
 
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
     expect(result.misplaced.some((d) => d.packageName === 'happy-dom')).toBe(false);

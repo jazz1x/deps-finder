@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
-import type { PackageJson } from '@/domain/types';
+import type { ImportDetails, ImportType, PackageJson } from '@/domain/types';
 import { findFiles, parseMultipleFiles } from '@/parsers/import-parser';
 
 describe('dependency-analyzer', () => {
@@ -34,7 +34,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -56,7 +56,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -82,7 +82,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -102,7 +102,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: true,
+      sections: ['dependencies', 'devDependencies', 'peerDependencies'],
       ignoredPackages: [],
     });
 
@@ -124,7 +124,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: ['eslint'],
     });
 
@@ -153,7 +153,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -187,7 +187,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -215,7 +215,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -238,7 +238,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -262,7 +262,7 @@ describe('dependency-analyzer', () => {
     const files = findFiles(testDir);
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
-      checkAll: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -301,8 +301,7 @@ describe('dependency-analyzer: peerDependencies', () => {
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
-      checkAll: false,
-      checkPeer: false,
+      sections: ['dependencies'],
       ignoredPackages: [],
     });
 
@@ -318,8 +317,7 @@ describe('dependency-analyzer: peerDependencies', () => {
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
-      checkAll: false,
-      checkPeer: true,
+      sections: ['dependencies', 'peerDependencies'],
       ignoredPackages: [],
     });
 
@@ -335,8 +333,7 @@ describe('dependency-analyzer: peerDependencies', () => {
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
-      checkAll: true,
-      checkPeer: false,
+      sections: ['dependencies', 'devDependencies', 'peerDependencies'],
       ignoredPackages: [],
     });
 
@@ -350,8 +347,7 @@ describe('dependency-analyzer: peerDependencies', () => {
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
-      checkAll: false,
-      checkPeer: true,
+      sections: ['dependencies', 'peerDependencies'],
       ignoredPackages: [],
     });
 
@@ -364,8 +360,7 @@ describe('dependency-analyzer: peerDependencies', () => {
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
-      checkAll: false,
-      checkPeer: true,
+      sections: ['dependencies', 'peerDependencies'],
       ignoredPackages: ['typescript'],
     });
 
@@ -379,11 +374,86 @@ describe('dependency-analyzer: peerDependencies', () => {
     const imports = parseMultipleFiles(files).imports;
 
     const result = analyzeDependencies(peerOnlyPkg, imports, {
-      checkAll: false,
-      checkPeer: true,
+      sections: ['dependencies', 'peerDependencies'],
       ignoredPackages: [],
     });
 
     expect(result.misplaced.some((d) => d.packageName === 'react')).toBe(false);
+  });
+});
+
+const ALL = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+
+const use = (packageName: string, importType: ImportType = 'runtime', file = 'src/a.ts', line = 1): ImportDetails => ({
+  packageName,
+  importType,
+  file,
+  line,
+  importStatement: `import x from '${packageName}'`,
+});
+
+const pkg = (sections: Partial<PackageJson>): PackageJson => ({
+  dependencies: [],
+  devDependencies: [],
+  peerDependencies: [],
+  ...sections,
+});
+
+describe('dependency-analyzer: section classification', () => {
+  test('--all reports an unused peer once, under unusedPeer only', () => {
+    const result = analyzeDependencies(pkg({ peerDependencies: ['react'] }), [], { sections: ALL, ignoredPackages: [] });
+    expect(result.unused).toEqual([]);
+    expect(result.unusedPeer).toEqual(['react']);
+    expect(result.totalIssues).toBe(1);
+  });
+
+  test('--all still reports misplaced devDependencies', () => {
+    const result = analyzeDependencies(pkg({ devDependencies: ['chalk'] }), [use('chalk')], { sections: ALL, ignoredPackages: [] });
+    expect(result.misplaced.map((m) => m.packageName)).toEqual(['chalk']);
+  });
+
+  test('a devDependency used only for types is correctly placed, even with --all', () => {
+    const result = analyzeDependencies(pkg({ devDependencies: ['zod'] }), [use('zod', 'type-only')], {
+      sections: ALL,
+      ignoredPackages: [],
+    });
+    expect(result.typeOnly).toEqual([]);
+    expect(result.totalIssues).toBe(0);
+  });
+
+  test('a package declared in two sections is reported unused once', () => {
+    const result = analyzeDependencies(pkg({ dependencies: ['lodash'], devDependencies: ['lodash'] }), [], {
+      sections: ALL,
+      ignoredPackages: [],
+    });
+    expect(result.unused).toEqual(['lodash']);
+  });
+
+  test('a package also listed in dependencies is not misplaced', () => {
+    const result = analyzeDependencies(pkg({ dependencies: ['lodash'], devDependencies: ['lodash'] }), [use('lodash')], {
+      sections: ['dependencies'],
+      ignoredPackages: [],
+    });
+    expect(result.misplaced).toEqual([]);
+  });
+
+  test('a peer kept in devDependencies for local development is not misplaced', () => {
+    const result = analyzeDependencies(pkg({ peerDependencies: ['react'], devDependencies: ['react'] }), [use('react')], {
+      sections: ['dependencies'],
+      ignoredPackages: [],
+    });
+    expect(result.misplaced).toEqual([]);
+  });
+
+  test('misplaced locations are ordered by file then line', () => {
+    const result = analyzeDependencies(
+      pkg({ devDependencies: ['chalk'] }),
+      [use('chalk', 'runtime', 'src/b.ts', 3), use('chalk', 'runtime', 'src/a.ts', 9), use('chalk', 'runtime', 'src/a.ts', 2)],
+      {
+        sections: ['dependencies'],
+        ignoredPackages: [],
+      },
+    );
+    expect(result.misplaced[0]?.locations.map((l) => `${l.file}:${l.line}`)).toEqual(['src/a.ts:2', 'src/a.ts:9', 'src/b.ts:3']);
   });
 });
