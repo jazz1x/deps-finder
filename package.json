@@ -27,7 +27,7 @@
     "bin"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "keywords": [
     "dependency",
@@ -50,6 +50,7 @@
     "url": "https://github.com/jazz1x/deps-finder/issues"
   },
   "devDependencies": {
+    "@oxc-project/types": "^0.151.0",
     "@types/bun": "^1.4.2",
     "husky": "^9.1.7",
     "oxfmt": "^0.70.0",
@@ -59,6 +60,7 @@
   "dependencies": {
     "@mobily/ts-belt": "4.0.0-rc.5",
     "glob": "^13.0.6",
+    "oxc-parser": "^0.151.0",
     "ts-pattern": "^5.9.0"
   }
 }

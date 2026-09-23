@@ -1,7 +1,18 @@
 import { A } from '@mobily/ts-belt';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
 
-export const ANALYZABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] as const;
+export const ANALYZABLE_EXTENSIONS = [
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+] as const;
+
+export const DECLARATION_FILE_PATTERN = /\.d\.[cm]?ts$/;
 
 export const PRODUCTION_CONFIG_PATTERNS = [
   /^next\.config\.(js|ts|mjs|cjs)$/,
@@ -166,16 +177,6 @@ export const BUILTIN_MODULE_SET: ReadonlySet<string> = new Set([
   ...NODE_BUILTIN_MODULES.map((m) => `node:${m}`),
   ...BUN_BUILTIN_MODULES,
 ]);
-
-export const IMPORT_REGEX =
-  /(?:import(?!\s+type\b)(?!\s*\{[^}]*?\btype\s+\w+\b[^}]*\}))(?:\s+(?:[\w*\s{},]*)\s+from\s+)?\s*['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-
-export const TYPE_ONLY_IMPORT_REGEX = /import\s+type\s+[^'"]+from\s+['"]([^'"]+)['"]/g;
-
-export const MIXED_TYPE_IMPORT_REGEX = /import\s*\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]/g;
-
-export const MULTILINE_COMMENT_REGEX = /\/\*[\s\S]*?\*\//g;
-export const SINGLE_LINE_COMMENT_REGEX = /\/\/.*$/gm;
 
 export const getAllExcludedPatterns = (
   projectRoot: string,

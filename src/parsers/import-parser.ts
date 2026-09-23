@@ -1,36 +1,30 @@
 import path from 'node:path';
 import { A, O, R, S, pipe } from '@mobily/ts-belt';
+import type { CallExpression, Program, TSImportEqualsDeclaration } from '@oxc-project/types';
 import { globSync } from 'glob';
+import {
+  type DynamicImport,
+  type StaticExport,
+  type StaticImport,
+  Visitor,
+  parseSync,
+} from 'oxc-parser';
 import { P, match } from 'ts-pattern';
 import {
   ANALYZABLE_EXTENSIONS,
   BUILTIN_MODULE_SET,
+  DECLARATION_FILE_PATTERN,
   DEV_CONFIG_PATTERNS,
   EXCLUDED_DIRECTORY_PATTERNS,
   EXCLUDED_FILENAME_PATTERNS,
-  IMPORT_REGEX,
-  MIXED_TYPE_IMPORT_REGEX,
-  MULTILINE_COMMENT_REGEX,
   PRODUCTION_CONFIG_PATTERNS,
-  SINGLE_LINE_COMMENT_REGEX,
-  TYPE_ONLY_IMPORT_REGEX,
   getAllExcludedPatterns,
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
-import type { ImportDetails } from '../domain/types.js';
+import type { ImportDetails, ImportType } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { isNotNullable, isString } from '../utils/type-guards.js';
-
-export const removeComments = (code: string): string => {
-  return code
-    .replace(MULTILINE_COMMENT_REGEX, (matchedStr) => {
-      // 매치된 문자열 내의 줄바꿈 개수만큼 줄바꿈 문자 유지
-      const newlines = (matchedStr.match(/\n/g) || []).join('');
-      return newlines;
-    })
-    .replace(SINGLE_LINE_COMMENT_REGEX, '');
-};
 
 export const extractPackageName = (importPath: string | undefined | null): string | null => {
   return match(importPath)
@@ -65,18 +59,6 @@ export const extractPackageName = (importPath: string | undefined | null): strin
 export const isBuiltinModule = (packageName: string): boolean =>
   BUILTIN_MODULE_SET.has(packageName);
 
-const execAll = (regex: RegExp, text: string): RegExpExecArray[] => {
-  const matches: RegExpExecArray[] = [];
-  regex.lastIndex = 0;
-
-  let found = regex.exec(text);
-  while (found !== null) {
-    matches.push(found);
-    found = regex.exec(text);
-  }
-  return matches;
-};
-
 const hasAnalyzableExtension = (filePath: string): boolean =>
   pipe(filePath, path.extname, (ext) =>
     A.some(ANALYZABLE_EXTENSIONS, (allowed) => allowed === ext),
@@ -104,7 +86,7 @@ export const isExcludedPath = (filePath: string): boolean => {
 export const shouldAnalyzeFile = (filePath: string): boolean => {
   return match(filePath)
     .with(
-      P.when((p) => p.endsWith('.d.ts')),
+      P.when((p) => DECLARATION_FILE_PATTERN.test(p)),
       () => false,
     )
     .with(
@@ -116,73 +98,125 @@ export const shouldAnalyzeFile = (filePath: string): boolean => {
     .otherwise(() => true);
 };
 
-export const extractImports = (fileContent: string, filePath: string): ImportDetails[] => {
-  const content = removeComments(fileContent);
-  // 라인 인덱스를 한 번만 만들어두고 매치마다 O(log L) 룩업으로 줄 번호를 구한다.
-  const lineStarts = buildLineStarts(content);
-  const lineOf = (offset: number): number => lineNumberAt(lineStarts, offset);
-
-  // Pass 1: Initialize packages. Assume runtime initially for all general imports.
-  // IMPORT_REGEX already includes a require() alternation, so no separate REQUIRE_REGEX pass is needed.
-  const fromGeneral = pipe(
-    execAll(IMPORT_REGEX, content),
-    A.filterMap((m): O.Option<ImportDetails> => {
-      const packageName = extractPackageName(m[1] ?? m[2]);
-      return isNotNullable(packageName) && !isBuiltinModule(packageName)
-        ? {
-            packageName,
-            importType: 'runtime',
-            file: filePath,
-            line: lineOf(m.index),
-            importStatement: m[0].trim(),
-          }
-        : O.None;
-    }),
-  );
-
-  // Pass 2: Refine for explicit `import type X from 'pkg'` statements.
-  const fromTypeOnly = pipe(
-    execAll(TYPE_ONLY_IMPORT_REGEX, content),
-    A.filterMap((m): O.Option<ImportDetails> => {
-      const packageName = extractPackageName(m[1]);
-      return isNotNullable(packageName) && !isBuiltinModule(packageName)
-        ? {
-            packageName,
-            importType: 'type-only',
-            file: filePath,
-            line: lineOf(m.index),
-            importStatement: m[0].trim(),
-          }
-        : O.None;
-    }),
-  );
-
-  // Pass 3: Refine for `import { type X, Y } from 'pkg'` or `import { type X } from 'pkg'` statements.
-  const fromMixed = pipe(
-    execAll(MIXED_TYPE_IMPORT_REGEX, content),
-    A.filterMap((m): O.Option<ImportDetails> => {
-      const fullImportStr = m[1];
-      const packageName = extractPackageName(m[2]);
-      if (!isNotNullable(packageName) || isBuiltinModule(packageName)) return O.None;
-      if (!isNotNullable(fullImportStr) || !fullImportStr.includes('type ')) return O.None;
-      const hasRuntimeSpecifier = pipe(
-        S.split(fullImportStr, ','),
-        A.some((spec) => !S.includes(spec.trim(), 'type ')),
-      );
-      return {
-        packageName,
-        importType: hasRuntimeSpecifier ? 'runtime' : 'type-only',
-        file: filePath,
-        line: lineOf(m.index),
-        importStatement: m[0].trim(),
-      };
-    }),
-  );
-
-  return [...fromGeneral, ...fromTypeOnly, ...fromMixed];
+type ModuleReference = {
+  readonly specifier: string;
+  readonly importType: ImportType;
+  readonly start: number;
+  readonly end: number;
 };
 
-export const parseFile = (filePath: string): R.Result<ImportDetails[], FileError> => {
+type Span = { readonly start: number; readonly end: number };
+
+const referenceAt = (specifier: string, isTypeOnly: boolean, span: Span): ModuleReference => ({
+  specifier,
+  importType: isTypeOnly ? 'type-only' : 'runtime',
+  start: span.start,
+  end: span.end,
+});
+
+const staticImportReference = (statement: StaticImport): ModuleReference =>
+  referenceAt(
+    statement.moduleRequest.value,
+    A.isNotEmpty(statement.entries) && A.every(statement.entries, (entry) => entry.isType),
+    statement,
+  );
+
+const reExportReference = (statement: StaticExport): O.Option<ModuleReference> => {
+  const reExported = A.filter(statement.entries, (entry) => isNotNullable(entry.moduleRequest));
+  return pipe(
+    A.head(reExported),
+    O.flatMap((entry) => O.fromNullable(entry.moduleRequest)),
+    O.map((request) =>
+      referenceAt(
+        request.value,
+        A.every(reExported, (entry) => entry.isType),
+        statement,
+      ),
+    ),
+  );
+};
+
+const QUOTED = /^(['"])(.*)\1$/s;
+
+const dynamicImportReference =
+  (content: string) =>
+  (expression: DynamicImport): O.Option<ModuleReference> =>
+    pipe(
+      O.fromNullable(
+        QUOTED.exec(content.slice(expression.moduleRequest.start, expression.moduleRequest.end)),
+      ),
+      O.flatMap((quoted) => O.fromNullable(quoted[2])),
+      O.map((specifier) => referenceAt(specifier, false, expression)),
+    );
+
+const STRING_LITERAL = { type: 'Literal', value: P.string } as const;
+
+const commonJsReference = (
+  node: CallExpression | TSImportEqualsDeclaration,
+): ReadonlyArray<ModuleReference> =>
+  match(node)
+    .with(
+      {
+        type: 'CallExpression',
+        callee: { type: 'Identifier', name: 'require' },
+        arguments: [STRING_LITERAL],
+      },
+      (call) => [referenceAt(call.arguments[0].value, false, call)],
+    )
+    .with(
+      {
+        type: 'TSImportEqualsDeclaration',
+        moduleReference: { type: 'TSExternalModuleReference', expression: STRING_LITERAL },
+      },
+      (decl) => [
+        referenceAt(decl.moduleReference.expression.value, decl.importKind === 'type', decl),
+      ],
+    )
+    .otherwise(() => []);
+
+// ESM comes from oxc's module record without materialising the AST. CommonJS needs the AST;
+// oxc's Visitor walks 15.7k lines in 31ms where a pure recursive fold took 139ms.
+const commonJsReferences = (program: Program): ReadonlyArray<ModuleReference> => {
+  const found: ModuleReference[] = [];
+  new Visitor({
+    CallExpression: (node) => found.push(...commonJsReference(node)),
+    TSImportEqualsDeclaration: (node) => found.push(...commonJsReference(node)),
+  }).visit(program);
+  return found;
+};
+
+const moduleReferences = (content: string, filePath: string): ReadonlyArray<ModuleReference> => {
+  const parsed = parseSync(filePath, content);
+  return [
+    ...A.map(parsed.module.staticImports, staticImportReference),
+    ...A.filterMap(parsed.module.staticExports, reExportReference),
+    ...A.filterMap(parsed.module.dynamicImports, dynamicImportReference(content)),
+    ...(S.includes(content, 'require') ? commonJsReferences(parsed.program) : []),
+  ];
+};
+
+export const extractImports = (content: string, filePath: string): ReadonlyArray<ImportDetails> => {
+  const lineStarts = buildLineStarts(content);
+
+  return pipe(
+    moduleReferences(content, filePath),
+    A.filterMap((ref) =>
+      pipe(
+        O.fromNullable(extractPackageName(ref.specifier)),
+        O.filter((packageName) => !isBuiltinModule(packageName)),
+        O.map((packageName): ImportDetails => ({
+          packageName,
+          importType: ref.importType,
+          file: filePath,
+          line: lineNumberAt(lineStarts, ref.start),
+          importStatement: content.slice(ref.start, ref.end).trim(),
+        })),
+      ),
+    ),
+  );
+};
+
+export const parseFile = (filePath: string): R.Result<ReadonlyArray<ImportDetails>, FileError> => {
   return pipe(
     readFile(filePath),
     R.map((content) => extractImports(content, filePath)),

@@ -11,7 +11,7 @@ bun install
 bun run validate   # typecheck + lint + format + tests
 ```
 
-Requires Node.js ≥ 22 (use `.nvmrc`) and [Bun](https://bun.sh).
+Requires Node.js ≥ 22.12 (use `.nvmrc`) and [Bun](https://bun.sh).
 
 ## Development loop
 

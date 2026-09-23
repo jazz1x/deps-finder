@@ -4,7 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/deps-finder.svg)](https://www.npmjs.com/package/deps-finder)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](https://nodejs.org)
+[![Node ≥22.12](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)](https://nodejs.org)
 [![Bun](https://img.shields.io/badge/runtime-bun-black.svg)](https://bun.sh)
 [![CI](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/jazz1x/deps-finder/actions/workflows/ci.yml)
 
@@ -53,7 +53,7 @@ Or run once without installing:
 npx deps-finder
 ```
 
-Requires Node.js ≥ 22.
+Requires Node.js ≥ 22.12.
 
 ---
 
@@ -114,8 +114,8 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 ```
 
 1. Read `package.json` to get declared `dependencies`, `peerDependencies`, and `devDependencies`.
-2. Glob `src/**` for `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, while skipping comments and auto-detected build outputs.
-3. Parse `import` / `require` / dynamic `import()` statements; resolve to package roots (e.g. `lodash/fp` → `lodash`).
+2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping tests and auto-detected build outputs.
+3. Parse each file with [oxc](https://oxc.rs) and collect `import`, `export … from`, `require()`, `import x = require()`, and dynamic `import()` with a string literal; resolve to package roots (e.g. `lodash/fp` → `lodash`).
 4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**.
 
 ---

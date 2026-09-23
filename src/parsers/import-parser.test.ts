@@ -8,7 +8,6 @@ import {
   isProductionConfigFile,
   parseFile,
   parseMultipleFiles,
-  removeComments,
   shouldAnalyzeFile,
 } from '@/parsers/import-parser';
 
@@ -412,10 +411,23 @@ describe('extractImports edge cases', () => {
     expect(names).toContain('real-pkg');
   });
 
-  test('does not pick up dynamic imports (current parser limitation, locked as expectation)', () => {
-    // 동적 import는 IMPORT_REGEX 문법상 매칭되지 않는다. 회귀 시 본 테스트가 깨지면서 알려준다.
-    const findings = extractImports("const x = await import('dynamic-pkg');", 'test.ts');
-    expect(findings.find((f) => f.packageName === 'dynamic-pkg')).toBeUndefined();
+  test.each([
+    ['export * re-export', "export * from 'pkg';", 'runtime'],
+    ['export {} re-export', "export { a } from 'pkg';", 'runtime'],
+    ['export type re-export', "export type { T } from 'pkg';", 'type-only'],
+    ['literal dynamic import', "export const f = () => import('pkg');", 'runtime'],
+    ['$ identifier', "import $ from 'pkg';", 'runtime'],
+    ['trailing comma type specifiers', "import {\n  type A,\n  type B,\n} from 'pkg';", 'type-only'],
+    ['import type = require', "import type T = require('pkg');", 'type-only'],
+    ['/* inside a line comment', "// out/*\nimport a from 'other';\nconst b = require('pkg');\n/** doc */", 'runtime'],
+    ['/* inside a string', "const g = 'lib/*';\nconst b = require('pkg');\n/** doc */", 'runtime'],
+    ['// inside a string', "const u = 'http://x'; const b = require('pkg');", 'runtime'],
+  ])('finds pkg through %s', (_, content, importType) => {
+    expect(extractImports(content, 'test.ts').filter((f) => f.packageName === 'pkg')).toEqual([expect.objectContaining({ importType })]);
+  });
+
+  test('import text inside a template literal is not an import', () => {
+    expect(extractImports("export const s = `import x from 'pkg'`;", 'test.ts')).toEqual([]);
   });
 
   test('handles imports preceded by a comment containing "//" (URL-like) on a different line', () => {
@@ -429,23 +441,6 @@ describe('extractImports edge cases', () => {
     const lodashEntries = result.filter((f) => f.packageName === 'lodash');
     expect(lodashEntries).toHaveLength(1);
     expect(lodashEntries[0]!.importType).toBe('runtime');
-  });
-});
-
-describe('removeComments', () => {
-  test('strips multi-line comments while preserving newline count for line accuracy', () => {
-    const input = `/*\nline2\nline3\n*/\nimport x from 'pkg';`;
-    const out = removeComments(input);
-    // import 문이 그대로 남고, 그 줄 번호가 5번째 줄로 보존돼야 정확한 라인 번호 산출 가능
-    const lines = out.split('\n');
-    const importLine = lines.findIndex((l) => l.includes("'pkg'"));
-    expect(importLine).toBeGreaterThanOrEqual(1);
-  });
-
-  test('strips single-line comments', () => {
-    const input = "// comment\nimport x from 'pkg';";
-    expect(removeComments(input)).not.toContain('// comment');
-    expect(removeComments(input)).toContain("'pkg'");
   });
 });
 
@@ -514,6 +509,13 @@ describe('Config file detection', () => {
 
   test('should NOT analyze test files', () => {
     expect(shouldAnalyzeFile('test/setup.ts')).toBe(false);
+  });
+
+  test('analyzes .mts and .cts sources but not their declaration files', () => {
+    expect(shouldAnalyzeFile('src/a.mts')).toBe(true);
+    expect(shouldAnalyzeFile('src/b.cts')).toBe(true);
+    expect(shouldAnalyzeFile('src/a.d.mts')).toBe(false);
+    expect(shouldAnalyzeFile('src/b.d.cts')).toBe(false);
   });
 
   test('should NOT analyze .d.ts files', () => {
