@@ -495,6 +495,17 @@ describe('Config file detection', () => {
     expect(shouldAnalyzeFile('jest.config.js')).toBe(false);
   });
 
+  test.each(['playwright.config.ts', 'oxlint.config.ts', 'lint-staged.config.mjs', 'scripts/guard.ts', 'scripts/perf/lib/attach.ts'])(
+    'treats %s as dev tooling, not production source',
+    (file) => {
+      expect(shouldAnalyzeFile(file)).toBe(false);
+    },
+  );
+
+  test.each(['vite.config.ts', 'next.config.mjs', 'src/scripts/analytics.ts'])('keeps %s as production source', (file) => {
+    expect(shouldAnalyzeFile(file)).toBe(true);
+  });
+
   test('should NOT analyze test files', () => {
     expect(shouldAnalyzeFile('test/setup.ts')).toBe(false);
   });

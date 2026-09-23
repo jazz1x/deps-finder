@@ -25,15 +25,9 @@ export const PRODUCTION_CONFIG_PATTERNS = [
   /^esbuild\.config\.(js|ts|mjs|cjs)$/,
 ] as const;
 
-export const DEV_CONFIG_PATTERNS = [
-  'jest.config.',
-  'vitest.config.',
-  'babel.config.',
-  'eslint.config.',
-  'prettier.config.',
-  'tsup.config.',
-  'biome.config.',
-] as const;
+export const TOOL_CONFIG_PATTERN = /\.config\.[cm]?[jt]sx?$/;
+
+export const ROOT_TOOLING_DIRECTORIES = ['scripts/'] as const;
 
 export const EXCLUDED_DIRECTORY_PATTERNS = [
   'node_modules/',
