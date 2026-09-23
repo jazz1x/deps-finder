@@ -79,15 +79,14 @@ const yaml: TextParser = (text) => {
 const stripByteOrderMark = (text: string): string =>
   text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 
-const readStructured =
+const decodeStructured =
   (parse: TextParser) =>
   <S extends Schema.Decoder<unknown>>(schema: S) =>
-  (path: string): Result.Result<S['Type'], FileError> =>
+  (path: string) =>
+  (text: string): Result.Result<S['Type'], FileError> =>
     pipe(
-      readFile(path),
-      Result.map(stripByteOrderMark),
-      Result.flatMap((text) =>
-        Result.mapError(parse(text), (reason) => FileError.ParseFailed({ path, reason })),
+      Result.mapError(parse(stripByteOrderMark(text)), (reason) =>
+        FileError.ParseFailed({ path, reason }),
       ),
       Result.flatMap((json) =>
         pipe(
@@ -97,7 +96,15 @@ const readStructured =
       ),
     );
 
+const readStructured =
+  (parse: TextParser) =>
+  <S extends Schema.Decoder<unknown>>(schema: S) =>
+  (path: string): Result.Result<S['Type'], FileError> =>
+    Result.flatMap(readFile(path), decodeStructured(parse)(schema)(path));
+
 export const readJsonFile = readStructured(strictJson);
+
+export const decodeJsonc = decodeStructured(jsonWithComments);
 
 export const readJsoncFile = readStructured(jsonWithComments);
 

@@ -246,7 +246,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       }),
     );
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
-    await writeFile(path.join(tmpDir, 'src/index.ts'), 'export const x = 1;');
+    await writeFile(path.join(tmpDir, 'src/index.js'), 'export const x = 1;');
 
     const r = runCli(['--json', '--check-peer'], tmpDir);
     expect(r.status).toBe(1);
@@ -313,6 +313,21 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.misplaced.some((d: { packageName: string }) => d.packageName === 'lodash')).toBe(true);
+  });
+
+  test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {
+    await writeFile(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ dependencies: { tslib: '2' }, devDependencies: { '@types/node': '1', '@types/uuid': '1' } }),
+    );
+    await writeFile(
+      path.join(tmpDir, 'tsconfig.json'),
+      JSON.stringify({ extends: './missing.json', compilerOptions: { types: ['node'], importHelpers: true } }),
+    );
+
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(JSON.parse(r.stdout).unused).toEqual(['@types/uuid']);
+    expect(r.stderr).toContain('missing.json');
   });
 
   test('--json output larger than one pipe read arrives whole before a failing exit', async () => {

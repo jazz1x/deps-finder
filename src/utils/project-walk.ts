@@ -378,7 +378,7 @@ const walkSubdirectory = (
     },
   });
 
-const lineage = (dir: string): Array.NonEmptyReadonlyArray<string> =>
+export const lineage = (dir: string): Array.NonEmptyReadonlyArray<string> =>
   path.dirname(dir) === dir ? [dir] : [dir, ...lineage(path.dirname(dir))];
 
 type Inherited = {

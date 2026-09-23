@@ -3,10 +3,13 @@ import type {
   Argument,
   CallExpression,
   Program,
+  TSGlobalDeclaration,
   TSImportEqualsDeclaration,
+  TSModuleDeclaration,
 } from '@oxc-project/types';
 import { Array, Match, Option, Result, String, pipe } from 'effect';
 import {
+  type Comment,
   type DynamicImport,
   type StaticExport,
   type StaticImport,
@@ -23,6 +26,8 @@ import {
   EXCLUDED_WITHOUT_GITIGNORE,
   ROOT_TOOLING_DIRECTORIES,
   ROOT_TOOL_CONFIG_PATTERN,
+  TSCONFIG_FILE_PATTERN,
+  TYPESCRIPT_EXTENSIONS,
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
 import {
@@ -50,8 +55,27 @@ export const extractPackageName = (specifier: string): Option.Option<string> =>
 const hasAnalyzableExtension = (filePath: string): boolean =>
   Array.contains(ANALYZABLE_EXTENSIONS, path.extname(filePath));
 
+const isTsConfig = (filePath: string): boolean =>
+  TSCONFIG_FILE_PATTERN.test(path.basename(filePath));
+
 export const shouldAnalyzeFile = (filePath: string): boolean =>
-  !DECLARATION_FILE_PATTERN.test(filePath) && hasAnalyzableExtension(filePath);
+  hasAnalyzableExtension(filePath) || isTsConfig(filePath);
+
+type SourceKind = 'tsconfig' | 'declaration' | 'typescript' | 'javascript';
+
+const sourceKindOf = (filePath: string): SourceKind =>
+  Match.value(filePath).pipe(
+    Match.when(isTsConfig, (): SourceKind => 'tsconfig'),
+    Match.when(
+      (file) => DECLARATION_FILE_PATTERN.test(file),
+      (): SourceKind => 'declaration',
+    ),
+    Match.when(
+      (file) => Array.contains(TYPESCRIPT_EXTENSIONS, path.extname(file)),
+      (): SourceKind => 'typescript',
+    ),
+    Match.orElse((): SourceKind => 'javascript'),
+  );
 
 type PathSegments = Array.NonEmptyReadonlyArray<string>;
 
@@ -176,24 +200,100 @@ const importEqualsReference = (decl: TSImportEqualsDeclaration): ReadonlyArray<M
     Match.orElse(() => []),
   );
 
-// ESM comes from oxc's module record without materialising the AST. CommonJS needs the AST;
-// oxc's Visitor walks 15.7k lines in 31ms where a pure recursive fold took 139ms.
-const commonJsReferences = (program: Program): ReadonlyArray<ModuleReference> => {
-  const found: ModuleReference[] = [];
-  new Visitor({
-    CallExpression: (node) => found.push(...requireReference(node)),
-    TSImportEqualsDeclaration: (node) => found.push(...importEqualsReference(node)),
-  }).visit(program);
-  return found;
+const augmentationReference = (
+  node: TSModuleDeclaration | TSGlobalDeclaration,
+): ReadonlyArray<ModuleReference> =>
+  Match.value(node).pipe(
+    Match.when({ type: 'TSModuleDeclaration', id: { type: 'Literal' } }, (declaration) => [
+      referenceAt(declaration.id.value, true, {
+        start: declaration.start,
+        end: declaration.id.end,
+      }),
+    ]),
+    Match.orElse(() => []),
+  );
+
+// `declare module "x"` augments x only inside a module; in a script it declares an ambient module.
+type AstReferences = {
+  readonly references: ReadonlyArray<ModuleReference>;
+  readonly augmentations: ReadonlyArray<ModuleReference>;
 };
+
+const NO_AST_REFERENCES: AstReferences = { references: [], augmentations: [] };
+
+// ESM comes from oxc's module record without materialising the AST. The other forms need the AST;
+// oxc's Visitor walks 15.7k lines in 31ms where a pure recursive fold took 139ms.
+const astReferences = (program: Program): AstReferences => {
+  const references: ModuleReference[] = [];
+  const augmentations: ModuleReference[] = [];
+  new Visitor({
+    CallExpression: (node) => references.push(...requireReference(node)),
+    TSImportEqualsDeclaration: (node) => references.push(...importEqualsReference(node)),
+    TSImportType: (node) => references.push(referenceAt(node.source.value, true, node)),
+    TSModuleDeclaration: (node) => augmentations.push(...augmentationReference(node)),
+  }).visit(program);
+  return { references, augmentations };
+};
+
+const AST_MARKERS = ['require', 'declare module'] as const;
+
+// The module record already holds every import() expression; walking a file only for those
+// cost foodspring-front 20-30ms. A surplus import( is a type import (or JSDoc).
+const hasTypeImport = (content: string, dynamicImports: number): boolean =>
+  content.split('import(').length - 1 > dynamicImports;
+
+const TYPE_REFERENCE = /^\/\s*<reference\s+types\s*=\s*(['"])([^'"]+)\1/;
+
+const JSDOC_IMPORT = /import\(\s*(['"])([^'"]+)\1\s*\)/g;
+
+const COMMENT_MARKERS = ['<reference', 'import('] as const;
+
+// A comment's value starts after its `//` or `/*`.
+const commentMatchReference =
+  (comment: Comment) =>
+  (match: RegExpExecArray): Option.Option<ModuleReference> =>
+    Option.map(Option.fromNullishOr(match[2]), (specifier) =>
+      referenceAt(specifier, true, {
+        start: comment.start + 2 + match.index,
+        end: comment.start + 2 + match.index + match[0].length,
+      }),
+    );
+
+const commentReferences = (comment: Comment): ReadonlyArray<ModuleReference> =>
+  Match.value(comment).pipe(
+    Match.when({ type: 'Line' }, (line) =>
+      pipe(
+        Option.fromNullishOr(TYPE_REFERENCE.exec(line.value)),
+        Option.flatMap(commentMatchReference(line)),
+        Option.toArray,
+      ),
+    ),
+    Match.when({ type: 'Block', value: String.startsWith('*') }, (jsdoc) =>
+      Array.getSomes(
+        Array.map([...jsdoc.value.matchAll(JSDOC_IMPORT)], commentMatchReference(jsdoc)),
+      ),
+    ),
+    Match.orElse((): ReadonlyArray<ModuleReference> => []),
+  );
+
+const containsAny = (content: string, markers: ReadonlyArray<string>): boolean =>
+  Array.some(markers, (marker) => content.includes(marker));
 
 const moduleReferences = (content: string, filePath: string): ReadonlyArray<ModuleReference> => {
   const parsed = parseSync(filePath, content);
+  const ast =
+    containsAny(content, AST_MARKERS) || hasTypeImport(content, parsed.module.dynamicImports.length)
+      ? astReferences(parsed.program)
+      : NO_AST_REFERENCES;
   return [
     ...Array.map(parsed.module.staticImports, staticImportReference),
     ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference)),
     ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
-    ...(content.includes('require') ? commonJsReferences(parsed.program) : []),
+    ...ast.references,
+    ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
+    ...(containsAny(content, COMMENT_MARKERS)
+      ? Array.flatMap(parsed.comments, commentReferences)
+      : []),
   ];
 };
 
@@ -220,9 +320,7 @@ export const extractImports = (content: string, filePath: string): ReadonlyArray
   );
 };
 
-export const parseFile = (
-  source: SourceFile,
-): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
+const readImports = (source: SourceFile): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
   pipe(
     readFile(source.path),
     Result.map((content) =>
@@ -231,6 +329,33 @@ export const parseFile = (
         context: source.context,
       })),
     ),
+  );
+
+const typescriptUse = (file: string): ImportDetails => ({
+  packageName: 'typescript',
+  importType: 'runtime',
+  context: 'development',
+  file,
+  line: 1,
+  importStatement: path.basename(file),
+});
+
+const asTypeOnly = (detail: ImportDetails): ImportDetails => ({
+  ...detail,
+  importType: 'type-only',
+});
+
+export const parseFile = (
+  source: SourceFile,
+): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
+  Match.value(sourceKindOf(source.path)).pipe(
+    Match.when('tsconfig', () => Result.succeed([typescriptUse(source.path)])),
+    Match.when('declaration', () => Result.map(readImports(source), Array.map(asTypeOnly))),
+    Match.when('typescript', () =>
+      Result.map(readImports(source), Array.append(typescriptUse(source.path))),
+    ),
+    Match.when('javascript', () => readImports(source)),
+    Match.exhaustive,
   );
 
 type ParsedSources = {
