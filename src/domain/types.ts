@@ -7,6 +7,13 @@ export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<Packag
 
 export type ImportType = 'runtime' | 'type-only';
 
+export type FileContext = 'production' | 'development';
+
+export type SourceFile = {
+  readonly path: string;
+  readonly context: FileContext;
+};
+
 export type ImportLocation = {
   readonly file: string;
   readonly line: number;
@@ -21,6 +28,7 @@ export type DependencyUsage = {
 export type ImportDetails = {
   readonly packageName: PackageName;
   readonly importType: ImportType;
+  readonly context: FileContext;
   readonly file: string;
   readonly line: number;
   readonly importStatement: string;

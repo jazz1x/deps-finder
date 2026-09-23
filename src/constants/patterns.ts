@@ -14,39 +14,22 @@ export const ANALYZABLE_EXTENSIONS = [
 
 export const DECLARATION_FILE_PATTERN = /\.d\.[cm]?ts$/;
 
-export const PRODUCTION_CONFIG_PATTERNS = [
-  /^next\.config\.(js|ts|mjs|cjs)$/,
-  /^next-[^/]+\.config\.(js|ts|mjs|cjs)$/,
-  /^webpack\.config\.(js|ts|mjs|cjs)$/,
-  /^vite\.config\.(js|ts|mjs|cjs)$/,
-  /^rollup\.config\.(js|ts|mjs|cjs)$/,
-  /^postcss\.config\.(js|ts|mjs|cjs)$/,
-  /^tailwind\.config\.(js|ts|mjs|cjs)$/,
-  /^esbuild\.config\.(js|ts|mjs|cjs)$/,
+export const ROOT_TOOL_CONFIG_PATTERN = /\.config\.[cm]?[jt]sx?$/;
+
+export const ROOT_TOOLING_DIRECTORIES = ['scripts'] as const;
+
+export const DEVELOPMENT_DIRECTORIES = [
+  'test',
+  'tests',
+  '__tests__',
+  '__mocks__',
+  'stories',
+  'e2e',
+  'cypress',
+  'playwright',
 ] as const;
 
-export const TOOL_CONFIG_PATTERN = /\.config\.[cm]?[jt]sx?$/;
-
-export const ROOT_TOOLING_DIRECTORIES = ['scripts/'] as const;
-
-export const EXCLUDED_DIRECTORY_PATTERNS = [
-  'node_modules/',
-  'dist/',
-  'build/',
-  'out/',
-  '/test/',
-  '/tests/',
-  '/__tests__/',
-  '/__mocks__/',
-  '/stories/',
-  '/.storybook/',
-  '/coverage/',
-  '/e2e/',
-  '/cypress/',
-  '/playwright/',
-] as const;
-
-export const EXCLUDED_FILENAME_PATTERNS = [
+export const DEVELOPMENT_FILENAME_PATTERNS = [
   '.test.',
   '.spec.',
   '.stories.',
@@ -92,7 +75,7 @@ export const BUILD_OUTPUT_PATTERNS = [
 ] as const;
 
 export const CACHE_PATTERNS = [
-  'node_modules/**',
+  '**/node_modules/**',
   '.cache/**',
   '.npm/**',
   '.yarn/**',
@@ -111,24 +94,7 @@ export const IDE_PATTERNS = [
   '.emacs.d/**',
 ] as const;
 
-export const TEST_PATTERNS = [
-  '**/test/**',
-  '**/tests/**',
-  '**/__tests__/**',
-  '**/__mocks__/**',
-  '**/*.test.*',
-  '**/*.spec.*',
-  '**/setupTests.*',
-  '**/jest.setup.*',
-  '**/vitest.setup.*',
-] as const;
-
-export const STORY_PATTERNS = [
-  '**/stories/**',
-  '**/.storybook/**',
-  '**/*.stories.*',
-  '**/*.story.*',
-] as const;
+const VCS_PATTERNS = ['.git/**'] as const;
 
 export const getAllExcludedPatterns = (
   projectRoot: string,
@@ -138,8 +104,7 @@ export const getAllExcludedPatterns = (
     ...BUILD_OUTPUT_PATTERNS,
     ...CACHE_PATTERNS,
     ...IDE_PATTERNS,
-    ...TEST_PATTERNS,
-    ...STORY_PATTERNS,
+    ...VCS_PATTERNS,
     '**/*.d.ts',
   ];
 

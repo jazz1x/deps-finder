@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
-import type { ImportDetails, ImportType, PackageJson } from '@/domain/types';
+import type { FileContext, ImportDetails, ImportType, PackageJson } from '@/domain/types';
 import { findFiles, parseMultipleFiles } from '@/parsers/import-parser';
 
 describe('dependency-analyzer', () => {
@@ -384,9 +384,16 @@ describe('dependency-analyzer: peerDependencies', () => {
 
 const ALL = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 
-const use = (packageName: string, importType: ImportType = 'runtime', file = 'src/a.ts', line = 1): ImportDetails => ({
+const use = (
+  packageName: string,
+  importType: ImportType = 'runtime',
+  file = 'src/a.ts',
+  line = 1,
+  context: FileContext = 'production',
+): ImportDetails => ({
   packageName,
   importType,
+  context,
   file,
   line,
   importStatement: `import x from '${packageName}'`,
@@ -452,6 +459,21 @@ describe('dependency-analyzer: section classification', () => {
       ignoredPackages: [],
     });
     expect(result.misplaced).toEqual([]);
+  });
+
+  test('development usage counts as used but never decides misplaced or typeOnly', () => {
+    const result = analyzeDependencies(
+      pkg({ dependencies: ['zod'], devDependencies: ['chalk'] }),
+      [
+        use('zod', 'type-only'),
+        use('zod', 'runtime', 'src/a.test.ts', 1, 'development'),
+        use('chalk', 'runtime', 'scripts/x.ts', 1, 'development'),
+      ],
+      { sections: ALL, ignoredPackages: [] },
+    );
+    expect(result.unused).toEqual([]);
+    expect(result.misplaced).toEqual([]);
+    expect(result.typeOnly).toEqual(['zod']);
   });
 
   test('misplaced locations are ordered by file then line', () => {

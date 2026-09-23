@@ -35,7 +35,7 @@ deps-finder reads your `package.json`, walks `src/**`, and tells you which decla
 - Detects **misplaced** dependencies — used in source but living in `devDependencies`.
 - Detects **orphan peers** — declared as `peerDependencies` but never imported (opt-in via `--check-peer`).
 - Reports **type-only** imports separately so they don't pollute the unused list.
-- Auto-detects build output directories (`dist`, `build`, etc.) and excludes them.
+- Auto-detects build output directories (`dist`, `build`, etc.) at the project root and excludes them.
 - Outputs colorized text or machine-readable JSON.
 - **Friendly errors and warnings** — actionable messages when files are missing, JSON is malformed, or a flag is given without its required value.
 
@@ -127,9 +127,9 @@ glob src/**  ──┤                     ├─→  diff  ──→  unused / 
 ```
 
 1. Read `package.json` to get declared `dependencies`, `peerDependencies`, and `devDependencies`.
-2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping tests and auto-detected build outputs.
+2. Glob the project for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, skipping `node_modules`, `.git`, caches, and build outputs at the project root (`dist/`, `build/`, `out/`, and auto-detected output dirs). Each file is tagged **development** or **production**. Development files are tests, specs, stories, and test setup files; anything under `test/`, `tests/`, `__tests__/`, `__mocks__/`, `stories/`, `e2e/`, `cypress/`, `playwright/`, or a dot-directory such as `.storybook/`; root-level `*.config.*` files; and the top-level `scripts/` directory. Everything else is production, including `src/app.config.ts` and `src/scripts/`.
 3. Parse each file with [oxc](https://oxc.rs) and collect `import`, `export … from`, `require()`, `import x = require()`, and dynamic `import()` with a string literal; resolve to package roots (e.g. `lodash/fp` → `lodash`).
-4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**.
+4. Diff the two sets to produce four buckets: **unused**, **unusedPeer** (when `--check-peer`), **misplaced**, **typeOnly**. An import from any file counts as usage. **misplaced** and **typeOnly** look only at production files, so a `devDependency` used only in tests or tooling is never misplaced.
 
 ---
 
@@ -225,7 +225,7 @@ Or keep a report without blocking on findings, while still failing when the run 
 
 deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, `eval`, virtual modules from bundler plugins, packages loaded only via config files outside `src/`. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
 
-Packages that are used without being imported are reported as unused: CLIs run from `package.json` scripts (e.g. `husky` in `prepare`) and packages declared only to satisfy another package's optional peer (e.g. `@opentelemetry/api` for Next.js tracing). Pass them to `--ignore`. Top-level `scripts/` and `*.config.*` files (except bundler configs such as `vite.config`) are treated as dev tooling, not production source.
+Packages that are used without being imported are reported as unused: CLIs run from `package.json` scripts (e.g. `husky` in `prepare`) and packages declared only to satisfy another package's optional peer (e.g. `@opentelemetry/api` for Next.js tracing). Pass them to `--ignore`.
 
 A bare builtin name such as `buffer` or `events` is matched against a declared package of that name (the npm polyfill a bundler would use). Write `node:buffer` when you mean the Node builtin.
 

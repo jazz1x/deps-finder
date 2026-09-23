@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
 import { findFiles, parseMultipleFiles } from '@/parsers/import-parser';
 import type { PackageJson } from '@/domain/types';
+import path from 'node:path';
 
 describe('Integration Tests', () => {
   const baseTestDir = './test-integration';
@@ -183,7 +184,7 @@ describe('Integration Tests', () => {
     };
 
     const files = findFiles(testDir);
-    expect(files.length).toBe(0);
+    expect(files.map((f) => f.context)).toEqual(['development']);
 
     const imports = parseMultipleFiles(files).imports;
     const result = analyzeDependencies(packageJson, imports, {
@@ -198,7 +199,7 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/storybook-static/index.js`, `import { action } from '@storybook/addon-actions';`);
 
     const files = findFiles(testDir);
-    expect(files.some((f) => f.includes('storybook-static'))).toBe(false);
+    expect(files.some((f) => f.path.includes('storybook-static'))).toBe(false);
   });
 
   test('custom directory can be excluded with --exclude', async () => {
@@ -206,10 +207,10 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/my-artifact-folder/index.js`, `import { something } from 'lib';`);
 
     const filesDefault = findFiles(testDir);
-    expect(filesDefault.some((f) => f.includes('my-artifact-folder'))).toBe(true);
+    expect(filesDefault.some((f) => f.path.includes('my-artifact-folder'))).toBe(true);
 
     const filesExcluded = findFiles(testDir, { excludePatterns: ['my-artifact-folder/**'] });
-    expect(filesExcluded.some((f) => f.includes('my-artifact-folder'))).toBe(false);
+    expect(filesExcluded.some((f) => f.path.includes('my-artifact-folder'))).toBe(false);
   });
 
   test('auto-detection can be disabled', async () => {
@@ -217,9 +218,91 @@ describe('Integration Tests', () => {
     await writeFile(`${testDir}/custom-build/index.js`, `import { something } from 'lib';`);
 
     const filesDefault = findFiles(testDir);
-    expect(filesDefault.some((f) => f.includes('custom-build'))).toBe(false);
+    expect(filesDefault.some((f) => f.path.includes('custom-build'))).toBe(false);
 
     const filesNoAuto = findFiles(testDir, { noAutoDetect: true });
-    expect(filesNoAuto.some((f) => f.includes('custom-build'))).toBe(true);
+    expect(filesNoAuto.some((f) => f.path.includes('custom-build'))).toBe(true);
+  });
+});
+
+const ALL = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+
+const pkg = (sections: Partial<PackageJson>): PackageJson => ({
+  dependencies: [],
+  devDependencies: [],
+  peerDependencies: [],
+  ...sections,
+});
+
+describe('file contexts', () => {
+  let testDir = '';
+
+  const write = async (file: string, content: string) => {
+    await mkdir(`${testDir}/${file.split('/').slice(0, -1).join('/')}`, { recursive: true });
+    await writeFile(`${testDir}/${file}`, content);
+  };
+
+  const analyze = (packageJson: PackageJson) =>
+    analyzeDependencies(packageJson, parseMultipleFiles(findFiles(testDir)).imports, { sections: ALL, ignoredPackages: [] });
+
+  beforeEach(async () => {
+    testDir = `./test-file-contexts-${Math.random().toString(36).slice(2)}`;
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test('-a counts devDependencies used only by development files, without making them misplaced', async () => {
+    await write('src/index.ts', 'export const x = 1;');
+    await write('src/a.test.ts', "import sinon from 'sinon';");
+    await write('src/Button.stories.tsx', "import { fn } from '@storybook/test';");
+    await write('.storybook/main.ts', "import type { StorybookConfig } from '@storybook/nextjs-vite';");
+    await write('vitest.config.ts', "import { defineConfig } from 'vitest/config';");
+    await write('next.config.mjs', "import analyzer from '@next/bundle-analyzer';");
+    await write('scripts/gen.ts', "import { Project } from 'ts-morph';");
+    await write('.scripts/run.ts', "import chalk from 'chalk';");
+    await write('e2e/flow.ts', "import { test } from '@playwright/test';");
+
+    const result = analyze(
+      pkg({
+        devDependencies: [
+          'sinon',
+          '@storybook/test',
+          '@storybook/nextjs-vite',
+          'vitest',
+          '@next/bundle-analyzer',
+          'ts-morph',
+          'chalk',
+          '@playwright/test',
+          'big.js',
+        ],
+      }),
+    );
+
+    expect(result.unused).toEqual(['big.js']);
+    expect(result.misplaced).toEqual([]);
+  });
+
+  test('nested *.config.* and src/scripts/ stay production source', async () => {
+    await write('src/config/app.config.ts', "import { z } from 'zod';");
+    await write('src/scripts/analytics.ts', "import ora from 'ora';");
+
+    const result = analyze(pkg({ devDependencies: ['zod', 'ora'] }));
+
+    expect(result.misplaced.map((m) => [m.packageName, path.relative(testDir, m.locations[0]!.file)])).toEqual([
+      ['zod', 'src/config/app.config.ts'],
+      ['ora', 'src/scripts/analytics.ts'],
+    ]);
+  });
+
+  test('build output is excluded only at the project root', async () => {
+    await write('dist/index.js', "import 'dist-only';");
+    await write('src/build/index.ts', "import _ from 'lodash';");
+
+    const result = analyze(pkg({ dependencies: ['lodash', 'dist-only'] }));
+
+    expect(result.unused).toEqual(['dist-only']);
   });
 });

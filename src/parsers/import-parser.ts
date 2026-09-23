@@ -5,7 +5,7 @@ import type {
   Program,
   TSImportEqualsDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Result, pipe } from 'effect';
+import { Array, Match, Option, Result, String, pipe } from 'effect';
 import { globSync } from 'glob';
 import {
   type DynamicImport,
@@ -17,15 +17,14 @@ import {
 import {
   ANALYZABLE_EXTENSIONS,
   DECLARATION_FILE_PATTERN,
-  EXCLUDED_DIRECTORY_PATTERNS,
-  EXCLUDED_FILENAME_PATTERNS,
-  PRODUCTION_CONFIG_PATTERNS,
+  DEVELOPMENT_DIRECTORIES,
+  DEVELOPMENT_FILENAME_PATTERNS,
   ROOT_TOOLING_DIRECTORIES,
-  TOOL_CONFIG_PATTERN,
+  ROOT_TOOL_CONFIG_PATTERN,
   getAllExcludedPatterns,
 } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
-import type { ImportDetails, ImportType } from '../domain/types.js';
+import type { FileContext, ImportDetails, ImportType, SourceFile } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 
@@ -37,27 +36,30 @@ export const extractPackageName = (specifier: string): Option.Option<string> =>
 const hasAnalyzableExtension = (filePath: string): boolean =>
   Array.contains(ANALYZABLE_EXTENSIONS, path.extname(filePath));
 
-export const isProductionConfigFile = (filePath: string): boolean =>
-  Array.some(PRODUCTION_CONFIG_PATTERNS, (pattern) => pattern.test(path.basename(filePath)));
-
-export const isExcludedPath = (filePath: string): boolean => {
-  const normalizedPath = `/${filePath.replaceAll('\\', '/').replace(/^\//, '')}`;
-  const filename = path.basename(filePath);
-
-  return (
-    Array.some(EXCLUDED_DIRECTORY_PATTERNS, (pattern) =>
-      normalizedPath.includes(pattern.startsWith('/') ? pattern : `/${pattern}`),
-    ) ||
-    Array.some(ROOT_TOOLING_DIRECTORIES, (dir) => normalizedPath.startsWith(`/${dir}`)) ||
-    Array.some(EXCLUDED_FILENAME_PATTERNS, (pattern) => filename.includes(pattern)) ||
-    TOOL_CONFIG_PATTERN.test(filename)
-  );
-};
-
 export const shouldAnalyzeFile = (filePath: string): boolean =>
-  !DECLARATION_FILE_PATTERN.test(filePath) &&
-  hasAnalyzableExtension(filePath) &&
-  (isProductionConfigFile(filePath) || !isExcludedPath(filePath));
+  !DECLARATION_FILE_PATTERN.test(filePath) && hasAnalyzableExtension(filePath);
+
+type PathSegments = Array.NonEmptyReadonlyArray<string>;
+
+const isDevelopmentPath: ReadonlyArray<(segments: PathSegments) => boolean> = [
+  (segments) =>
+    Array.some(Array.initNonEmpty(segments), (dir) => Array.contains(DEVELOPMENT_DIRECTORIES, dir)),
+  (segments) => Array.some(segments, String.startsWith('.')),
+  (segments) =>
+    Array.some(DEVELOPMENT_FILENAME_PATTERNS, (pattern) =>
+      Array.lastNonEmpty(segments).includes(pattern),
+    ),
+  (segments) => segments.length === 1 && ROOT_TOOL_CONFIG_PATTERN.test(segments[0]),
+  (segments) =>
+    segments.length > 1 && Array.contains(ROOT_TOOLING_DIRECTORIES, Array.headNonEmpty(segments)),
+];
+
+export const fileContextOf = (relativePath: string): FileContext => {
+  const segments = String.split(relativePath, /[\\/]/);
+  return Array.some(isDevelopmentPath, (matches) => matches(segments))
+    ? 'development'
+    : 'production';
+};
 
 type ModuleReference = {
   readonly specifier: string;
@@ -157,7 +159,9 @@ const moduleReferences = (content: string, filePath: string): ReadonlyArray<Modu
   ];
 };
 
-export const extractImports = (content: string, filePath: string): ReadonlyArray<ImportDetails> => {
+type FileImport = Omit<ImportDetails, 'context'>;
+
+export const extractImports = (content: string, filePath: string): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
 
   return pipe(
@@ -165,7 +169,7 @@ export const extractImports = (content: string, filePath: string): ReadonlyArray
     Array.map((ref) =>
       pipe(
         extractPackageName(ref.specifier),
-        Option.map((packageName): ImportDetails => ({
+        Option.map((packageName): FileImport => ({
           packageName,
           importType: ref.importType,
           file: filePath,
@@ -179,11 +183,16 @@ export const extractImports = (content: string, filePath: string): ReadonlyArray
 };
 
 export const parseFile = (
-  filePath: string,
+  source: SourceFile,
 ): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
   pipe(
-    readFile(filePath),
-    Result.map((content) => extractImports(content, filePath)),
+    readFile(source.path),
+    Result.map((content) =>
+      Array.map(extractImports(content, source.path), (found): ImportDetails => ({
+        ...found,
+        context: source.context,
+      })),
+    ),
   );
 
 type ParsedSources = {
@@ -191,8 +200,8 @@ type ParsedSources = {
   readonly unreadable: ReadonlyArray<FileError>;
 };
 
-export const parseMultipleFiles = (filePaths: ReadonlyArray<string>): ParsedSources => {
-  const [unreadable, parsed] = Array.partition(filePaths, parseFile);
+export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSources => {
+  const [unreadable, parsed] = Array.partition(sources, parseFile);
   return { imports: Array.flatten(parsed), unreadable };
 };
 
@@ -202,16 +211,20 @@ export const findFiles = (
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): ReadonlyArray<string> =>
+): ReadonlyArray<SourceFile> =>
   pipe(
     globSync('**/*', {
       cwd: rootDir,
       nodir: true,
+      dot: true,
       ignore: [
         ...getAllExcludedPatterns(rootDir, !options.noAutoDetect),
         ...(options.excludePatterns ?? []),
       ],
     }),
     Array.filter(shouldAnalyzeFile),
-    Array.map((relativePath) => path.resolve(rootDir, relativePath)),
+    Array.map((relativePath) => ({
+      path: path.resolve(rootDir, relativePath),
+      context: fileContextOf(relativePath),
+    })),
   );

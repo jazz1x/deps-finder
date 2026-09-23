@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { Option, Result } from 'effect';
 import { FileError } from '@/domain/errors';
 import {
   extractImports,
   extractPackageName,
+  fileContextOf,
   findFiles,
-  isProductionConfigFile,
   parseFile,
   parseMultipleFiles,
   shouldAnalyzeFile,
@@ -129,7 +130,7 @@ describe('findFiles', () => {
     const files = findFiles(`${testDir}/src`);
 
     expect(files.length).toBeGreaterThanOrEqual(1);
-    expect(files.some((f) => f.includes('index.ts'))).toBe(true);
+    expect(files.some((f) => f.path.includes('index.ts'))).toBe(true);
   });
 
   test('should find JavaScript files', async () => {
@@ -141,27 +142,32 @@ describe('findFiles', () => {
     expect(files.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('should exclude test files', async () => {
+  test('keeps test files, tagged as development', async () => {
     await writeFile(`${testDir}/src/index.ts`, 'console.log("test");');
     await writeFile(`${testDir}/src/index.test.ts`, 'test("test", () => {});');
-    await writeFile(`${testDir}/src/index.spec.ts`, 'test("spec", () => {});');
 
     const files = findFiles(`${testDir}/src`);
 
-    expect(files.some((f) => f.includes('.test.'))).toBe(false);
-    expect(files.some((f) => f.includes('.spec.'))).toBe(false);
+    expect(files.map((f) => [path.basename(f.path), f.context]).toSorted()).toEqual([
+      ['index.test.ts', 'development'],
+      ['index.ts', 'production'],
+    ]);
   });
 
-  test('should exclude node_modules', async () => {
+  test('skips node_modules at any depth and .git', async () => {
+    await mkdir(`${testDir}/packages/a/node_modules`, { recursive: true });
+    await mkdir(`${testDir}/.git/hooks`, { recursive: true });
     await writeFile(`${testDir}/src/index.ts`, 'console.log("test");');
     await writeFile(`${testDir}/node_modules/package.js`, 'module.exports = {};');
+    await writeFile(`${testDir}/packages/a/node_modules/package.js`, 'module.exports = {};');
+    await writeFile(`${testDir}/.git/hooks/hook.js`, 'module.exports = {};');
 
     const files = findFiles(testDir);
 
-    expect(files.some((f) => f.includes('node_modules'))).toBe(false);
+    expect(files.map((f) => path.relative(testDir, f.path))).toEqual(['src/index.ts']);
   });
 
-  test('matches excluded directory names only below rootDir', async () => {
+  test('classifies by the path below rootDir', async () => {
     const rootDir = `${testDir}/e2e/app`;
     await mkdir(`${rootDir}/src`, { recursive: true });
     await mkdir(`${rootDir}/e2e`, { recursive: true });
@@ -170,8 +176,10 @@ describe('findFiles', () => {
 
     const files = findFiles(rootDir);
 
-    expect(files.some((f) => f.endsWith('src/index.ts'))).toBe(true);
-    expect(files.some((f) => f.endsWith('e2e/flow.ts'))).toBe(false);
+    expect(files.map((f) => [path.relative(rootDir, f.path), f.context]).toSorted()).toEqual([
+      ['e2e/flow.ts', 'development'],
+      ['src/index.ts', 'production'],
+    ]);
   });
 
   test('should exclude .d.ts files', async () => {
@@ -198,13 +206,13 @@ describe('parseFile', () => {
     const filePath = `${testDir}/test.ts`;
     await writeFile(filePath, "import { a } from 'pkg';");
 
-    const result = parseFile(filePath);
+    const result = parseFile({ path: filePath, context: 'production' });
     expect(Result.isSuccess(result)).toBe(true);
     expect(Result.getOrThrow(result)[0]!.packageName).toBe('pkg');
   });
 
   test('should return Error for non-existent file', () => {
-    const result = parseFile(`${testDir}/non-existent.ts`);
+    const result = parseFile({ path: `${testDir}/non-existent.ts`, context: 'production' });
     expect(Result.isFailure(result)).toBe(true);
   });
 });
@@ -220,22 +228,28 @@ describe('parseMultipleFiles', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  test('should aggregate imports from multiple files', async () => {
+  test('aggregates imports from multiple files, each tagged with its file context', async () => {
     await writeFile(`${testDir}/a.ts`, "import { a } from 'pkg-a';");
     await writeFile(`${testDir}/b.ts`, "import { b } from 'pkg-b';");
 
-    const result = parseMultipleFiles([`${testDir}/a.ts`, `${testDir}/b.ts`]).imports;
-    expect(result).toHaveLength(2);
-    const names = result.map((r) => r.packageName);
-    expect(names).toContain('pkg-a');
-    expect(names).toContain('pkg-b');
+    const result = parseMultipleFiles([
+      { path: `${testDir}/a.ts`, context: 'production' },
+      { path: `${testDir}/b.ts`, context: 'development' },
+    ]).imports;
+    expect(result.map((r) => [r.packageName, r.context])).toEqual([
+      ['pkg-a', 'production'],
+      ['pkg-b', 'development'],
+    ]);
   });
 
   test('keeps imports from readable files and reports the unreadable ones', async () => {
     await writeFile(`${testDir}/a.ts`, "import { a } from 'pkg-a';");
     await mkdir(`${testDir}/dir.ts`);
 
-    const result = parseMultipleFiles([`${testDir}/a.ts`, `${testDir}/dir.ts`]);
+    const result = parseMultipleFiles([
+      { path: `${testDir}/a.ts`, context: 'production' },
+      { path: `${testDir}/dir.ts`, context: 'production' },
+    ]);
     expect(result.imports.map((i) => i.packageName)).toEqual(['pkg-a']);
     expect(result.unreadable.map((e) => e.path)).toEqual([`${testDir}/dir.ts`]);
   });
@@ -446,7 +460,7 @@ describe('parseFile error paths', () => {
   });
 
   test('returns Error tagged FileNotFound for missing file', () => {
-    const result = parseFile(`${testDir}/missing.ts`);
+    const result = parseFile({ path: `${testDir}/missing.ts`, context: 'production' });
     expect(Result.isFailure(result)).toBe(true);
     Result.match(result, {
       onSuccess: () => {
@@ -459,7 +473,7 @@ describe('parseFile error paths', () => {
   });
 
   test('returns Error tagged ReadFailed when path is a directory', () => {
-    const result = parseFile(testDir);
+    const result = parseFile({ path: testDir, context: 'production' });
     expect(Result.isFailure(result)).toBe(true);
     Result.match(result, {
       onSuccess: () => {
@@ -472,44 +486,33 @@ describe('parseFile error paths', () => {
   });
 });
 
-describe('Config file detection', () => {
-  test('should detect next.config files', () => {
-    expect(isProductionConfigFile('next.config.js')).toBe(true);
-    expect(isProductionConfigFile('next.config.ts')).toBe(true);
+describe('fileContextOf', () => {
+  test.each([
+    'playwright.config.ts',
+    'next.config.mjs',
+    'scripts/perf/lib/attach.ts',
+    '.storybook/main.ts',
+    '.scripts/run.ts',
+    'packages/ui/.storybook/preview.tsx',
+    'src/a.test.ts',
+    'src/Button.stories.tsx',
+    'src/happydom.ts',
+    'test/setup.ts',
+    'src/features/__mocks__/api.ts',
+    'e2e/flow.ts',
+  ])('%s is development', (file) => {
+    expect(fileContextOf(file)).toBe('development');
   });
 
-  test('should detect webpack.config files', () => {
-    expect(isProductionConfigFile('webpack.config.js')).toBe(true);
-  });
-
-  test('should NOT detect dev configs', () => {
-    expect(isProductionConfigFile('jest.config.js')).toBe(false);
-    expect(isProductionConfigFile('vitest.config.ts')).toBe(false);
-  });
-
-  test('should analyze production config files', () => {
-    expect(shouldAnalyzeFile('next.config.js')).toBe(true);
-  });
-
-  test('should NOT analyze dev config files', () => {
-    expect(shouldAnalyzeFile('jest.config.js')).toBe(false);
-  });
-
-  test.each(['playwright.config.ts', 'oxlint.config.ts', 'lint-staged.config.mjs', 'scripts/guard.ts', 'scripts/perf/lib/attach.ts'])(
-    'treats %s as dev tooling, not production source',
+  test.each(['src/index.ts', 'src/config/app.config.ts', 'src/scripts/analytics.ts', 'src/build/index.ts', 'scripts.ts'])(
+    '%s is production',
     (file) => {
-      expect(shouldAnalyzeFile(file)).toBe(false);
+      expect(fileContextOf(file)).toBe('production');
     },
   );
+});
 
-  test.each(['vite.config.ts', 'next.config.mjs', 'src/scripts/analytics.ts'])('keeps %s as production source', (file) => {
-    expect(shouldAnalyzeFile(file)).toBe(true);
-  });
-
-  test('should NOT analyze test files', () => {
-    expect(shouldAnalyzeFile('test/setup.ts')).toBe(false);
-  });
-
+describe('shouldAnalyzeFile', () => {
   test('analyzes .mts and .cts sources but not their declaration files', () => {
     expect(shouldAnalyzeFile('src/a.mts')).toBe(true);
     expect(shouldAnalyzeFile('src/b.cts')).toBe(true);
