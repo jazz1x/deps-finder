@@ -51,9 +51,6 @@ type PathSegments = Array.NonEmptyReadonlyArray<string>;
 
 const isHidden = String.startsWith('.');
 
-const isRootToolFile = (name: string): boolean =>
-  isHidden(name) || ROOT_TOOL_CONFIG_PATTERN.test(name);
-
 const isRootToolDirectory = (name: string): boolean =>
   isHidden(name) || Array.contains(ROOT_TOOLING_DIRECTORIES, name);
 
@@ -64,9 +61,10 @@ const isDevelopmentPath: ReadonlyArray<(segments: PathSegments) => boolean> = [
     Array.some(DEVELOPMENT_FILENAME_PATTERNS, (pattern) =>
       Array.lastNonEmpty(segments).includes(pattern),
     ),
+  (segments) => isHidden(Array.lastNonEmpty(segments)),
   (segments) =>
     Array.match(Array.tailNonEmpty(segments), {
-      onEmpty: () => isRootToolFile(Array.headNonEmpty(segments)),
+      onEmpty: () => ROOT_TOOL_CONFIG_PATTERN.test(Array.headNonEmpty(segments)),
       onNonEmpty: () => isRootToolDirectory(Array.headNonEmpty(segments)),
     }),
 ];
