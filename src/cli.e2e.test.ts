@@ -101,6 +101,20 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.stderr).not.toContain('SyntaxError');
   });
 
+  test('malformed package.json error points at the broken position', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), '{ "dependencies": { "a": "1", } }');
+    const r = runCli([], tmpDir);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('position');
+  });
+
+  test('read failure message carries no "Error:" prefix', async () => {
+    await mkdir(path.join(tmpDir, 'package.json'));
+    const r = runCli([], tmpDir);
+    expect(r.stderr).toContain('EISDIR');
+    expect(r.stderr).not.toContain('Error: EISDIR');
+  });
+
   test('warns on unknown flag but still runs', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0' }));
     const r = runCli(['--bogus'], tmpDir);

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { R } from '@mobily/ts-belt';
+import { Option, Result } from 'effect';
+import { FileError } from '@/domain/errors';
 import {
   extractImports,
   extractPackageName,
@@ -12,102 +13,100 @@ import {
 } from '@/parsers/import-parser';
 
 describe('extractPackageName', () => {
-  test('should return null for relative imports', () => {
-    expect(extractPackageName('./utils')).toBe(null);
-    expect(extractPackageName('../helpers')).toBe(null);
-    expect(extractPackageName('../../src/index')).toBe(null);
-    expect(extractPackageName('./index.js')).toBe(null);
+  test('should return None for relative imports', () => {
+    expect(extractPackageName('./utils')).toEqual(Option.none());
+    expect(extractPackageName('../helpers')).toEqual(Option.none());
+    expect(extractPackageName('../../src/index')).toEqual(Option.none());
+    expect(extractPackageName('./index.js')).toEqual(Option.none());
   });
 
-  test('should return null for absolute path imports', () => {
-    expect(extractPackageName('/usr/local/lib')).toBe(null);
-    expect(extractPackageName('/home/user/project')).toBe(null);
+  test('should return None for absolute path imports', () => {
+    expect(extractPackageName('/usr/local/lib')).toEqual(Option.none());
+    expect(extractPackageName('/home/user/project')).toEqual(Option.none());
   });
 
   test('should extract simple package names', () => {
-    expect(extractPackageName('react')).toBe('react');
-    expect(extractPackageName('lodash')).toBe('lodash');
-    expect(extractPackageName('express')).toBe('express');
+    expect(extractPackageName('react')).toEqual(Option.some('react'));
+    expect(extractPackageName('lodash')).toEqual(Option.some('lodash'));
+    expect(extractPackageName('express')).toEqual(Option.some('express'));
   });
 
   test('should extract scoped package names', () => {
-    expect(extractPackageName('@mobily/ts-belt')).toBe('@mobily/ts-belt');
-    expect(extractPackageName('@types/node')).toBe('@types/node');
-    expect(extractPackageName('@testing-library/react')).toBe('@testing-library/react');
+    expect(extractPackageName('@mobily/ts-belt')).toEqual(Option.some('@mobily/ts-belt'));
+    expect(extractPackageName('@types/node')).toEqual(Option.some('@types/node'));
+    expect(extractPackageName('@testing-library/react')).toEqual(Option.some('@testing-library/react'));
   });
 
   test('should extract package name from deep imports', () => {
-    expect(extractPackageName('lodash/map')).toBe('lodash');
-    expect(extractPackageName('react-dom/client')).toBe('react-dom');
-    expect(extractPackageName('lodash/fp/map')).toBe('lodash');
-    expect(extractPackageName('express/lib/router')).toBe('express');
+    expect(extractPackageName('lodash/map')).toEqual(Option.some('lodash'));
+    expect(extractPackageName('react-dom/client')).toEqual(Option.some('react-dom'));
+    expect(extractPackageName('lodash/fp/map')).toEqual(Option.some('lodash'));
+    expect(extractPackageName('express/lib/router')).toEqual(Option.some('express'));
   });
 
   test('should extract scoped package from deep imports', () => {
-    expect(extractPackageName('@mobily/ts-belt/Array')).toBe('@mobily/ts-belt');
-    expect(extractPackageName('@babel/core/lib/config')).toBe('@babel/core');
-    expect(extractPackageName('@types/node/fs')).toBe('@types/node');
+    expect(extractPackageName('@mobily/ts-belt/Array')).toEqual(Option.some('@mobily/ts-belt'));
+    expect(extractPackageName('@babel/core/lib/config')).toEqual(Option.some('@babel/core'));
+    expect(extractPackageName('@types/node/fs')).toEqual(Option.some('@types/node'));
   });
 
   test('should handle edge cases - empty and malformed inputs', () => {
-    expect(extractPackageName('')).toBe(null);
-    expect(extractPackageName(null)).toBe(null);
-    expect(extractPackageName(undefined)).toBe(null);
-    expect(extractPackageName('@scope')).toBe(null); // Incomplete scoped package
-    expect(extractPackageName('@scope/')).toBe(null); // Malformed scoped package
-    expect(extractPackageName('@')).toBe(null);
+    expect(extractPackageName('')).toEqual(Option.none());
+    expect(extractPackageName('@scope')).toEqual(Option.none()); // Incomplete scoped package
+    expect(extractPackageName('@scope/')).toEqual(Option.none()); // Malformed scoped package
+    expect(extractPackageName('@')).toEqual(Option.none());
   });
 
   test('should reject protocol-based imports', () => {
-    expect(extractPackageName('http://example.com/module')).toBe(null);
-    expect(extractPackageName('https://unpkg.com/lodash')).toBe(null);
-    expect(extractPackageName('file:///path/to/file')).toBe(null);
+    expect(extractPackageName('http://example.com/module')).toEqual(Option.none());
+    expect(extractPackageName('https://unpkg.com/lodash')).toEqual(Option.none());
+    expect(extractPackageName('file:///path/to/file')).toEqual(Option.none());
   });
 
   test('should handle popular packages with deep imports', () => {
     // Core-js
-    expect(extractPackageName('core-js/actual')).toBe('core-js');
-    expect(extractPackageName('core-js/stable')).toBe('core-js');
-    expect(extractPackageName('core-js/features/array/flat')).toBe('core-js');
+    expect(extractPackageName('core-js/actual')).toEqual(Option.some('core-js'));
+    expect(extractPackageName('core-js/stable')).toEqual(Option.some('core-js'));
+    expect(extractPackageName('core-js/features/array/flat')).toEqual(Option.some('core-js'));
 
     // Next.js ecosystem
-    expect(extractPackageName('next-auth/react')).toBe('next-auth');
-    expect(extractPackageName('next-auth/providers/google')).toBe('next-auth');
-    expect(extractPackageName('next/image')).toBe('next');
-    expect(extractPackageName('next/link')).toBe('next');
+    expect(extractPackageName('next-auth/react')).toEqual(Option.some('next-auth'));
+    expect(extractPackageName('next-auth/providers/google')).toEqual(Option.some('next-auth'));
+    expect(extractPackageName('next/image')).toEqual(Option.some('next'));
+    expect(extractPackageName('next/link')).toEqual(Option.some('next'));
 
     // Date manipulation
-    expect(extractPackageName('date-fns/format')).toBe('date-fns');
-    expect(extractPackageName('date-fns/addDays')).toBe('date-fns');
-    expect(extractPackageName('date-fns/locale')).toBe('date-fns');
+    expect(extractPackageName('date-fns/format')).toEqual(Option.some('date-fns'));
+    expect(extractPackageName('date-fns/addDays')).toEqual(Option.some('date-fns'));
+    expect(extractPackageName('date-fns/locale')).toEqual(Option.some('date-fns'));
 
     // RxJS
-    expect(extractPackageName('rxjs/operators')).toBe('rxjs');
-    expect(extractPackageName('rxjs/Observable')).toBe('rxjs');
+    expect(extractPackageName('rxjs/operators')).toEqual(Option.some('rxjs'));
+    expect(extractPackageName('rxjs/Observable')).toEqual(Option.some('rxjs'));
 
     // Apollo
-    expect(extractPackageName('apollo-client/core')).toBe('apollo-client');
+    expect(extractPackageName('apollo-client/core')).toEqual(Option.some('apollo-client'));
   });
 
   test('should handle scoped packages with deep imports from popular libraries', () => {
     // Material-UI / MUI
-    expect(extractPackageName('@mui/material')).toBe('@mui/material');
-    expect(extractPackageName('@mui/material/Button')).toBe('@mui/material');
-    expect(extractPackageName('@mui/material/styles')).toBe('@mui/material');
+    expect(extractPackageName('@mui/material')).toEqual(Option.some('@mui/material'));
+    expect(extractPackageName('@mui/material/Button')).toEqual(Option.some('@mui/material'));
+    expect(extractPackageName('@mui/material/styles')).toEqual(Option.some('@mui/material'));
 
     // Radix UI
-    expect(extractPackageName('@radix-ui/react-dialog')).toBe('@radix-ui/react-dialog');
-    expect(extractPackageName('@radix-ui/react-dialog/dist')).toBe('@radix-ui/react-dialog');
-    expect(extractPackageName('@radix-ui/react-select')).toBe('@radix-ui/react-select');
+    expect(extractPackageName('@radix-ui/react-dialog')).toEqual(Option.some('@radix-ui/react-dialog'));
+    expect(extractPackageName('@radix-ui/react-dialog/dist')).toEqual(Option.some('@radix-ui/react-dialog'));
+    expect(extractPackageName('@radix-ui/react-select')).toEqual(Option.some('@radix-ui/react-select'));
 
     // Testing Library
-    expect(extractPackageName('@testing-library/react')).toBe('@testing-library/react');
-    expect(extractPackageName('@testing-library/user-event')).toBe('@testing-library/user-event');
+    expect(extractPackageName('@testing-library/react')).toEqual(Option.some('@testing-library/react'));
+    expect(extractPackageName('@testing-library/user-event')).toEqual(Option.some('@testing-library/user-event'));
 
     // Apollo Client
-    expect(extractPackageName('@apollo/client')).toBe('@apollo/client');
-    expect(extractPackageName('@apollo/client/react')).toBe('@apollo/client');
-    expect(extractPackageName('@apollo/client/core')).toBe('@apollo/client');
+    expect(extractPackageName('@apollo/client')).toEqual(Option.some('@apollo/client'));
+    expect(extractPackageName('@apollo/client/react')).toEqual(Option.some('@apollo/client'));
+    expect(extractPackageName('@apollo/client/core')).toEqual(Option.some('@apollo/client'));
   });
 });
 
@@ -200,13 +199,13 @@ describe('parseFile', () => {
     await writeFile(filePath, "import { a } from 'pkg';");
 
     const result = parseFile(filePath);
-    expect(R.isOk(result)).toBe(true);
-    expect(R.getExn(result)[0]!.packageName).toBe('pkg');
+    expect(Result.isSuccess(result)).toBe(true);
+    expect(Result.getOrThrow(result)[0]!.packageName).toBe('pkg');
   });
 
   test('should return Error for non-existent file', () => {
     const result = parseFile(`${testDir}/non-existent.ts`);
-    expect(R.isError(result)).toBe(true);
+    expect(Result.isFailure(result)).toBe(true);
   });
 });
 
@@ -319,39 +318,39 @@ describe('extractImports type/runtime classification', () => {
 describe('extractPackageName edge cases', () => {
   test('trims surrounding whitespace via regex (importPath usually pre-stripped)', () => {
     // 일반적으로 정규식이 import path 양옆 공백을 캡처하지 않지만, 직접 호출 시의 안정성 확인
-    expect(extractPackageName('react')).toBe('react');
+    expect(extractPackageName('react')).toEqual(Option.some('react'));
     // 공백 포함 입력은 그대로 들어가면 그 자체로 별도 이름 ("react ")이 되지 않도록 동작 확인
-    expect(extractPackageName(' react')).toBe(' react'); // 현재 동작: 공백 보존 — 테스트로 고정
+    expect(extractPackageName(' react')).toEqual(Option.some(' react')); // 현재 동작: 공백 보존 — 테스트로 고정
   });
 
   test('returns null for whitespace-only input', () => {
-    // S.startsWith('   ', '.') / '/' 모두 false → fallthrough → 첫 segment ' ' 반환
     // 현재 구현은 이 경우 공백 문자열을 반환함. 동작 고정용 회귀 가드.
-    expect(extractPackageName('   ')).toBe('   ');
+    expect(extractPackageName('   ')).toEqual(Option.some('   '));
   });
 
   test('handles trailing slash correctly', () => {
-    expect(extractPackageName('react/')).toBe('react');
+    expect(extractPackageName('react/')).toEqual(Option.some('react'));
   });
 
   test('handles double slash inside path (treats first segment as package)', () => {
-    expect(extractPackageName('lodash//map')).toBe('lodash');
+    expect(extractPackageName('lodash//map')).toEqual(Option.some('lodash'));
   });
 
   test('handles deeply nested scoped package paths', () => {
-    expect(extractPackageName('@scope/pkg/a/b/c/d/e/f/g')).toBe('@scope/pkg');
+    expect(extractPackageName('@scope/pkg/a/b/c/d/e/f/g')).toEqual(Option.some('@scope/pkg'));
   });
 
   test('handles numeric and dash-prefixed package names', () => {
-    expect(extractPackageName('123-pkg')).toBe('123-pkg');
-    expect(extractPackageName('-leading-dash')).toBe('-leading-dash'); // npm 자체는 거부하지만 파서는 통과
+    expect(extractPackageName('123-pkg')).toEqual(Option.some('123-pkg'));
+    expect(extractPackageName('-leading-dash')).toEqual(Option.some('-leading-dash')); // npm 자체는 거부하지만 파서는 통과
   });
 
   test('rejects bare @ and incomplete scope variants', () => {
-    expect(extractPackageName('@')).toBe(null);
-    expect(extractPackageName('@scope')).toBe(null);
-    expect(extractPackageName('@scope/')).toBe(null);
-    expect(extractPackageName('@/')).toBe(null);
+    expect(extractPackageName('@')).toEqual(Option.none());
+    expect(extractPackageName('@scope')).toEqual(Option.none());
+    expect(extractPackageName('@scope/')).toEqual(Option.none());
+    expect(extractPackageName('@/')).toEqual(Option.none());
+    expect(extractPackageName('@/components/Button')).toEqual(Option.none());
   });
 });
 
@@ -455,32 +454,30 @@ describe('parseFile error paths', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  test('returns Error tagged FILE_NOT_FOUND for missing file', () => {
+  test('returns Error tagged FileNotFound for missing file', () => {
     const result = parseFile(`${testDir}/missing.ts`);
-    expect(R.isError(result)).toBe(true);
-    R.match(
-      result,
-      () => {
+    expect(Result.isFailure(result)).toBe(true);
+    Result.match(result, {
+      onSuccess: () => {
         throw new Error('Should not be Ok');
       },
-      (err) => {
-        expect(err.type).toBe('FILE_NOT_FOUND');
+      onFailure: (err) => {
+        expect(FileError.$is('FileNotFound')(err)).toBe(true);
       },
-    );
+    });
   });
 
-  test('returns Error tagged READ_ERROR when path is a directory', () => {
+  test('returns Error tagged ReadFailed when path is a directory', () => {
     const result = parseFile(testDir);
-    expect(R.isError(result)).toBe(true);
-    R.match(
-      result,
-      () => {
+    expect(Result.isFailure(result)).toBe(true);
+    Result.match(result, {
+      onSuccess: () => {
         throw new Error('Should not be Ok');
       },
-      (err) => {
-        expect(err.type).toBe('READ_ERROR');
+      onFailure: (err) => {
+        expect(FileError.$is('ReadFailed')(err)).toBe(true);
       },
-    );
+    });
   });
 });
 

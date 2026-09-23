@@ -42,6 +42,11 @@ describe('detect-build-dirs', () => {
       expect(detected).toContain('build-output/**');
     });
 
+    test('ignores an empty tsconfig outDir instead of excluding everything', async () => {
+      await writeFile(`${testDir}/tsconfig.json`, JSON.stringify({ compilerOptions: { outDir: '' } }));
+      expect(detectBuildDirectories(testDir)).toEqual([]);
+    });
+
     test('handles missing files gracefully', async () => {
       const detected = detectBuildDirectories(testDir);
       expect(detected).toEqual([]);

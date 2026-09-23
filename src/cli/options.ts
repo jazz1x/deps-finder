@@ -1,10 +1,6 @@
-import { A, pipe, S } from '@mobily/ts-belt';
-import { match } from 'ts-pattern';
+import { Array, Match, pipe } from 'effect';
 import { HELP_TEXT } from '../constants/messages.js';
 import type { CliOptions } from '../domain/types.js';
-import { isString } from '../utils/type-guards.js';
-
-const isOption = (arg: string | undefined): boolean => isString(arg) && S.startsWith(arg, '-');
 
 type ParseStep = {
   readonly options: CliOptions;
@@ -12,125 +8,88 @@ type ParseStep = {
   readonly warnings: ReadonlyArray<string>;
 };
 
+const step = (options: CliOptions): ParseStep => ({ options, skipCount: 0, warnings: [] });
+
+const splitList = (value: string): ReadonlyArray<string> =>
+  pipe(
+    value.split(','),
+    Array.map((item) => item.trim()),
+    Array.filter((item) => item.length > 0),
+  );
+
 const requireValue = (
   flag: string,
   nextArg: string | undefined,
   options: CliOptions,
   apply: (value: string) => CliOptions,
-): ParseStep => {
-  if (!isString(nextArg) || isOption(nextArg)) {
-    return {
-      options,
-      skipCount: 0,
-      warnings: [`${flag} requires a value but none was provided; flag ignored.`],
-    };
-  }
-  return { options: apply(nextArg), skipCount: 1, warnings: [] };
-};
+): ParseStep =>
+  nextArg === undefined || nextArg.startsWith('-')
+    ? {
+        options,
+        skipCount: 0,
+        warnings: [`${flag} requires a value but none was provided; flag ignored.`],
+      }
+    : { options: apply(nextArg), skipCount: 1, warnings: [] };
 
-const parseArgument = (
-  allArgs: ReadonlyArray<string>,
-  index: number,
-  options: CliOptions,
-): ParseStep => {
-  const arg = allArgs[index];
-  const nextArg = allArgs[index + 1];
-
-  return match(arg)
-    .with('-t', '--text', () => ({
-      options: { ...options, format: 'text' as const },
-      skipCount: 0,
-      warnings: [],
-    }))
-    .with('-j', '--json', () => ({
-      options: { ...options, format: 'json' as const },
-      skipCount: 0,
-      warnings: [],
-    }))
-    .with('-a', '--all', () => ({
-      options: { ...options, checkAll: true },
-      skipCount: 0,
-      warnings: [],
-    }))
-    .with('-p', '--check-peer', () => ({
-      options: { ...options, checkPeer: true },
-      skipCount: 0,
-      warnings: [],
-    }))
-    .with('-h', '--help', () => ({
-      options: { ...options, showHelp: true },
-      skipCount: 0,
-      warnings: [],
-    }))
-    .with('-i', '--ignore', () =>
+const parseArgument = (arg: string, nextArg: string | undefined, options: CliOptions): ParseStep =>
+  Match.value(arg).pipe(
+    Match.when(Match.is('-t', '--text'), () => step({ ...options, format: 'text' })),
+    Match.when(Match.is('-j', '--json'), () => step({ ...options, format: 'json' })),
+    Match.when(Match.is('-a', '--all'), () => step({ ...options, checkAll: true })),
+    Match.when(Match.is('-p', '--check-peer'), () => step({ ...options, checkPeer: true })),
+    Match.when(Match.is('-h', '--help'), () => step({ ...options, showHelp: true })),
+    Match.when(Match.is('-i', '--ignore'), () =>
       requireValue('--ignore', nextArg, options, (value) => ({
         ...options,
-        ignoredPackages: [
-          ...options.ignoredPackages,
-          ...pipe(value, S.split(','), A.map(S.trim), A.filter(S.isNotEmpty)),
-        ],
+        ignoredPackages: [...options.ignoredPackages, ...splitList(value)],
       })),
-    )
-    .with('-e', '--exclude', () =>
+    ),
+    Match.when(Match.is('-e', '--exclude'), () =>
       requireValue('--exclude', nextArg, options, (value) => ({
         ...options,
-        excludePatterns: [
-          ...options.excludePatterns,
-          ...pipe(value, S.split(','), A.map(S.trim), A.filter(S.isNotEmpty)),
-        ],
+        excludePatterns: [...options.excludePatterns, ...splitList(value)],
       })),
-    )
-    .with('--no-auto-detect', () => ({
-      options: { ...options, noAutoDetect: true },
-      skipCount: 0,
-      warnings: [],
-    }))
-    .otherwise(() => {
-      if (isString(arg) && S.startsWith(arg, '-')) {
-        return {
-          options,
-          skipCount: 0,
-          warnings: [`Unknown option ${arg} ignored. Run with --help to see supported flags.`],
-        };
-      }
-      return { options, skipCount: 0, warnings: [] };
-    });
+    ),
+    Match.when('--no-auto-detect', () => step({ ...options, noAutoDetect: true })),
+    Match.when(
+      (flag) => flag.startsWith('-'),
+      (flag) => ({
+        options,
+        skipCount: 0,
+        warnings: [`Unknown option ${flag} ignored. Run with --help to see supported flags.`],
+      }),
+    ),
+    Match.orElse(() => step(options)),
+  );
+
+const DEFAULT_OPTIONS: CliOptions = {
+  format: 'text',
+  checkAll: false,
+  checkPeer: false,
+  ignoredPackages: [],
+  excludePatterns: [],
+  noAutoDetect: false,
+  showHelp: false,
+  rootDir: '.',
+  packageJsonPath: './package.json',
+  warnings: [],
 };
 
 export const parseCliOptions = (args: ReadonlyArray<string>): CliOptions => {
-  const defaultOptions: CliOptions = {
-    format: 'text',
-    checkAll: false,
-    checkPeer: false,
-    ignoredPackages: [],
-    excludePatterns: [],
-    noAutoDetect: false,
-    showHelp: false,
-    rootDir: '.',
-    packageJsonPath: './package.json',
-    warnings: [],
-  };
-
-  const finalAcc = pipe(
+  const parsed = Array.reduce(
     args,
-    A.reduceWithIndex(
-      { options: defaultOptions, skippedUntil: -1, warnings: [] as ReadonlyArray<string> },
-      (acc, _arg, index) => {
-        if (index <= acc.skippedUntil) {
-          return acc;
-        }
-
-        const result = parseArgument(args, index, acc.options);
-        return {
-          options: result.options,
-          skippedUntil: index + result.skipCount,
-          warnings: [...acc.warnings, ...result.warnings],
-        };
-      },
-    ),
+    { options: DEFAULT_OPTIONS, skippedUntil: -1, warnings: [] as ReadonlyArray<string> },
+    (acc, arg, index) =>
+      index <= acc.skippedUntil
+        ? acc
+        : pipe(parseArgument(arg, args[index + 1], acc.options), (result) => ({
+            options: result.options,
+            skippedUntil: index + result.skipCount,
+            warnings: [...acc.warnings, ...result.warnings],
+          })),
   );
 
-  return { ...finalAcc.options, warnings: finalAcc.warnings };
+  return { ...parsed.options, warnings: parsed.warnings };
 };
 
 export const printHelp = (): void => {

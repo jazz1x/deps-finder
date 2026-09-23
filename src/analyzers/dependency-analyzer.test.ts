@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { O } from '@mobily/ts-belt';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
 import type { PackageJson } from '@/domain/types';
 import { findFiles, parseMultipleFiles } from '@/parsers/import-parser';
@@ -27,14 +26,9 @@ describe('dependency-analyzer', () => {
     await writeFile(`${testDir}/index.ts`, `import { pipe } from '@mobily/ts-belt';\nconsole.log(pipe);`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        '@mobily/ts-belt': '^3.0.0',
-        'unused-package': '^1.0.0',
-      }),
-      devDependencies: O.None,
-      peerDependencies: O.None,
+      dependencies: ['@mobily/ts-belt', 'unused-package'],
+      devDependencies: [],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -54,14 +48,9 @@ describe('dependency-analyzer', () => {
     await writeFile(`${testDir}/index.ts`, `import express from 'express';\nconsole.log(express);`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        express: '^4.0.0',
-        typescript: '^5.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['express', 'typescript'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -85,14 +74,9 @@ describe('dependency-analyzer', () => {
     await writeFile(`${testDir}/index.ts`, `console.log('test');`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        typescript: '^5.0.0',
-        jest: '^29.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['typescript', 'jest'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -110,14 +94,9 @@ describe('dependency-analyzer', () => {
     await writeFile(`${testDir}/index.ts`, `console.log('test');`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        typescript: '^5.0.0',
-        jest: '^29.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['typescript', 'jest'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -137,14 +116,9 @@ describe('dependency-analyzer', () => {
     await writeFile(`${testDir}/index.ts`, `console.log('test');`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        react: '^18.0.0',
-        eslint: '^8.0.0',
-      }),
-      devDependencies: O.None,
-      peerDependencies: O.None,
+      dependencies: ['react', 'eslint'],
+      devDependencies: [],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -171,17 +145,9 @@ describe('dependency-analyzer', () => {
     );
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        'type-only-lib': '^1.0.0',
-        'runtime-lib': '^1.0.0',
-        'mixed-lib': '^1.0.0',
-        'only-runtime-lib': '^1.0.0',
-        'unused-lib': '^1.0.0',
-      }),
-      devDependencies: O.None,
-      peerDependencies: O.None,
+      dependencies: ['type-only-lib', 'runtime-lib', 'mixed-lib', 'only-runtime-lib', 'unused-lib'],
+      devDependencies: [],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -213,13 +179,9 @@ describe('dependency-analyzer', () => {
     );
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        'common-lib': '^1.0.0',
-      }),
-      devDependencies: O.None,
-      peerDependencies: O.None,
+      dependencies: ['common-lib'],
+      devDependencies: [],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -245,17 +207,9 @@ describe('dependency-analyzer', () => {
     );
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.Some({
-        'type-lib': '^1.0.0',
-        'runtime-lib': '^1.0.0',
-        'unused-lib': '^1.0.0',
-      }),
-      devDependencies: O.Some({
-        'dev-lib': '^1.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: ['type-lib', 'runtime-lib', 'unused-lib'],
+      devDependencies: ['dev-lib'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -276,13 +230,9 @@ describe('dependency-analyzer', () => {
     await writeFile(`${testDir}/vite.config.ts`, `import { defineConfig } from 'vite';`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        vite: '^4.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['vite'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -304,13 +254,9 @@ describe('dependency-analyzer', () => {
     await writeFile(`${testDir}/src/index.ts`, `import { something } from 'vite';`);
 
     const packageJson: PackageJson = {
-      name: O.Some('test'),
-      version: O.Some('1.0.0'),
-      dependencies: O.None,
-      devDependencies: O.Some({
-        vite: '^4.0.0',
-      }),
-      peerDependencies: O.None,
+      dependencies: [],
+      devDependencies: ['vite'],
+      peerDependencies: [],
     };
 
     const files = findFiles(testDir);
@@ -344,14 +290,9 @@ describe('dependency-analyzer: peerDependencies', () => {
   });
 
   const peerOnlyPkg: PackageJson = {
-    name: O.Some('lib'),
-    version: O.Some('1.0.0'),
-    dependencies: O.None,
-    devDependencies: O.None,
-    peerDependencies: O.Some({
-      typescript: '^5.0.0',
-      react: '^18.0.0',
-    }),
+    dependencies: [],
+    devDependencies: [],
+    peerDependencies: ['typescript', 'react'],
   };
 
   test('default: peerDependencies are not flagged as unused', async () => {

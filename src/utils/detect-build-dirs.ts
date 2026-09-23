@@ -1,69 +1,63 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { A, O, R, pipe } from '@mobily/ts-belt';
-import { readJSONFile } from './file-reader.js';
+import { Array, Option, Result, Schema, pipe } from 'effect';
+import { readJsonFile } from './file-reader.js';
 import { readTsConfig } from './tsconfig-reader.js';
 
-type RawPackageJson = {
-  scripts?: Record<string, string>;
-};
+const PackageScripts = Schema.Struct({
+  scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+});
 
-const extractOutDirFromScripts = (pkg: RawPackageJson): ReadonlyArray<string> => {
-  return pipe(
-    pkg.scripts || {},
-    Object.values,
-    A.filterMap((script) => {
-      const outDirMatch = script.match(/--outDir\s+([^\s]+)/);
-      return outDirMatch ? O.Some(`${outDirMatch[1]}/**`) : O.None;
-    }),
+const OUT_DIR_FLAG = /--outDir\s+(\S+)/;
+
+const outDirsFromScripts = (pkg: typeof PackageScripts.Type): ReadonlyArray<string> =>
+  pipe(
+    Object.values(pkg.scripts ?? {}),
+    Array.map((script) => Option.fromNullishOr(OUT_DIR_FLAG.exec(script)?.[1])),
+    Array.getSomes,
+    Array.map((dir) => `${dir}/**`),
   );
-};
 
-/**
- * 프로젝트 루트에서 빌드 출력으로 보이는 디렉토리 감지
- */
 export const detectBuildDirectories = (projectRoot: string): ReadonlyArray<string> => {
-  const pkgPath = join(projectRoot, 'package.json');
-  const pkgResult = readJSONFile<RawPackageJson>(pkgPath);
-  const tsconfigResult = readTsConfig(projectRoot);
-
   const fromPkg = pipe(
-    pkgResult,
-    R.map(extractOutDirFromScripts),
-    R.getWithDefault([] as ReadonlyArray<string>),
+    readJsonFile(PackageScripts)(join(projectRoot, 'package.json')),
+    Result.map(outDirsFromScripts),
+    Result.getOrElse((): ReadonlyArray<string> => []),
   );
 
   const fromTsConfig = pipe(
-    tsconfigResult,
-    R.map((cfg) => (cfg.compilerOptions?.outDir ? [`${cfg.compilerOptions.outDir}/**`] : [])),
-    R.getWithDefault([] as ReadonlyArray<string>),
-  );
-
-  return A.uniq([...fromPkg, ...fromTsConfig]);
-};
-
-/**
- * 디렉토리 이름 휴리스틱으로 빌드 출력 감지
- */
-export const detectByHeuristic = (projectRoot: string): ReadonlyArray<string> => {
-  const buildLikeSuffixes = ['-static', '-dist', '-build', '-output'];
-
-  return pipe(
-    R.fromExecution(() => readdirSync(projectRoot)),
-    R.map((dirs): ReadonlyArray<string> =>
+    readTsConfig(projectRoot),
+    Result.map((cfg) =>
       pipe(
-        dirs,
-        A.filter((dir) => {
-          const fullPath = join(projectRoot, dir);
-          return pipe(
-            R.fromExecution(() => statSync(fullPath).isDirectory()),
-            R.getWithDefault(false),
-          );
-        }),
-        A.filter((dir) => A.some(buildLikeSuffixes, (suffix) => dir.endsWith(suffix))),
-        A.map((dir) => `${dir}/**`),
+        Option.fromNullishOr(cfg.compilerOptions?.outDir),
+        Option.map((dir) => `${dir}/**`),
+        Option.toArray,
       ),
     ),
-    R.getWithDefault([] as ReadonlyArray<string>),
+    Result.getOrElse((): ReadonlyArray<string> => []),
   );
+
+  return Array.dedupe([...fromPkg, ...fromTsConfig]);
 };
+
+const BUILD_LIKE_SUFFIXES = ['-static', '-dist', '-build', '-output'];
+
+const isDirectory = (path: string): boolean =>
+  pipe(
+    Result.try(() => statSync(path).isDirectory()),
+    Result.getOrElse(() => false),
+  );
+
+export const detectByHeuristic = (projectRoot: string): ReadonlyArray<string> =>
+  pipe(
+    Result.try(() => readdirSync(projectRoot)),
+    Result.map((entries) =>
+      pipe(
+        entries,
+        Array.filter((entry) => isDirectory(join(projectRoot, entry))),
+        Array.filter((dir) => Array.some(BUILD_LIKE_SUFFIXES, (suffix) => dir.endsWith(suffix))),
+        Array.map((dir) => `${dir}/**`),
+      ),
+    ),
+    Result.getOrElse((): ReadonlyArray<string> => []),
+  );

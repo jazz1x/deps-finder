@@ -1,15 +1,15 @@
 import { join } from 'node:path';
-import { R } from '@mobily/ts-belt';
+import { type Result, Schema } from 'effect';
 import type { FileError } from '../domain/errors.js';
-import { readJSONFile } from './file-reader.js';
+import { readJsonFile } from './file-reader.js';
 
-export type TsConfig = {
-  compilerOptions?: {
-    outDir?: string;
-  };
-};
+const TsConfig = Schema.Struct({
+  compilerOptions: Schema.optionalKey(
+    Schema.Struct({ outDir: Schema.optionalKey(Schema.NonEmptyString) }),
+  ),
+});
 
-export const readTsConfig = (projectRoot: string): R.Result<TsConfig, FileError> => {
-  const path = join(projectRoot, 'tsconfig.json');
-  return readJSONFile<TsConfig>(path);
-};
+export type TsConfig = typeof TsConfig.Type;
+
+export const readTsConfig = (projectRoot: string): Result.Result<TsConfig, FileError> =>
+  readJsonFile(TsConfig)(join(projectRoot, 'tsconfig.json'));
