@@ -249,7 +249,7 @@ A package used without an import is still reported as unused when nothing above 
 
 A bare builtin name such as `buffer` or `events` is matched against a declared package of that name (the npm polyfill a bundler would use). Write `node:buffer` when you mean the Node builtin.
 
-Indented Sass (`.sass`, `<style lang="sass">`) and Stylus (`.styl`, `<style lang="stylus">`) are not read. A Sass or Less `@import "name"` that loads a local partial counts as use of a declared package called `name`.
+Indented Sass (`.sass`, `<style lang="sass">`) and Stylus (`.styl`, `<style lang="stylus">`) are not read. A Sass or Less `@import "name"` that loads a local partial counts as use of a declared package called `name`. The `src` attribute of a component's `<script>` or `<style>` (`<style src="pkg/theme.css">`) is not read.
 
 ---
 

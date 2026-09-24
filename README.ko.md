@@ -250,7 +250,7 @@ import 없이 쓰는 패키지라도 위 방법으로 찾지 못하면 unused로
 
 `buffer`, `events` 같은 내장 모듈 이름을 접두사 없이 쓰면, 같은 이름으로 선언된 패키지(번들러가 쓰는 npm 폴리필)와 맞춰 봅니다. Node 내장 모듈을 뜻한다면 `node:buffer`처럼 쓰세요.
 
-들여쓰기 문법 Sass(`.sass`, `<style lang="sass">`)와 Stylus(`.styl`, `<style lang="stylus">`)는 읽지 않습니다. Sass나 Less의 `@import "name"`이 로컬 partial을 불러오더라도, `name`이라는 패키지가 선언돼 있으면 그 패키지 사용으로 셉니다.
+들여쓰기 문법 Sass(`.sass`, `<style lang="sass">`)와 Stylus(`.styl`, `<style lang="stylus">`)는 읽지 않습니다. Sass나 Less의 `@import "name"`이 로컬 partial을 불러오더라도, `name`이라는 패키지가 선언돼 있으면 그 패키지 사용으로 셉니다. 컴포넌트 `<script>`·`<style>`의 `src` 속성(`<style src="pkg/theme.css">`)은 읽지 않습니다.
 
 ---
 
