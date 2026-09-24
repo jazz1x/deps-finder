@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { Option, Result, Schema } from 'effect';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
+import { UNCONFIGURED } from '@/parsers/emit-settings';
 import { extractImports, extractPackageName, parseFile } from '@/parsers/import-parser';
 import { readPackageJson } from '@/parsers/package-parser';
 import type { PackageJson } from '@/domain/types';
@@ -63,6 +64,7 @@ const randomPackageJsonShape = (rng: () => number): PackageJson => {
     dependencies: maybeDeps(),
     devDependencies: maybeDeps(),
     peerDependencies: maybeDeps(),
+    declarations: 'none',
   };
 };
 
@@ -80,10 +82,11 @@ describe('chaos: extractPackageName never throws', () => {
 
 describe('chaos: extractImports never throws', () => {
   const rng = makeRng(0xdeadbeef);
+  const scope = { context: 'production', emit: UNCONFIGURED } as const;
   test(`returns ImportDetails[] on ${FUZZ_ITERATIONS} random source-like inputs`, () => {
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
       const content = randomImportLikeContent(rng);
-      const findings = extractImports(content, 'fuzz.ts');
+      const findings = extractImports(content, 'fuzz.ts', scope);
       expect(Array.isArray(findings)).toBe(true);
       // 모든 finding이 계약된 shape를 가져야 한다
       for (const f of findings) {
@@ -99,7 +102,7 @@ describe('chaos: extractImports never throws', () => {
     const rng2 = makeRng(0x12345);
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
       const garbage = randomString(rng2, 200);
-      expect(() => extractImports(garbage, 'garbage.ts')).not.toThrow();
+      expect(() => extractImports(garbage, 'garbage.ts', scope)).not.toThrow();
     }
   });
 });
@@ -187,7 +190,7 @@ describe('chaos: file-reader on random file contents', () => {
     await Promise.all(paths.map((p) => writeFile(p, randomImportLikeContent(rng))));
 
     for (const filePath of paths) {
-      const result = parseFile({ path: filePath, context: 'production' });
+      const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED });
       if (Result.isSuccess(result)) {
         expect(Array.isArray(Result.getOrThrow(result))).toBe(true);
       }

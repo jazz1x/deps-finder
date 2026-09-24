@@ -125,12 +125,19 @@ export const analyzeDependencies = (
 
   const unusedPeer = pipe(peers, Array.filter(isUnused(used)), Array.filter(notIgnored));
 
-  const typeOnlyUsed = pipe(
-    packageJson.dependencies,
-    Array.filter(
-      (dep) => Record.has(productionTypeOnly, dep) && !Record.has(productionRuntime, dep),
+  // Published declarations import these types, so consumers need them installed.
+  const typeOnlyUsed = Match.value(packageJson.declarations).pipe(
+    Match.when('published', (): ReadonlyArray<PackageName> => []),
+    Match.when('none', () =>
+      pipe(
+        packageJson.dependencies,
+        Array.filter(
+          (dep) => Record.has(productionTypeOnly, dep) && !Record.has(productionRuntime, dep),
+        ),
+        Array.filter(notIgnored),
+      ),
     ),
-    Array.filter(notIgnored),
+    Match.exhaustive,
   );
 
   const misplaced = pipe(

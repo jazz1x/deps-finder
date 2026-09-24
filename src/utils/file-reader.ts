@@ -1,5 +1,5 @@
 import { type Dirent, type Stats, readFileSync, readdirSync, statSync } from 'node:fs';
-import { Array, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Effect, Match, Option, Result, Schema, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
 import YAML from 'yaml';
 import { FileError } from '../domain/errors.js';
@@ -101,6 +101,10 @@ const readStructured =
   <S extends Schema.Decoder<unknown>>(schema: S) =>
   (path: string): Result.Result<S['Type'], FileError> =>
     Result.flatMap(readFile(path), decodeStructured(parse)(schema)(path));
+
+// A field whose value fits no schema is dropped and leaves the rest of the file usable.
+export const lenientKey = <S extends Schema.Top>(schema: S) =>
+  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
 
 export const readJsonFile = readStructured(strictJson);
 

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { readTsConfigImports } from './tsconfig-parser';
+import { readTsConfigChains } from '@/utils/tsconfig-reader';
+import { tsconfigImports } from './tsconfig-parser';
 
-describe('readTsConfigImports', () => {
+describe('tsconfigImports', () => {
   const testDir = './test-tsconfig-parser';
 
   beforeEach(async () => {
@@ -19,8 +21,8 @@ describe('readTsConfigImports', () => {
     await writeFile(path.join(testDir, file), JSON.stringify(json, null, 2));
   };
 
-  const usages = () =>
-    readTsConfigImports(testDir).found.map(
+  const usages = (roots = ['tsconfig.json', 'tsconfig.base.json']) =>
+    tsconfigImports(readTsConfigChains(roots.map((name) => path.resolve(testDir, name)).filter((file) => existsSync(file))).found).map(
       (found) => `${found.packageName}:${found.importType}:${found.context}:${path.relative(testDir, found.file)}:${found.line}`,
     );
 

@@ -55,6 +55,17 @@ describe('package-parser', () => {
       expect(pkg.peerDependencies).toEqual([]);
     });
 
+    test.each([
+      [{ name: 'app' }, 'none'],
+      [{ types: 'dist/index.d.ts' }, 'published'],
+      [{ typings: 'index.d.ts' }, 'published'],
+      [{ exports: { '.': { import: { types: './dist/index.d.mts', default: './dist/index.mjs' } } } }, 'published'],
+      [{ exports: { '.': './dist/index.js' } }, 'none'],
+    ] as const)('%j publishes declarations: %s', async (manifest, declarations) => {
+      await writeFile(testFile, JSON.stringify(manifest));
+      expect(Result.getOrThrow(readPackageJson(testFile)).declarations).toBe(declarations);
+    });
+
     test('should return error for non-existent file', () => {
       const result = readPackageJson('./non-existent/package.json');
       expect(Result.isFailure(result)).toBe(true);

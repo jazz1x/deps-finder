@@ -3,8 +3,10 @@ import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Option, Result } from 'effect';
 import { FileError } from '@/domain/errors';
+import { type EmitSettings, type FileContext, JsxRuntime } from '@/domain/types';
+import { UNCONFIGURED } from './emit-settings';
 import {
-  extractImports,
+  extractImports as extractIn,
   extractPackageName,
   fileContextOf,
   findFiles,
@@ -12,6 +14,8 @@ import {
   parseMultipleFiles,
   shouldAnalyzeFile,
 } from '@/parsers/import-parser';
+
+const extractImports = (content: string, file: string) => extractIn(content, file, { context: 'production', emit: UNCONFIGURED });
 
 describe('extractPackageName', () => {
   test('should return None for relative imports', () => {
@@ -246,13 +250,13 @@ describe('parseFile', () => {
     const filePath = `${testDir}/test.ts`;
     await writeFile(filePath, "import { a } from 'pkg';");
 
-    const result = parseFile({ path: filePath, context: 'production' });
+    const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED });
     expect(Result.isSuccess(result)).toBe(true);
     expect(Result.getOrThrow(result)[0]!.packageName).toBe('pkg');
   });
 
   test('should return Error for non-existent file', () => {
-    const result = parseFile({ path: `${testDir}/non-existent.ts`, context: 'production' });
+    const result = parseFile({ path: `${testDir}/non-existent.ts`, context: 'production', emit: UNCONFIGURED });
     expect(Result.isFailure(result)).toBe(true);
   });
 });
@@ -273,8 +277,8 @@ describe('parseMultipleFiles', () => {
     await writeFile(`${testDir}/b.js`, "import { b } from 'pkg-b';");
 
     const result = parseMultipleFiles([
-      { path: `${testDir}/a.js`, context: 'production' },
-      { path: `${testDir}/b.js`, context: 'development' },
+      { path: `${testDir}/a.js`, context: 'production', emit: UNCONFIGURED },
+      { path: `${testDir}/b.js`, context: 'development', emit: UNCONFIGURED },
     ]).imports;
     expect(result.map((r) => [r.packageName, r.context])).toEqual([
       ['pkg-a', 'production'],
@@ -287,8 +291,8 @@ describe('parseMultipleFiles', () => {
     await mkdir(`${testDir}/dir.ts`);
 
     const result = parseMultipleFiles([
-      { path: `${testDir}/a.js`, context: 'production' },
-      { path: `${testDir}/dir.ts`, context: 'production' },
+      { path: `${testDir}/a.js`, context: 'production', emit: UNCONFIGURED },
+      { path: `${testDir}/dir.ts`, context: 'production', emit: UNCONFIGURED },
     ]);
     expect(result.imports.map((i) => i.packageName)).toEqual(['pkg-a']);
     expect(result.unreadable.map((e) => e.path)).toEqual([`${testDir}/dir.ts`]);
@@ -480,6 +484,12 @@ describe('extractImports edge cases', () => {
     expect(findings.map((f) => f.packageName)).toContain('real-pkg');
   });
 
+  test.each(['src/App.js', 'src/App.mjs', 'src/App.cjs'])('JSX in %s hides none of its imports', (file) => {
+    const content =
+      'import React from "react";\nconst App = () => <div className="a">hi</div>;\nimport { z } from "zod";\nconst c = require("clsx");';
+    expect(extractImports(content, file).map((f) => f.packageName)).toEqual(['react', 'zod', 'clsx', 'react']);
+  });
+
   test('require() counts as exactly one runtime finding (no duplicate from REQUIRE_REGEX)', () => {
     const result = extractImports("const m = require('lodash');", 'src/index.ts');
     const lodashEntries = result.filter((f) => f.packageName === 'lodash');
@@ -500,7 +510,7 @@ describe('parseFile error paths', () => {
   });
 
   test('returns Error tagged FileNotFound for missing file', () => {
-    const result = parseFile({ path: `${testDir}/missing.ts`, context: 'production' });
+    const result = parseFile({ path: `${testDir}/missing.ts`, context: 'production', emit: UNCONFIGURED });
     expect(Result.isFailure(result)).toBe(true);
     Result.match(result, {
       onSuccess: () => {
@@ -513,7 +523,7 @@ describe('parseFile error paths', () => {
   });
 
   test('returns Error tagged ReadFailed when path is a directory', () => {
-    const result = parseFile({ path: testDir, context: 'production' });
+    const result = parseFile({ path: testDir, context: 'production', emit: UNCONFIGURED });
     expect(Result.isFailure(result)).toBe(true);
     Result.match(result, {
       onSuccess: () => {
@@ -637,6 +647,122 @@ describe('extractImports type positions', () => {
   });
 });
 
+const uses = (content: string, file: string, emit: EmitSettings = UNCONFIGURED, context: FileContext = 'production') =>
+  extractIn(content, file, { context, emit }).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
+
+const typesOf = (content: string) =>
+  uses(content, 'test/a.test.js', UNCONFIGURED, 'development').filter((found) => found.startsWith('@types/'));
+
+describe('extractImports test globals', () => {
+  test('a development file calling describe/it/expect as globals uses the test runner types', () => {
+    const content = 'describe("sum", () => {\n  it.each([1])("adds", (n) => expect(n).toBe(1));\n});';
+    expect(uses(content, 'src/sum.test.ts', UNCONFIGURED, 'development')).toEqual([
+      '@types/jest:type-only:1',
+      '@types/mocha:type-only:1',
+      '@types/jasmine:type-only:1',
+    ]);
+    expect(typesOf('it.each`a`("b", () => {});')).toHaveLength(3);
+  });
+
+  test('imported test functions and production files are no global use', () => {
+    const imported = 'import { describe, it } from "vitest";\ndescribe("a", () => it("b", () => {}));';
+    expect(uses(imported, 'src/a.test.ts', UNCONFIGURED, 'development')).toEqual(['vitest:runtime:1']);
+    expect(uses('test("a", () => {});', 'src/a.ts')).toEqual([]);
+  });
+
+  test('comments, strings, member calls and locally bound names are no global use', () => {
+    expect(typesOf('// run it (twice)\nconst s = "describe(";\n/x/.test("x");')).toEqual([]);
+    expect(typesOf('const test = base.extend({});\ntest.describe("a", () => test("b", () => {}));')).toEqual([]);
+    expect(typesOf('const { describe, it: spec } = require("node:test");\ndescribe("a", () => spec("b", () => {}));')).toEqual([]);
+    expect(typesOf('function expect(v) { return v; }\nexport const run = (it) => it(expect(1));')).toEqual([]);
+  });
+
+  test('a name bound in one scope leaves the global of that name in the others', () => {
+    expect(
+      typesOf('test("sums", () => {\n  const expect = (v) => v;\n  expect(1);\n});\nconst rows = [1].map((test) => test);'),
+    ).toHaveLength(3);
+    expect(typesOf('for (const it of [1]) { it(); }\nit("runs", () => {});')).toHaveLength(3);
+    expect(typesOf('function f() { function test() {} test(); }\ntry {} catch (expect) { expect(); }')).toEqual([]);
+    const scoped = [
+      'function helper() { const it = 1; return it; }',
+      'class C { static { const it = 1; } }',
+      'for (let it = 0; it < 1; it++) {}',
+      'for (const it in {}) {}',
+      'switch (1) { case 1: const it = 1; }',
+    ];
+    expect(scoped.map((declared) => typesOf(`${declared}\nit("runs", () => {});`).length)).toEqual([3, 3, 3, 3, 3]);
+    const bound = [
+      'class expect {}\nexpect(1);',
+      'const run = function it() { it(); };',
+      'function f(expect) { expect(1); }',
+      'const f = ([expect]) => expect(1);',
+      'const f = (expect = 1) => expect(1);',
+      'const f = (...expect) => expect(1);',
+    ];
+    expect(bound.map((source) => typesOf(source).length)).toEqual([0, 0, 0, 0, 0, 0]);
+    const aliased = 'import expect = require("chai");\nexpect(1);';
+    expect(uses(aliased, 'src/a.test.ts', UNCONFIGURED, 'development').filter((found) => found.startsWith('@types/'))).toEqual([]);
+  });
+});
+
+describe('extractImports JSX runtime', () => {
+  test('JSX is a runtime import of react/jsx-runtime, even beside a type-only react import', () => {
+    const content = 'import type { FC } from "react";\nexport const A: FC = () => (\n  <div>hi</div>\n);';
+    expect(uses(content, 'src/A.tsx')).toEqual(['react:type-only:1', 'react:runtime:3']);
+    expect(extractImports(content, 'src/A.tsx')[1]?.importStatement).toBe('<div>hi</div>');
+  });
+
+  test('a @jsxImportSource pragma overrides the source the settings name', () => {
+    const emit: EmitSettings = { ...UNCONFIGURED, jsx: [JsxRuntime.Automatic({ importSource: '@emotion/react' })] };
+    expect(uses('/** @jsxImportSource preact */\nexport const A = () => <></>;', 'src/A.jsx', emit)).toEqual(['preact:runtime:2']);
+    expect(uses('export const A = () => <b />;', 'src/A.js', emit)).toEqual(['@emotion/react:runtime:1']);
+  });
+
+  test('no runtime import without JSX or under the classic runtime', () => {
+    expect(uses('export const lt = (a: number) => a < 2;\nexport const id = <T,>(v: T) => v;', 'src/a.tsx')).toEqual([]);
+    expect(
+      uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] }),
+    ).toEqual([]);
+  });
+
+  test('a @jsxRuntime pragma switches the file to that runtime', () => {
+    const emotion = "/** @jsxRuntime classic */\n/** @jsx jsx */\nimport { jsx } from '@emotion/react';\nexport const A = () => <div />;";
+    expect(uses(emotion, 'src/A.tsx')).toEqual(['@emotion/react:runtime:3']);
+    const automatic = '/** @jsxRuntime automatic */\nexport const A = () => <div />;';
+    expect(uses(automatic, 'src/A.tsx', { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] })).toEqual(['react:runtime:2']);
+  });
+});
+
+describe('extractImports under verbatimModuleSyntax', () => {
+  const content = [
+    'import { type Meta } from "reflect-x";',
+    'import type { B } from "b";',
+    'export { type C } from "c";',
+    'export type { D } from "d";',
+    'import type E from "e";',
+  ].join('\n');
+
+  test('only `import type` and `export type` are erased', () => {
+    expect(uses(content, 'src/a.ts', { ...UNCONFIGURED, elision: 'verbatim' })).toEqual([
+      'reflect-x:runtime:1',
+      'b:type-only:2',
+      'e:type-only:5',
+      'c:runtime:3',
+      'd:type-only:4',
+    ]);
+  });
+
+  test('without it, inline type specifiers are erased too', () => {
+    expect(uses(content, 'src/a.ts')).toEqual([
+      'reflect-x:type-only:1',
+      'b:type-only:2',
+      'e:type-only:5',
+      'c:type-only:3',
+      'd:type-only:4',
+    ]);
+  });
+});
+
 describe('parseFile source kinds', () => {
   const testDir = './test-parse-file-kinds';
 
@@ -649,7 +775,7 @@ describe('parseFile source kinds', () => {
   });
 
   const parsed = (file: string) =>
-    Result.getOrThrow(parseFile({ path: `${testDir}/${file}`, context: 'production' })).map(
+    Result.getOrThrow(parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED })).map(
       (found) => `${found.packageName}:${found.importType}:${found.context}`,
     );
 

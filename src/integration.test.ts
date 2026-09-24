@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
 import { findFiles, parseHoistedImports, parseMultipleFiles } from '@/parsers/import-parser';
+import { tsconfigImports } from '@/parsers/tsconfig-parser';
 import type { PackageJson } from '@/domain/types';
 import path from 'node:path';
 
@@ -61,6 +62,7 @@ describe('Integration Tests', () => {
       dependencies: ['react', 'lodash', 'styled-components', 'date-fns', 'unused-dep'],
       devDependencies: ['type-fest', 'jest', 'typescript', 'compression'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     // 3. Run Analysis
@@ -102,6 +104,7 @@ describe('Integration Tests', () => {
       dependencies: ['dep-a'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -123,6 +126,7 @@ describe('Integration Tests', () => {
       dependencies: ['pkg-x'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -142,6 +146,7 @@ describe('Integration Tests', () => {
       dependencies: [],
       devDependencies: ['tailwindcss'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -162,6 +167,7 @@ describe('Integration Tests', () => {
       dependencies: [],
       devDependencies: ['autoprefixer'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -181,6 +187,7 @@ describe('Integration Tests', () => {
       dependencies: [],
       devDependencies: ['happy-dom'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -231,6 +238,7 @@ const pkg = (sections: Partial<PackageJson>): PackageJson => ({
   dependencies: [],
   devDependencies: [],
   peerDependencies: [],
+  declarations: 'none',
   ...sections,
 });
 
@@ -494,5 +502,54 @@ describe('file contexts', () => {
     );
 
     expect(result.unused).toEqual(['dist-only', 'build-only', 'out-only', 'coverage-only']);
+  });
+});
+
+describe('compiler settings', () => {
+  let testDir = '';
+
+  const write = async (file: string, content: unknown) => {
+    await mkdir(path.dirname(path.join(testDir, file)), { recursive: true });
+    await writeFile(path.join(testDir, file), typeof content === 'string' ? content : JSON.stringify(content));
+  };
+
+  const analyze = (packageJson: PackageJson) => {
+    const files = findFiles(testDir);
+    const imports = [...parseMultipleFiles(files.found).imports, ...tsconfigImports(files.tsconfigs)];
+    return analyzeDependencies(packageJson, imports, { sections: ALL, ignoredPackages: [] });
+  };
+
+  beforeEach(async () => {
+    testDir = `./test-compiler-settings-${Math.random().toString(36).slice(2)}`;
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test('types count from every tsconfig at a layout root and from the projects they reference', async () => {
+    await write('tsconfig.json', { files: [], references: [{ path: './config/tsconfig.e2e.json' }] });
+    await write('tsconfig.spec.json', { compilerOptions: { types: ['jest'] } });
+    await write('config/tsconfig.e2e.json', { compilerOptions: { types: ['cypress'] } });
+    await write('apps/web/package.json', { name: 'web' });
+    await write('apps/web/tsconfig.json', { compilerOptions: { types: ['vitest/globals'] } });
+    await write('src/index.js', 'export const x = 1;');
+
+    const result = analyze(pkg({ devDependencies: ['@types/jest', 'cypress', 'vitest', 'typescript'] }));
+
+    expect(result.unused).toEqual([]);
+  });
+
+  test('JSX uses the runtime of the tsconfig that governs the file', async () => {
+    await write('tsconfig.json', { compilerOptions: { jsx: 'react-jsx' } });
+    await write('src/Btn.tsx', 'import type { FC } from "react";\nexport const Btn: FC = () => <button>x</button>;');
+    await write('apps/admin/package.json', { name: 'admin' });
+    await write('apps/admin/tsconfig.app.json', { compilerOptions: { jsxImportSource: '@emotion/react' } });
+    await write('apps/admin/src/Card.tsx', 'export const Card = () => <div css={{ color: "red" }} />;');
+
+    const result = analyze(pkg({ dependencies: ['react', '@emotion/react'], devDependencies: ['typescript'] }));
+
+    expect(result).toMatchObject({ unused: [], typeOnly: [], misplaced: [] });
   });
 });

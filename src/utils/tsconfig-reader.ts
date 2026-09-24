@@ -1,22 +1,43 @@
 import path from 'node:path';
-import { Array, Effect, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Match, Option, Result, Schema, pipe } from 'effect';
 import { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
-import { decodeJsonc, gatherAll, gatherOptional, readFile, readStats } from './file-reader.js';
+import {
+  decodeJsonc,
+  gatherAll,
+  gatherOptional,
+  lenientKey,
+  readFile,
+  readStats,
+} from './file-reader.js';
 import { lineage } from './project-walk.js';
 
-// tsc accepts null (it clears an inherited option); a value that fits no field leaves the rest usable.
-const option = <S extends Schema.Top>(schema: S) =>
-  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
-
+// tsc accepts null: it clears an inherited option.
 const TsConfig = Schema.Struct({
-  extends: option(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  extends: lenientKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  references: lenientKey(Schema.Array(Schema.Struct({ path: Schema.String }))),
+  files: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
+  include: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
+  exclude: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
   compilerOptions: Schema.optionalKey(
     Schema.Struct({
-      outDir: option(Schema.NonEmptyString),
-      declarationDir: option(Schema.NonEmptyString),
-      types: option(Schema.NullOr(Schema.Array(Schema.String))),
-      importHelpers: option(Schema.NullOr(Schema.Boolean)),
+      outDir: lenientKey(Schema.NonEmptyString),
+      declarationDir: lenientKey(Schema.NonEmptyString),
+      types: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
+      importHelpers: lenientKey(Schema.NullOr(Schema.Boolean)),
+      jsx: lenientKey(
+        Schema.NullOr(
+          Schema.Literals(['preserve', 'react', 'react-jsx', 'react-jsxdev', 'react-native']),
+        ),
+      ),
+      jsxImportSource: lenientKey(Schema.NullOr(Schema.NonEmptyString)),
+      jsxFactory: lenientKey(Schema.NullOr(Schema.NonEmptyString)),
+      emitDecoratorMetadata: lenientKey(Schema.NullOr(Schema.Boolean)),
+      verbatimModuleSyntax: lenientKey(Schema.NullOr(Schema.Boolean)),
+      preserveValueImports: lenientKey(Schema.NullOr(Schema.Boolean)),
+      importsNotUsedAsValues: lenientKey(
+        Schema.NullOr(Schema.Literals(['remove', 'preserve', 'error'])),
+      ),
     }),
   ),
 });
@@ -36,8 +57,8 @@ const readTsConfigFile = (file: string): Result.Result<TsConfigFile, FileError> 
     Result.map(decodeJsonc(TsConfig)(file)(text), (config) => ({ path: file, text, config })),
   );
 
-// The build-directory detection and the usage reader each read these; equal paths let their
-// errors dedupe.
+// Build-directory detection reads these before the walk finds the governing tsconfig files, so
+// findFiles dedupes their errors.
 const readRootFiles = (projectRoot: string): Gathered<TsConfigFile> =>
   gatherAll(
     Array.map(ROOT_TSCONFIGS, (name) =>
@@ -74,16 +95,16 @@ const withJsonSuffix = (base: string): ReadonlyArray<string> =>
 const isPathSpecifier = (specifier: string): boolean =>
   specifier.startsWith('.') || path.isAbsolute(specifier);
 
-type Extended = { readonly expected: string; readonly candidates: ReadonlyArray<string> };
+type Target = { readonly expected: string; readonly candidates: ReadonlyArray<string> };
 
 // A package specifier resolves through node_modules in the extending file's directory and above.
-const extendedBy = (from: string, specifier: string): Extended =>
+const extendedBy = (from: string, specifier: string): Target =>
   Match.value(specifier).pipe(
-    Match.when(isPathSpecifier, (relative): Extended => {
+    Match.when(isPathSpecifier, (relative): Target => {
       const base = path.resolve(path.dirname(from), relative);
       return { expected: base, candidates: withJsonSuffix(base) };
     }),
-    Match.orElse((pkg): Extended => ({
+    Match.orElse((pkg): Target => ({
       expected: path.join(path.dirname(from), 'node_modules', pkg),
       candidates: Array.flatMap(lineage(path.dirname(from)), (dir) => {
         const base = path.join(dir, 'node_modules', pkg);
@@ -92,55 +113,144 @@ const extendedBy = (from: string, specifier: string): Extended =>
     })),
   );
 
-export type TsConfigChain = Array.NonEmptyReadonlyArray<TsConfigFile>;
-
-type Chained = { readonly chain: TsConfigChain; readonly skipped: ReadonlyArray<FileError> };
-
-// Nearest first: the file, then its extends entries from last to first, as TypeScript overrides.
-const chainFrom = (file: TsConfigFile, seen: ReadonlyArray<string>): Chained => {
-  const parents = gatherAll(
-    Array.map(Array.reverse(extendsOf(file.config)), (specifier) =>
-      parentChain(extendedBy(file.path, specifier), [...seen, file.path]),
-    ),
-  );
-  return { chain: [file, ...parents.found], skipped: parents.skipped };
+const referencedBy = (from: string, reference: string): Target => {
+  const base = path.resolve(path.dirname(from), reference);
+  return { expected: base, candidates: [base, path.join(base, 'tsconfig.json')] };
 };
 
-const readParent = (parent: string, seen: ReadonlyArray<string>): Gathered<TsConfigFile> =>
-  Result.match(readTsConfigFile(parent), {
-    onSuccess: (file) => {
-      const { chain, skipped } = chainFrom(file, seen);
-      return { found: chain, skipped };
-    },
-    onFailure: (error) => ({ found: [], skipped: [error] }),
-  });
-
-const parentChain = (extended: Extended, seen: ReadonlyArray<string>): Gathered<TsConfigFile> =>
+const located = (target: Target): Result.Result<string, FileError> =>
   pipe(
-    Array.findFirst(extended.candidates, isFile),
+    Array.findFirst(target.candidates, isFile),
     Option.match({
-      onNone: (): Gathered<TsConfigFile> => ({
-        found: [],
-        skipped: [FileError.FileNotFound({ path: extended.expected })],
-      }),
-      onSome: (parent) =>
-        Array.contains(seen, parent) ? { found: [], skipped: [] } : readParent(parent, seen),
+      onNone: () => Result.fail(FileError.FileNotFound({ path: target.expected })),
+      onSome: Result.succeed,
     }),
   );
 
-export const readTsConfigChains = (projectRoot: string): Gathered<TsConfigChain> => {
-  const roots = readRootFiles(projectRoot);
-  const chained = Array.map(roots.found, (root) => chainFrom(root, []));
-  const isIn = (chain: TsConfigChain) => (other: TsConfigChain) =>
-    Array.some(other, (file) => file.path === Array.headNonEmpty(chain).path);
-  return {
-    // A root that an earlier root extends is read through that root.
-    found: Array.reduce(
-      Array.map(chained, ({ chain }) => chain),
-      [] as ReadonlyArray<TsConfigChain>,
-      (kept, chain) => (Array.some(kept, isIn(chain)) ? kept : [...kept, chain]),
+// parents: the extends entries from last to first, as TypeScript overrides.
+type Linked = {
+  readonly file: TsConfigFile;
+  readonly parents: ReadonlyArray<string>;
+  readonly references: ReadonlyArray<string>;
+};
+
+type Loaded = {
+  readonly read: ReadonlyMap<string, Option.Option<Linked>>;
+  readonly skipped: ReadonlyArray<FileError>;
+};
+
+const linkedFrom = (
+  file: TsConfigFile,
+): { readonly linked: Linked; readonly skipped: ReadonlyArray<FileError> } => {
+  const [missingParents, parents] = Array.partition(
+    Array.map(Array.reverse(extendsOf(file.config)), (specifier) =>
+      extendedBy(file.path, specifier),
     ),
-    // tsconfig.json and tsconfig.base.json often share parents.
-    skipped: Array.dedupe([...roots.skipped, ...Array.flatMap(chained, ({ skipped }) => skipped)]),
+    located,
+  );
+  const [missingReferences, references] = Array.partition(
+    Array.map(file.config.references ?? [], (reference) => referencedBy(file.path, reference.path)),
+    located,
+  );
+  return {
+    linked: { file, parents, references },
+    skipped: [...missingParents, ...missingReferences],
+  };
+};
+
+const readInto = (
+  loaded: Loaded,
+  next: string,
+): Loaded & { readonly next: ReadonlyArray<string> } =>
+  Result.match(readTsConfigFile(next), {
+    onFailure: (error) => ({
+      read: new Map([...loaded.read, [next, Option.none()]]),
+      skipped: [...loaded.skipped, error],
+      next: [],
+    }),
+    onSuccess: (file) => {
+      const { linked, skipped } = linkedFrom(file);
+      return {
+        read: new Map([...loaded.read, [next, Option.some(linked)]]),
+        skipped: [...loaded.skipped, ...skipped],
+        next: [...linked.parents, ...linked.references],
+      };
+    },
+  });
+
+// Every file is read once, however many configs extend or reference it.
+const load = (pending: ReadonlyArray<string>, loaded: Loaded): Loaded =>
+  Array.match(pending, {
+    onEmpty: () => loaded,
+    onNonEmpty: ([next, ...rest]) =>
+      loaded.read.has(next)
+        ? load(rest, loaded)
+        : pipe(readInto(loaded, next), (after) => load([...rest, ...after.next], after)),
+  });
+
+const linkedAt = (loaded: Loaded, file: string): Option.Option<Linked> =>
+  Option.flatten(Option.fromUndefinedOr(loaded.read.get(file)));
+
+const chainAt = (
+  loaded: Loaded,
+  file: string,
+  seen: ReadonlyArray<string>,
+): ReadonlyArray<TsConfigFile> =>
+  Option.match(linkedAt(loaded, file), {
+    onNone: () => [],
+    onSome: (linked) => [
+      linked.file,
+      ...pipe(
+        linked.parents,
+        Array.filter((parent) => !Array.contains(seen, parent)),
+        Array.flatMap((parent) => chainAt(loaded, parent, [...seen, parent])),
+      ),
+    ],
+  });
+
+const withReferences = (
+  loaded: Loaded,
+  pending: ReadonlyArray<string>,
+  heads: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  Array.match(pending, {
+    onEmpty: () => heads,
+    onNonEmpty: ([next, ...rest]) =>
+      Array.contains(heads, next)
+        ? withReferences(loaded, rest, heads)
+        : withReferences(
+            loaded,
+            [
+              ...rest,
+              ...Option.match(linkedAt(loaded, next), {
+                onNone: () => [],
+                onSome: (linked) => linked.references,
+              }),
+            ],
+            [...heads, next],
+          ),
+  });
+
+export type TsConfigChain = Array.NonEmptyReadonlyArray<TsConfigFile>;
+
+// Nearest first. roots: tsconfig files that govern a directory; the projects they reference do too.
+export const readTsConfigChains = (roots: ReadonlyArray<string>): Gathered<TsConfigChain> => {
+  const loaded = load(roots, { read: new Map(), skipped: [] });
+  const chains = pipe(
+    withReferences(loaded, roots, []),
+    Array.map((head) => chainAt(loaded, head, [head])),
+    Array.filter(Array.isReadonlyArrayNonEmpty),
+  );
+  const inherits = (other: TsConfigChain, chain: TsConfigChain): boolean =>
+    Array.some(Array.tailNonEmpty(other), (file) => file.path === Array.headNonEmpty(chain).path);
+  // A root that another root extends is read through that root; of an extends cycle, the first.
+  const readThroughAnother = (chain: TsConfigChain, index: number): boolean =>
+    Array.some(
+      chains,
+      (other, at) => inherits(other, chain) && (at < index || !inherits(chain, other)),
+    );
+  return {
+    found: Array.filter(chains, (chain, index) => !readThroughAnother(chain, index)),
+    skipped: Array.dedupe(loaded.skipped),
   };
 };

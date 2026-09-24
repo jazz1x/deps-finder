@@ -112,7 +112,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'weird'));
     await writeFile(path.join(tmpDir, 'weird/package.json'), '{"name":');
-    await writeFile(path.join(tmpDir, 'weird/index.ts'), "import _ from 'lodash';");
+    await writeFile(path.join(tmpDir, 'weird/index.ts'), "import _ from 'lodash';\nexport default _;");
     const r = runCli(['--json'], tmpDir);
     expect(r.stderr).toContain('warning: could not use weird/package.json');
     expect(r.status).toBe(0);
@@ -328,6 +328,27 @@ describe('CLI e2e (bin/cli.js)', () => {
     const r = runCli(['--json', '-a'], tmpDir);
     expect(JSON.parse(r.stdout).unused).toEqual(['@types/uuid']);
     expect(r.stderr).toContain('missing.json');
+  });
+
+  test('a devDependency whose import is used only as types is not misplaced; a dependency is not typeOnly', async () => {
+    await writeFile(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ dependencies: { react: '1', hotscript: '1' }, devDependencies: { '@mui/types': '7' } }),
+    );
+    await mkdir(path.join(tmpDir, 'src'), { recursive: true });
+    await writeFile(
+      path.join(tmpDir, 'src/a.ts'),
+      [
+        "import React from 'react';",
+        "import { OverridableStringUnion } from '@mui/types';",
+        "import { Pipe, Tuples } from 'hotscript';",
+        "export type X = OverridableStringUnion<'a', {}> | Pipe<['a'], [Tuples.Join<''>]>;",
+        'export const y = React;',
+      ].join('\n'),
+    );
+
+    const r = runCli(['--json'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({ misplaced: [], typeOnly: [], totalIssues: 0 });
   });
 
   test('a malformed tsconfig.json warns once', async () => {

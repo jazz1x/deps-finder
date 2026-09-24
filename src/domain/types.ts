@@ -1,3 +1,4 @@
+import { type Array, Data } from 'effect';
 import type { FileError } from './errors.js';
 
 export type PackageName = string;
@@ -10,15 +11,40 @@ export type Gathered<A> = {
 export const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
 
-export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> };
+// A package that publishes declarations exposes its dependencies' types to its consumers.
+export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> } & {
+  readonly declarations: 'published' | 'none';
+};
 
 export type ImportType = 'runtime' | 'type-only';
 
 export type FileContext = 'production' | 'development';
 
+// Preserved: tsc leaves JSX to the next compiler, counted as react/jsx-runtime, and keeps the
+// factory import as under the classic runtime.
+export type JsxRuntime = Data.TaggedEnum<{
+  Classic: { readonly factory: string };
+  Automatic: { readonly importSource: string };
+  Preserved: { readonly factory: string };
+}>;
+
+export const JsxRuntime = Data.taggedEnum<JsxRuntime>();
+
+// unused-bindings: an import none of whose bindings is used as a value is erased.
+// verbatim: an import is erased only when written `import type`.
+// decorator-metadata: emitted metadata can name a type-position binding, so none is known erased.
+export type ImportElision = 'unused-bindings' | 'verbatim' | 'decorator-metadata';
+
+// How the compiler emits a file, from the tsconfig that governs it.
+export type EmitSettings = {
+  readonly jsx: Array.NonEmptyReadonlyArray<JsxRuntime>;
+  readonly elision: ImportElision;
+};
+
 export type SourceFile = {
   readonly path: string;
   readonly context: FileContext;
+  readonly emit: EmitSettings;
 };
 
 export type ImportLocation = {

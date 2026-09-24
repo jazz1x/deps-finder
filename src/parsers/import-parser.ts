@@ -1,20 +1,28 @@
 import path from 'node:path';
 import type {
   Argument,
+  BindingPattern,
+  BindingProperty,
+  BindingRestElement,
   CallExpression,
+  Expression,
+  IdentifierReference,
+  ParamPattern,
   Program,
   TSGlobalDeclaration,
   TSImportEqualsDeclaration,
   TSModuleDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Order, Result, String, pipe } from 'effect';
+import { Array, Data, Match, Option, Order, Record, Result, String, pipe } from 'effect';
 import {
   type Comment,
   type DynamicImport,
   type ParseResult,
+  type ParserOptions,
   type StaticExport,
   type StaticImport,
   Visitor,
+  type VisitorObject,
   parseSync,
 } from 'oxc-parser';
 import {
@@ -36,17 +44,24 @@ import {
   type FileContext,
   type Gathered,
   type ImportDetails,
+  type ImportElision,
   type ImportType,
+  JsxRuntime,
   type PackageJson,
   type PackageName,
   type SourceFile,
 } from '../domain/types.js';
+import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
 import { readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
 import { gatherAll, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { type LeftOut, walkProject } from '../utils/project-walk.js';
-import { readRootTsConfigs } from '../utils/tsconfig-reader.js';
+import {
+  type TsConfigChain,
+  readRootTsConfigs,
+  readTsConfigChains,
+} from '../utils/tsconfig-reader.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
@@ -140,28 +155,47 @@ const referenceAt = (specifier: string, isTypeOnly: boolean, span: Span): Module
   end: span.end,
 });
 
-const staticImportReference = (statement: StaticImport): ModuleReference =>
-  referenceAt(
-    statement.moduleRequest.value,
-    Array.isReadonlyArrayNonEmpty(statement.entries) &&
-      Array.every(statement.entries, (entry) => entry.isType),
-    statement,
-  );
+const DECLARED_TYPE_ONLY = /^(?:import|export)\s+type\s*(?:[{*]|[\w$]+\s+from\b)/;
 
-const reExportReference = (statement: StaticExport): Option.Option<ModuleReference> =>
-  pipe(
-    statement.entries,
-    Array.map((entry) => Option.fromNullishOr(entry.moduleRequest)),
-    Array.getSomes,
-    Array.head,
-    Option.map((request) =>
-      referenceAt(
-        request.value,
-        Array.every(statement.entries, (entry) => entry.isType),
-        statement,
+// Under verbatim, `import { type A } from "x"` still emits `import {} from "x"`.
+const erasesAllTypeSpecifiers =
+  (content: string, elision: ImportElision) =>
+  (statement: Span): boolean =>
+    Match.value(elision).pipe(
+      Match.whenOr('unused-bindings', 'decorator-metadata', () => true),
+      Match.when('verbatim', () =>
+        DECLARED_TYPE_ONLY.test(content.slice(statement.start, statement.end)),
       ),
-    ),
-  );
+      Match.exhaustive,
+    );
+
+const staticImportReference =
+  (erased: (statement: Span) => boolean) =>
+  (statement: StaticImport): ModuleReference =>
+    referenceAt(
+      statement.moduleRequest.value,
+      Array.isReadonlyArrayNonEmpty(statement.entries) &&
+        Array.every(statement.entries, (entry) => entry.isType) &&
+        erased(statement),
+      statement,
+    );
+
+const reExportReference =
+  (erased: (statement: Span) => boolean) =>
+  (statement: StaticExport): Option.Option<ModuleReference> =>
+    pipe(
+      statement.entries,
+      Array.map((entry) => Option.fromNullishOr(entry.moduleRequest)),
+      Array.getSomes,
+      Array.head,
+      Option.map((request) =>
+        referenceAt(
+          request.value,
+          Array.every(statement.entries, (entry) => entry.isType) && erased(statement),
+          statement,
+        ),
+      ),
+    );
 
 const QUOTED = /^(['"])(.*)\1$/s;
 
@@ -222,18 +256,47 @@ type AstReferences = {
 
 const NO_AST_REFERENCES: AstReferences = { references: [], augmentations: [] };
 
-// ESM comes from oxc's module record without materialising the AST. The other forms need the AST;
-// oxc's Visitor walks 15.7k lines in 31ms where a pure recursive fold took 139ms.
+// The one place that collects by mutation: oxc's Visitor walks 15.7k lines in 31ms where a pure
+// recursive fold took 139ms.
+export const collectVisiting = <A>(
+  program: Program,
+  visitor: (collect: (found: ReadonlyArray<A>) => void) => VisitorObject,
+): ReadonlyArray<A> => {
+  const found: A[] = [];
+  new Visitor(visitor((items) => found.push(...items))).visit(program);
+  return found;
+};
+
+type AstReference = Data.TaggedEnum<{
+  Reference: { readonly reference: ModuleReference };
+  Augmentation: { readonly reference: ModuleReference };
+}>;
+
+const AstReference = Data.taggedEnum<AstReference>();
+
+const references = (found: ReadonlyArray<ModuleReference>): ReadonlyArray<AstReference> =>
+  Array.map(found, (reference) => AstReference.Reference({ reference }));
+
+// ESM comes from oxc's module record without materialising the AST. The other forms need the AST.
 const astReferences = (program: Program): AstReferences => {
-  const references: ModuleReference[] = [];
-  const augmentations: ModuleReference[] = [];
-  new Visitor({
-    CallExpression: (node) => references.push(...requireReference(node)),
-    TSImportEqualsDeclaration: (node) => references.push(...importEqualsReference(node)),
-    TSImportType: (node) => references.push(referenceAt(node.source.value, true, node)),
-    TSModuleDeclaration: (node) => augmentations.push(...augmentationReference(node)),
-  }).visit(program);
-  return { references, augmentations };
+  const [found, augmentations] = Array.partition(
+    collectVisiting<AstReference>(program, (collect) => ({
+      CallExpression: (node) => collect(references(requireReference(node))),
+      TSImportEqualsDeclaration: (node) => collect(references(importEqualsReference(node))),
+      TSImportType: (node) => collect(references([referenceAt(node.source.value, true, node)])),
+      TSModuleDeclaration: (node) =>
+        collect(
+          Array.map(augmentationReference(node), (reference) =>
+            AstReference.Augmentation({ reference }),
+          ),
+        ),
+    })),
+    AstReference.$match({
+      Reference: ({ reference }) => Result.fail(reference),
+      Augmentation: ({ reference }) => Result.succeed(reference),
+    }),
+  );
+  return { references: found, augmentations };
 };
 
 const AST_MARKER = /require|declare\s+module/;
@@ -297,29 +360,324 @@ const commentReferences = (comment: Comment): ReadonlyArray<ModuleReference> =>
     Match.orElse((): ReadonlyArray<ModuleReference> => []),
   );
 
-const moduleReferences = (content: string, filePath: string): ReadonlyArray<ModuleReference> => {
-  const parsed = parseSync(filePath, content);
+// CRA and older Vite projects write JSX in .js files.
+const JSX_LANG: ParserOptions = { lang: 'jsx' };
+
+const OPTIONS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
+  '.js': JSX_LANG,
+  '.mjs': JSX_LANG,
+  '.cjs': JSX_LANG,
+};
+
+export const parse = (content: string, filePath: string): ParseResult =>
+  parseSync(
+    filePath,
+    content,
+    Option.getOrUndefined(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath))),
+  );
+
+const WITHOUT_JSX: Readonly<Record<string, ParserOptions>> = {
+  '.tsx': { lang: 'ts' },
+  '.jsx': { lang: 'js' },
+  '.js': { lang: 'js' },
+  '.mjs': { lang: 'js' },
+  '.cjs': { lang: 'js' },
+};
+
+// A file that parses only with JSX holds JSX. Walking every such AST for JSX nodes cost
+// foodspring-front 1.3s over a 0.2s parse; this second parse costs 30ms and fails on the same files.
+const firstJsxAt = (
+  content: string,
+  filePath: string,
+  parsed: ParseResult,
+): Option.Option<number> =>
+  pipe(
+    Record.get(WITHOUT_JSX, path.extname(filePath)),
+    Option.filter(() => content.includes('<') && Array.isReadonlyArrayEmpty(parsed.errors)),
+    Option.flatMap((options) => Array.head(parseSync(filePath, content, options).errors)),
+    // An error without a label still means JSX, which starts at the first '<' or after it.
+    Option.map((error) =>
+      pipe(
+        Array.head(error.labels),
+        Option.map((label) => label.start),
+        Option.getOrElse(() => content.indexOf('<')),
+      ),
+    ),
+  );
+
+const lineAround = (content: string, at: number): Span => ({
+  start: content.lastIndexOf('\n', at - 1) + 1,
+  end: pipe(content.indexOf('\n', at), (end) => (end === -1 ? content.length : end)),
+});
+
+const pragmaIn =
+  (content: string, parsed: ParseResult) =>
+  (pragma: RegExp): Option.Option<string> =>
+    pipe(
+      Option.liftPredicate(content, String.includes('@jsx')),
+      Option.flatMap(() =>
+        Array.findFirst(parsed.comments, (comment) =>
+          Option.fromNullishOr(pragma.exec(comment.value)?.[1]),
+        ),
+      ),
+    );
+
+const toClassic = JsxRuntime.$match({
+  Classic: (classic) => classic,
+  Automatic: () => JsxRuntime.Classic({ factory: 'React' }),
+  Preserved: ({ factory }) => JsxRuntime.Classic({ factory }),
+});
+
+const toAutomatic = JsxRuntime.$match({
+  Classic: () => JsxRuntime.Automatic({ importSource: 'react' }),
+  Automatic: (automatic) => automatic,
+  Preserved: () => JsxRuntime.Automatic({ importSource: 'react' }),
+});
+
+const RUNTIME_PRAGMAS: Readonly<Record<string, (runtime: JsxRuntime) => JsxRuntime>> = {
+  classic: toClassic,
+  automatic: toAutomatic,
+};
+
+// A file's @jsxRuntime, @jsx and @jsxImportSource pragmas override its tsconfig, as in tsc and Babel.
+export const fileJsxRuntimes = (
+  content: string,
+  parsed: ParseResult,
+  configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
+): Array.NonEmptyReadonlyArray<JsxRuntime> => {
+  const pragma = pragmaIn(content, parsed);
+  const switchTo = pipe(
+    pragma(/@jsxRuntime\s+(\S+)/),
+    Option.flatMap((mode) => Record.get(RUNTIME_PRAGMAS, mode)),
+    Option.getOrElse(() => (runtime: JsxRuntime) => runtime),
+  );
+  const factory = pragma(/@jsx\s+([\w$]+)/);
+  const importSource = pragma(/@jsxImportSource\s+(\S+)/);
+  return Array.dedupe(
+    Array.map(configured, (runtime): JsxRuntime =>
+      JsxRuntime.$match(switchTo(runtime), {
+        Classic: (classic) =>
+          JsxRuntime.Classic({ factory: Option.getOrElse(factory, () => classic.factory) }),
+        Automatic: (automatic) =>
+          JsxRuntime.Automatic({
+            importSource: Option.getOrElse(importSource, () => automatic.importSource),
+          }),
+        Preserved: (preserved) =>
+          Option.match(importSource, {
+            onNone: () =>
+              JsxRuntime.Preserved({ factory: Option.getOrElse(factory, () => preserved.factory) }),
+            onSome: (source) => JsxRuntime.Automatic({ importSource: source }),
+          }),
+      }),
+    ),
+  );
+};
+
+const jsxRuntimeReferences = (
+  content: string,
+  filePath: string,
+  parsed: ParseResult,
+  configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
+): ReadonlyArray<ModuleReference> =>
+  Option.match(firstJsxAt(content, filePath, parsed), {
+    onNone: () => [],
+    onSome: (at) =>
+      Array.flatMap(
+        fileJsxRuntimes(content, parsed, configured),
+        JsxRuntime.$match({
+          Classic: (): ReadonlyArray<ModuleReference> => [],
+          Automatic: ({ importSource }) => [
+            referenceAt(importSource, false, lineAround(content, at)),
+          ],
+          Preserved: () => [referenceAt('react', false, lineAround(content, at))],
+        }),
+      ),
+  });
+
+const TEST_GLOBALS = ['describe', 'it', 'test', 'expect', 'beforeEach', 'afterEach'];
+
+const TEST_GLOBAL_CALL =
+  /(?<![\w$.])(describe|it|test|expect|beforeEach|afterEach)\s*(?:\.\s*[\w$]+\s*)*[(`]/g;
+
+const TEST_GLOBAL_TYPES = ['@types/jest', '@types/mocha', '@types/jasmine'] as const;
+
+type Binder = BindingPattern | BindingProperty | BindingRestElement | ParamPattern | null;
+
+const boundNames = (binder: Binder): ReadonlyArray<string> =>
+  Match.value(binder).pipe(
+    Match.when({ type: 'Identifier' }, (identifier) => [identifier.name]),
+    Match.when({ type: 'ObjectPattern' }, (object) => Array.flatMap(object.properties, boundNames)),
+    Match.when({ type: 'Property' }, (property) => boundNames(property.value)),
+    Match.when({ type: 'ArrayPattern' }, (array) => Array.flatMap(array.elements, boundNames)),
+    Match.when({ type: 'RestElement' }, (rest) => boundNames(rest.argument)),
+    Match.when({ type: 'AssignmentPattern' }, (assignment) => boundNames(assignment.left)),
+    Match.when({ type: 'TSParameterProperty' }, (property) => boundNames(property.parameter)),
+    Match.orElse(() => []),
+  );
+
+// describe(), describe.each([...])() and it.each`...`() are all rooted at the global.
+const calleeRoot = (callee: Expression): Option.Option<IdentifierReference> =>
+  Match.value(callee).pipe(
+    Match.when({ type: 'Identifier' }, (identifier) => Option.some(identifier)),
+    Match.when({ type: 'MemberExpression' }, (member) => calleeRoot(member.object)),
+    Match.when({ type: 'TaggedTemplateExpression' }, (tagged) => calleeRoot(tagged.tag)),
+    Match.orElse(() => Option.none()),
+  );
+
+// Bound: names a function or catch clause binds inside its own span. Declared: names bound in the
+// innermost block around them.
+type TestGlobalEvent = Data.TaggedEnum<{
+  Call: { readonly callee: IdentifierReference };
+  Block: { readonly span: Span };
+  Bound: { readonly names: ReadonlyArray<string>; readonly span: Span };
+  Declared: { readonly names: ReadonlyArray<string>; readonly at: number };
+}>;
+
+const TestGlobalEvent = Data.taggedEnum<TestGlobalEvent>();
+
+type Binding = { readonly names: ReadonlyArray<string>; readonly span: Span };
+
+const within = (span: Span) => (at: number) => span.start <= at && at < span.end;
+
+const block = (span: Span): ReadonlyArray<TestGlobalEvent> => [TestGlobalEvent.Block({ span })];
+
+const declaration = (names: ReadonlyArray<string>, at: number): ReadonlyArray<TestGlobalEvent> => [
+  TestGlobalEvent.Declared({ names, at }),
+];
+
+const boundIn = (span: Span, binders: ReadonlyArray<Binder>): ReadonlyArray<TestGlobalEvent> => [
+  TestGlobalEvent.Bound({ names: Array.flatMap(binders, boundNames), span }),
+];
+
+const byLength = Order.mapInput(Order.Number, (span: Span) => span.end - span.start);
+
+// A test runner puts these names in scope; a scope that binds one itself calls its own.
+const unboundTestGlobalCall = (
+  program: Program,
+  imported: ReadonlySet<string>,
+): Option.Option<IdentifierReference> => {
+  const events = collectVisiting<TestGlobalEvent>(program, (collect) => ({
+    CallExpression: (node) =>
+      collect(
+        pipe(
+          calleeRoot(node.callee),
+          Option.filter((root) => Array.contains(TEST_GLOBALS, root.name)),
+          Option.map((callee) => TestGlobalEvent.Call({ callee })),
+          Option.toArray,
+        ),
+      ),
+    BlockStatement: (node) => collect(block(node)),
+    StaticBlock: (node) => collect(block(node)),
+    ForStatement: (node) => collect(block(node)),
+    ForInStatement: (node) => collect(block(node)),
+    ForOfStatement: (node) => collect(block(node)),
+    SwitchStatement: (node) => collect(block(node)),
+    VariableDeclarator: (node) => collect(declaration(boundNames(node.id), node.start)),
+    ClassDeclaration: (node) => collect(declaration(boundNames(node.id), node.start)),
+    TSImportEqualsDeclaration: (node) => collect(declaration([node.id.name], node.start)),
+    FunctionDeclaration: (node) =>
+      collect([...declaration(boundNames(node.id), node.start), ...boundIn(node, node.params)]),
+    FunctionExpression: (node) => collect(boundIn(node, [node.id, ...node.params])),
+    ArrowFunctionExpression: (node) => collect(boundIn(node, node.params)),
+    CatchClause: (node) => collect(boundIn(node, [node.param])),
+  }));
+  const file: Span = { start: program.start, end: program.end };
+  const blocks = [
+    file,
+    ...Array.map(Array.filter(events, TestGlobalEvent.$is('Block')), ({ span }) => span),
+  ];
+  const innermost = (at: number): Span =>
+    Array.reduce(
+      Array.filter(blocks, (span) => within(span)(at)),
+      file,
+      (inner, span) => Order.min(byLength)(inner, span),
+    );
+  const bindings: ReadonlyArray<Binding> = [
+    { names: [...imported], span: file },
+    ...Array.filter(events, TestGlobalEvent.$is('Bound')),
+    ...Array.map(Array.filter(events, TestGlobalEvent.$is('Declared')), ({ names, at }) => ({
+      names,
+      span: innermost(at),
+    })),
+  ];
+  return pipe(
+    Array.filter(events, TestGlobalEvent.$is('Call')),
+    Array.findFirst(
+      ({ callee }) =>
+        !Array.some(
+          bindings,
+          ({ names, span }) => Array.contains(names, callee.name) && within(span)(callee.start),
+        ),
+    ),
+    Option.map(({ callee }) => callee),
+  );
+};
+
+// The text is scanned first: walking every story and test that imports its test functions cost
+// foodspring-front 150ms.
+const testGlobalReferences = (
+  content: string,
+  parsed: ParseResult,
+): ReadonlyArray<ModuleReference> => {
+  const imported = new Set(
+    Array.flatMap(parsed.module.staticImports, (statement) =>
+      Array.map(statement.entries, (entry) => entry.localName.value),
+    ),
+  );
+  return pipe(
+    Option.liftPredicate(parsed, () =>
+      Array.some([...content.matchAll(TEST_GLOBAL_CALL)], (call) =>
+        Option.exists(Option.fromUndefinedOr(call[1]), (name) => !imported.has(name)),
+      ),
+    ),
+    Option.flatMap((unresolved) => unboundTestGlobalCall(unresolved.program, imported)),
+    Option.match({
+      onNone: () => [],
+      onSome: (callee) => Array.map(TEST_GLOBAL_TYPES, (types) => referenceAt(types, true, callee)),
+    }),
+  );
+};
+
+type Scope = Pick<SourceFile, 'context' | 'emit'>;
+
+const moduleReferences = (
+  content: string,
+  filePath: string,
+  { context, emit }: Scope,
+): ReadonlyArray<ModuleReference> => {
+  const parsed = parse(content, filePath);
   const ast =
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
       ? astReferences(parsed.program)
       : NO_AST_REFERENCES;
+  const erased = erasesAllTypeSpecifiers(content, emit.elision);
   return [
-    ...Array.map(parsed.module.staticImports, staticImportReference),
-    ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference)),
+    ...Array.map(parsed.module.staticImports, staticImportReference(erased)),
+    ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference(erased))),
     ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
     ...ast.references,
     ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
     ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
+    ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
+    ...Match.value(context).pipe(
+      Match.when('development', () => testGlobalReferences(content, parsed)),
+      Match.when('production', () => []),
+      Match.exhaustive,
+    ),
   ];
 };
 
 type FileImport = Omit<ImportDetails, 'context'>;
 
-export const extractImports = (content: string, filePath: string): ReadonlyArray<FileImport> => {
+export const extractImports = (
+  content: string,
+  filePath: string,
+  scope: Scope,
+): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
 
   return pipe(
-    moduleReferences(content, filePath),
+    moduleReferences(content, filePath, scope),
     Array.map((ref) =>
       pipe(
         extractPackageName(ref.specifier),
@@ -340,7 +698,7 @@ const readImports = (source: SourceFile): Result.Result<ReadonlyArray<ImportDeta
   pipe(
     readFile(source.path),
     Result.map((content) =>
-      Array.map(extractImports(content, source.path), (found): ImportDetails => ({
+      Array.map(extractImports(content, source.path, source), (found): ImportDetails => ({
         ...found,
         context: source.context,
       })),
@@ -414,13 +772,35 @@ const anchoredExclude =
 
 const byPath = Order.mapInput(Order.String, (file: SourceFile) => file.path);
 
+const directoryOf = (relativePath: string): string =>
+  pipe(path.posix.dirname(relativePath), (dir) => (dir === '.' ? '' : dir));
+
+const governingTsConfigs = (
+  rootDir: string,
+  sources: ReadonlyArray<{ readonly path: string; readonly layoutRoots: ReadonlyArray<string> }>,
+): Gathered<TsConfigChain> =>
+  readTsConfigChains(
+    pipe(
+      sources,
+      Array.filter(
+        (source) =>
+          isTsConfig(source.path) && Array.contains(source.layoutRoots, directoryOf(source.path)),
+      ),
+      Array.map((source) => path.resolve(rootDir, source.path)),
+      (roots) => Array.sort(roots, Order.String),
+    ),
+  );
+
 export const findFiles = (
   rootDir: string,
   options: {
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): Gathered<SourceFile> & { readonly packages: ReadonlyArray<LeftOut> } => {
+): Gathered<SourceFile> & {
+  readonly packages: ReadonlyArray<LeftOut>;
+  readonly tsconfigs: ReadonlyArray<TsConfigChain>;
+} => {
   const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
   const walked = walkProject(rootDir, {
     always: [
@@ -432,20 +812,24 @@ export const findFiles = (
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
     isSource: shouldAnalyzeFile,
   });
+  const tsconfigs = governingTsConfigs(rootDir, walked.found);
+  const emitOf = emitSettingsOf(tsconfigs.found);
   return {
     found: pipe(
       walked.found,
-      Array.map((source) => ({
-        path: path.resolve(rootDir, source.path),
-        context: fileContextOf(source),
-      })),
+      Array.map((source): SourceFile => {
+        const absolute = path.resolve(rootDir, source.path);
+        return { path: absolute, context: fileContextOf(source), emit: emitOf(absolute) };
+      }),
       (files) => Array.sort(files, byPath),
     ),
-    skipped: [...detected.skipped, ...walked.skipped],
+    // Build-directory detection reads the root tsconfig files too.
+    skipped: Array.dedupe([...detected.skipped, ...walked.skipped, ...tsconfigs.skipped]),
     packages: Array.map(walked.packages, ({ dir, files }) => ({
       dir: path.join(rootDir, dir),
       files: Array.map(files, (file) => path.resolve(rootDir, file)),
     })),
+    tsconfigs: tsconfigs.found,
   };
 };
 
@@ -465,7 +849,11 @@ const installs =
 const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileError> =>
   Result.map(readPackageJson(path.join(leftOut.dir, 'package.json')), (declared) => {
     const parsed = parseMultipleFiles(
-      Array.map(leftOut.files, (file): SourceFile => ({ path: file, context: 'development' })),
+      Array.map(leftOut.files, (file): SourceFile => ({
+        path: file,
+        context: 'development',
+        emit: UNCONFIGURED,
+      })),
     );
     return {
       ...parsed,
