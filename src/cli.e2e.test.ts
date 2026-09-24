@@ -330,7 +330,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.stderr).toContain('missing.json');
   });
 
-  test('an import whose bindings are used only as types counts as type-only', async () => {
+  test('a devDependency whose import is used only as types is not misplaced; a dependency is not typeOnly', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ dependencies: { react: '1', hotscript: '1' }, devDependencies: { '@mui/types': '7' } }),
@@ -348,7 +348,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     );
 
     const r = runCli(['--json'], tmpDir);
-    expect(JSON.parse(r.stdout)).toMatchObject({ misplaced: [], typeOnly: ['hotscript'], totalIssues: 1 });
+    expect(JSON.parse(r.stdout)).toMatchObject({ misplaced: [], typeOnly: [], totalIssues: 0 });
   });
 
   test('a malformed tsconfig.json warns once', async () => {

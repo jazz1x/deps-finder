@@ -52,8 +52,7 @@ describe('elideTypeOnlyImports', () => {
       'export const c = make() as Cast;',
     ].join('\n');
     const packageJson = pkg({
-      dependencies: ['hotscript', 'shapes', 'base', 'unused-binding', 'maker', 'cast', 'shared-types'],
-      devDependencies: ['@mui/types'],
+      devDependencies: ['@mui/types', 'hotscript', 'shapes', 'base', 'unused-binding', 'maker', 'cast', 'shared-types'],
     });
     expect(await elided({ 'a.ts': content }, packageJson)).toEqual([
       '@mui/types:type-only:a.ts:1',
@@ -101,7 +100,7 @@ describe('elideTypeOnlyImports', () => {
       'export { Again };',
     ].join('\n');
     const deps = ['jsx-lib', 'decorator-lib', 'typeof-lib', 'default-lib', 'shorthand-lib', 'reexport-lib', 'key-only-lib'];
-    expect(await elided({ 'a.tsx': content }, pkg({ dependencies: [...deps, 'side-effect-lib'] }))).toEqual([
+    expect(await elided({ 'a.tsx': content }, pkg({ devDependencies: [...deps, 'side-effect-lib'] }))).toEqual([
       'jsx-lib:runtime:a.tsx:1',
       'decorator-lib:runtime:a.tsx:2',
       'typeof-lib:runtime:a.tsx:3',

@@ -52,6 +52,29 @@ const jsxRoot = (
 const factoryUse = (factories: ReadonlyArray<string>, at: number): ReadonlyArray<AstEvent> =>
   Array.map(factories, (name) => AstEvent.Name({ name, at }));
 
+// Type spans come from a tree walk, so they nest or are disjoint. Merged into sorted disjoint
+// intervals they answer "inside a type?" by binary search: a 34k-line codegen file took 1.9s
+// when every name was checked against every span.
+const coveredBy = (spans: ReadonlyArray<Spanned>): ((at: number) => boolean) => {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const span of Array.sort(spans, bySpanStart)) {
+    const last = ends.length - 1;
+    if (last >= 0 && span.start < (ends[last] as number)) {
+      ends[last] = Math.max(ends[last] as number, span.end);
+    } else {
+      starts.push(span.start);
+      ends.push(span.end);
+    }
+  }
+  return (at) => {
+    const index = lineNumberAt(starts, at) - 1;
+    return index >= 0 && at < (ends[index] as number);
+  };
+};
+
+const bySpanStart = Order.mapInput(Order.Number, (span: Spanned) => span.start);
+
 // The bound names used anywhere outside a type position, an import or export of types, a
 // property, member or enum key, or a label. Scopes are not tracked: a parameter or local that
 // reuses an imported name still counts as a use, which keeps the import.
@@ -60,6 +83,7 @@ const valueUses = (
   bound: ReadonlyArray<string>,
   factories: ReadonlyArray<string>,
 ): ReadonlyArray<string> => {
+  const boundNames: ReadonlySet<string> = new Set(bound);
   const events = collectVisiting<AstEvent>(program, (collect) => ({
     ImportDeclaration: (node) => collect(typeSpan(node)),
     TSTypeReference: (node) => collect(typeSpan(node)),
@@ -81,9 +105,7 @@ const valueUses = (
     Property: (node) => collect(node.shorthand ? [] : memberKey(node)),
     Identifier: (node) =>
       collect(
-        Array.contains(bound, node.name)
-          ? [AstEvent.Name({ name: node.name, at: node.start })]
-          : [],
+        boundNames.has(node.name) ? [AstEvent.Name({ name: node.name, at: node.start })] : [],
       ),
     JSXOpeningElement: (node) =>
       collect([
@@ -96,17 +118,14 @@ const valueUses = (
       ]),
     JSXFragment: (node) => collect(factoryUse(factories, node.start)),
   }));
-  const typeSpans = Array.filter(events, AstEvent.$is('TypeSpan'));
+  const insideType = coveredBy(Array.filter(events, AstEvent.$is('TypeSpan')));
   const detached = new Set(
     Array.map(Array.filter(events, AstEvent.$is('NotReference')), ({ at }) => at),
   );
   return pipe(
     events,
     Array.filter(AstEvent.$is('Name')),
-    Array.filter(
-      ({ at }) =>
-        !detached.has(at) && !Array.some(typeSpans, (span) => span.start <= at && at < span.end),
-    ),
+    Array.filter(({ at }) => !detached.has(at) && !insideType(at)),
     Array.map(({ name }) => name),
     Array.dedupe,
   );
@@ -163,30 +182,19 @@ const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<st
   );
 };
 
-// every-location: a misplaced devDependency lists each location that loads it.
-// until-runtime: one location that loads a dependency keeps it out of typeOnly.
-type Reach = 'every-location' | 'until-runtime';
-
-const reachOf =
+// Only would-be misplaced imports are re-read. A dependency whose value import is used only as a
+// type is often a runtime peer of another package (graphql for @apollo/client), so elision must
+// not move it to typeOnly: on real projects that turned into "move to devDependencies" advice.
+const couldBeMisplaced =
   (packageJson: PackageJson) =>
-  (name: PackageName): Option.Option<Reach> =>
-    Match.value({
-      misplaced:
-        Array.contains(packageJson.devDependencies, name) &&
-        !Array.contains(packageJson.dependencies, name) &&
-        !Array.contains(packageJson.peerDependencies, name),
-      typeOnly:
-        Array.contains(packageJson.dependencies, name) && packageJson.declarations === 'none',
-    }).pipe(
-      Match.when({ misplaced: true }, () => Option.some<Reach>('every-location')),
-      Match.when({ typeOnly: true }, () => Option.some<Reach>('until-runtime')),
-      Match.orElse(() => Option.none<Reach>()),
-    );
+  (name: PackageName): boolean =>
+    Array.contains(packageJson.devDependencies, name) &&
+    !Array.contains(packageJson.dependencies, name) &&
+    !Array.contains(packageJson.peerDependencies, name);
 
 type Candidate = {
   readonly detail: ImportDetails;
   readonly source: SourceFile;
-  readonly reach: Reach;
 };
 
 const isElidedByCompiler = (source: SourceFile): boolean =>
@@ -208,17 +216,19 @@ const candidatesByFile = (
       (source) => [source.path, source] as const,
     ),
   );
-  const reach = reachOf(packageJson);
+  const misplacedCandidate = couldBeMisplaced(packageJson);
   return pipe(
     imports,
-    Array.filter((detail) => detail.context === 'production' && detail.importType === 'runtime'),
+    Array.filter(
+      (detail) =>
+        detail.context === 'production' &&
+        detail.importType === 'runtime' &&
+        misplacedCandidate(detail.packageName),
+    ),
     Array.flatMap((detail) =>
       pipe(
-        Option.all({
-          source: Option.fromUndefinedOr(elidable.get(detail.file)),
-          reach: reach(detail.packageName),
-        }),
-        Option.map((found): Candidate => ({ detail, ...found })),
+        Option.fromUndefinedOr(elidable.get(detail.file)),
+        Option.map((source): Candidate => ({ detail, source })),
         Option.toArray,
       ),
     ),
@@ -234,7 +244,6 @@ const candidatesByFile = (
 };
 
 type Refining = {
-  readonly settled: ReadonlyArray<PackageName>;
   readonly erased: ReadonlyArray<string>;
   readonly skipped: ReadonlyArray<FileError>;
 };
@@ -251,26 +260,19 @@ const refineFile = (
       onFailure: (error) => ({ ...state, skipped: [...state.skipped, error] }),
       onSuccess: (content) => {
         const erased = erasedStatements(content, source);
-        const [kept, dropped] = Array.partition(candidates, (candidate) =>
-          Array.contains(
-            erased,
-            statementKey(candidate.detail.line, candidate.detail.importStatement),
-          )
-            ? Result.succeed(candidate)
-            : Result.fail(candidate),
-        );
         return {
-          settled: [
-            ...state.settled,
-            ...pipe(
-              kept,
-              Array.filter((candidate) => candidate.reach === 'until-runtime'),
-              Array.map((candidate) => candidate.detail.packageName),
-            ),
-          ],
           erased: [
             ...state.erased,
-            ...Array.map(dropped, (candidate) => detailKey(candidate.detail)),
+            ...pipe(
+              candidates,
+              Array.filter((candidate) =>
+                Array.contains(
+                  erased,
+                  statementKey(candidate.detail.line, candidate.detail.importStatement),
+                ),
+              ),
+              Array.map((candidate) => detailKey(candidate.detail)),
+            ),
           ],
           skipped: state.skipped,
         };
@@ -279,8 +281,7 @@ const refineFile = (
   );
 
 // TypeScript erases an import whose bindings are used only as types. Only the imports that would
-// make a package misplaced or keep a dependency out of typeOnly are re-read, file by file, and a
-// dependency is no longer re-read once one of its imports is kept.
+// make a package misplaced are re-read, file by file.
 export const elideTypeOnlyImports = (
   packageJson: PackageJson,
   imports: ReadonlyArray<ImportDetails>,
@@ -291,15 +292,8 @@ export const elideTypeOnlyImports = (
 } => {
   const refined = Array.reduce(
     candidatesByFile(packageJson, imports, sources),
-    { settled: [], erased: [], skipped: [] } as Refining,
-    (state, candidates) =>
-      Array.match(
-        Array.filter(
-          candidates,
-          (candidate) => !Array.contains(state.settled, candidate.detail.packageName),
-        ),
-        { onEmpty: () => state, onNonEmpty: (open) => refineFile(state, open) },
-      ),
+    { erased: [], skipped: [] } as Refining,
+    refineFile,
   );
   const erased = new Set(refined.erased);
   return {
