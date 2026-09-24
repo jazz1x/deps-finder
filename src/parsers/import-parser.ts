@@ -672,7 +672,7 @@ type FileImport = Omit<ImportDetails, 'context'>;
 export const extractImports = (
   content: string,
   filePath: string,
-  scope: Scope = { context: 'production', emit: UNCONFIGURED },
+  scope: Scope,
 ): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
 

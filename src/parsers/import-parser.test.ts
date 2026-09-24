@@ -6,7 +6,7 @@ import { FileError } from '@/domain/errors';
 import { type EmitSettings, type FileContext, JsxRuntime } from '@/domain/types';
 import { UNCONFIGURED } from './emit-settings';
 import {
-  extractImports,
+  extractImports as extractIn,
   extractPackageName,
   fileContextOf,
   findFiles,
@@ -14,6 +14,8 @@ import {
   parseMultipleFiles,
   shouldAnalyzeFile,
 } from '@/parsers/import-parser';
+
+const extractImports = (content: string, file: string) => extractIn(content, file, { context: 'production', emit: UNCONFIGURED });
 
 describe('extractPackageName', () => {
   test('should return None for relative imports', () => {
@@ -646,7 +648,7 @@ describe('extractImports type positions', () => {
 });
 
 const uses = (content: string, file: string, emit: EmitSettings = UNCONFIGURED, context: FileContext = 'production') =>
-  extractImports(content, file, { context, emit }).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
+  extractIn(content, file, { context, emit }).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
 
 const typesOf = (content: string) =>
   uses(content, 'test/a.test.js', UNCONFIGURED, 'development').filter((found) => found.startsWith('@types/'));
