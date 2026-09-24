@@ -32,9 +32,23 @@ describe('componentBlocks scripts', () => {
     expect(bodies('A.vue', content)).toEqual(['import a from "a";']);
   });
 
-  test('a self-closing script tag has no body and does not swallow the next block', () => {
-    const content = '---\nimport "astro";\n---\n<script is:inline src="/x.js" />\n<h1>x</h1>\n<script>\nimport d from "d";\n</script>\n';
+  test('a self-closing tag has no body, and a tag in its attribute value opens nothing', () => {
+    const content = [
+      '---',
+      'import "astro";',
+      '---',
+      '<script is:inline src="/x.js" />',
+      `<Card title="<script>import x from 'x'</script>" />`,
+      '<h1>x</h1>',
+      '<script>',
+      'import d from "d";',
+      '</script>',
+    ].join('\n');
     expect(bodies('a.astro', content)).toEqual(['import "astro";', 'import d from "d";']);
+  });
+
+  test('an unclosed block runs to the end of the file, as in Vue', () => {
+    expect(bodies('A.vue', '<template><div/></template>\n<script>\nimport a from "a";\n')).toEqual(['import a from "a";']);
   });
 
   test('a Vue custom block is opaque: a script in it is text, and a stray <template in it opens nothing', () => {
