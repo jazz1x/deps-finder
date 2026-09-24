@@ -76,7 +76,12 @@ describe('emitSettingsOf', () => {
   test('among sibling tsconfig files, those whose include or files cover the file decide, each with its own options', async () => {
     await write('tsconfig.json', {
       files: [],
-      references: [{ path: './tsconfig.web.json' }, { path: './tsconfig.app.json' }, { path: './tsconfig.spec.json' }],
+      references: [
+        { path: './tsconfig.web.json' },
+        { path: './tsconfig.app.json' },
+        { path: './tsconfig.spec.json' },
+        { path: './tsconfig.tools.json' },
+      ],
       compilerOptions: { jsx: 'react' },
     });
     await write('tsconfig.app.json', {
@@ -85,9 +90,10 @@ describe('emitSettingsOf', () => {
       compilerOptions: { jsx: 'react-jsx', verbatimModuleSyntax: true },
     });
     await write('tsconfig.web.json', { include: ['web/*.tsx'], compilerOptions: { jsx: 'react-jsx', jsxImportSource: 'preact' } });
+    await write('tsconfig.tools.json', { files: ['tools/gen.tsx'], compilerOptions: { jsx: 'preserve', jsxImportSource: 'solid-js' } });
     await write('tsconfig.spec.json', {
       include: ['**/*.test.tsx'],
-      compilerOptions: { jsx: 'react-jsx', jsxImportSource: '@emotion/react' },
+      compilerOptions: { jsx: 'react-jsx', jsxImportSource: '@emotion/react', verbatimModuleSyntax: true },
     });
     const roots = ['tsconfig.json'];
     expect(settingsOf(roots, 'src/App.tsx')).toEqual({ jsx: [JsxRuntime.Automatic({ importSource: 'react' })], elision: 'verbatim' });
@@ -96,10 +102,11 @@ describe('emitSettingsOf', () => {
       elision: 'unused-bindings',
     });
     expect(jsxOf(roots, 'src/App.test.tsx')).toEqual([JsxRuntime.Automatic({ importSource: '@emotion/react' })]);
-    expect(jsxOf(roots, 'web/W.test.tsx')).toEqual([
-      JsxRuntime.Automatic({ importSource: '@emotion/react' }),
-      JsxRuntime.Automatic({ importSource: 'preact' }),
-    ]);
+    expect(settingsOf(roots, 'web/W.test.tsx')).toEqual({
+      jsx: [JsxRuntime.Automatic({ importSource: '@emotion/react' }), JsxRuntime.Automatic({ importSource: 'preact' })],
+      elision: 'verbatim',
+    });
+    expect(jsxOf(roots, 'tools/gen.tsx')).toEqual([JsxRuntime.Automatic({ importSource: 'solid-js' })]);
     expect(jsxOf(roots, 'tools/run.tsx')).toEqual([JsxRuntime.Classic({ factory: 'React' })]);
   });
 });

@@ -659,6 +659,7 @@ describe('extractImports test globals', () => {
       '@types/mocha:type-only:1',
       '@types/jasmine:type-only:1',
     ]);
+    expect(typesOf('it.each`a`("b", () => {});')).toHaveLength(3);
   });
 
   test('imported test functions and production files are no global use', () => {
