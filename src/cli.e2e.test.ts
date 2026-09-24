@@ -420,10 +420,11 @@ describe('CLI e2e (bin/cli.js)', () => {
         'node_modules/react-apexcharts/package.json': { name: 'react-apexcharts', peerDependencies: { apexcharts: '^3' } },
         'node_modules/madge/package.json': { name: 'madge', bin: { madge: 'bin/cli.js' }, peerDependencies: { typescript: '^5' } },
         'src/a.js': "import next from 'next'; import Chart from 'react-apexcharts'; export default [next, Chart];",
+        'src/b.ts': "import type { ApexOptions } from 'apexcharts'; export type Options = ApexOptions;",
       });
 
       const r = runCli(['--json', '-a'], tmpDir);
-      expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['left-pad'], misplaced: [] });
+      expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['left-pad'], misplaced: [], typeOnly: [] });
     });
 
     test('without node_modules, binaries match by package name and one note says so', async () => {

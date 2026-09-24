@@ -16,7 +16,8 @@ export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<Packag
   readonly declarations: 'published' | 'none';
 };
 
-export type ImportType = 'runtime' | 'type-only';
+// peer: installed for a used package that names it in peerDependencies.
+export type ImportType = 'runtime' | 'type-only' | 'peer';
 
 export type FileContext = 'production' | 'development';
 
@@ -67,7 +68,7 @@ export type ImportDetails = {
   readonly importStatement: string;
 };
 
-// A package a script, a peer or a tool config uses without an import.
+// A package a script or a tool config uses without an import.
 export const developmentUse = (
   packageName: PackageName,
   file: string,

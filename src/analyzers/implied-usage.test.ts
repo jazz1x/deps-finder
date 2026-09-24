@@ -42,6 +42,16 @@ describe('peerUses', () => {
     expect(uses[0]).toMatchObject({ context: 'development', importStatement: 'peerDependencies of next' });
   });
 
+  test('peers of a package production code loads are production peer uses', () => {
+    const production = { ...developmentUse('next', 'a.ts', ''), context: 'production' as const };
+    const typeOnly = { ...developmentUse('unused', 'a.ts', ''), context: 'production' as const, importType: 'type-only' as const };
+    const uses = peerUses(installation, ['next', 'sass', 'chokidar', 'left-pad', 'unused'], [production, typeOnly]);
+    expect(uses.filter((use) => use.context === 'production')).toMatchObject([
+      { packageName: 'sass', importType: 'peer' },
+      { packageName: 'chokidar', importType: 'peer' },
+    ]);
+  });
+
   test('nothing without an install', () => {
     expect(peerUses(Installation.NotInstalled(), ['next', 'sass'], [developmentUse('next', 'a.ts', '')])).toEqual([]);
   });

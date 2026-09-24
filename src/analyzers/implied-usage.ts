@@ -1,5 +1,6 @@
 import { Array, Option, Record, pipe } from 'effect';
 import {
+  type FileContext,
   type ImportDetails,
   Installation,
   type InstalledPackage,
@@ -75,15 +76,37 @@ const satisfiedBy =
     });
   };
 
-// A declared package that a used package names as a peer, optional or not, is installed for it.
+const peersFor =
+  (installation: Installation, declared: ReadonlyArray<PackageName>) =>
+  (context: FileContext, uses: ReadonlyArray<ImportDetails>): ReadonlyArray<ImportDetails> => {
+    const named = new Set(Array.map(uses, (use) => use.packageName));
+    const used = Array.filter(declared, (name) => named.has(name));
+    return Array.map(
+      satisfiedBy(installation, declared)(used, used),
+      ({ peer, by, manifest }): ImportDetails => ({
+        packageName: peer,
+        importType: 'peer',
+        context,
+        file: manifest,
+        line: 1,
+        importStatement: `peerDependencies of ${by}`,
+      }),
+    );
+  };
+
+// A declared package that a used package names as a peer, optional or not, is installed for it:
+// in production when production code loads that package.
 export const peerUses = (
   installation: Installation,
   declared: ReadonlyArray<PackageName>,
   uses: ReadonlyArray<ImportDetails>,
 ): ReadonlyArray<ImportDetails> => {
-  const named = new Set(Array.map(uses, (use) => use.packageName));
-  const used = Array.filter(declared, (name) => named.has(name));
-  return Array.map(satisfiedBy(installation, declared)(used, used), ({ peer, by, manifest }) =>
-    developmentUse(peer, manifest, `peerDependencies of ${by}`),
-  );
+  const peers = peersFor(installation, declared);
+  return [
+    ...peers(
+      'production',
+      Array.filter(uses, (use) => use.context === 'production' && use.importType === 'runtime'),
+    ),
+    ...peers('development', uses),
+  ];
 };
