@@ -43,6 +43,12 @@ describe('readInstallation', () => {
     );
   });
 
+  test('a node_modules above that holds none of the declared packages is not an install', async () => {
+    await install(`${testDir}/node_modules/unrelated`, { name: 'unrelated' });
+
+    expect(readInstallation(`${testDir}/app`, ['absent']).installation).toEqual(Installation.NotInstalled());
+  });
+
   test('peers come from peerDependencies and peerDependenciesMeta', async () => {
     await install(`${testDir}/app/node_modules/next`, {
       peerDependencies: { react: '*' },

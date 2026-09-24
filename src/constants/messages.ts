@@ -26,7 +26,7 @@ export const MESSAGES = {
   PACKAGE_LEFT_OUT: (path: string) =>
     `note: left out ${path}, a workspace member or a package with its own install; run deps-finder there to check it.`,
   NOT_INSTALLED: (path: string) =>
-    `note: no node_modules at or above ${path}; script commands were matched to packages by name, and peer dependencies were not checked.`,
+    `note: no declared package is installed in a node_modules at or above ${path}; script commands were matched to packages by name, and peer dependencies were not checked.`,
 } as const;
 
 export const CLI_TEXT = {

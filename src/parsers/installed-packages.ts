@@ -61,23 +61,20 @@ const readInstalled =
       }),
     );
 
+// A node_modules above that resolves none of the declared packages belongs to something else.
 export const readInstallation = (
   rootDir: string,
   names: ReadonlyArray<PackageName>,
-): { readonly installation: Installation; readonly skipped: ReadonlyArray<FileError> } =>
-  Array.match(
-    Array.filter(
-      Array.map(lineage(path.resolve(rootDir)), (dir) => path.join(dir, 'node_modules')),
-      existsSync,
-    ),
-    {
-      onEmpty: () => ({ installation: Installation.NotInstalled(), skipped: [] }),
-      onNonEmpty: (nodeModules) => {
-        const read = gatherAll(Array.map(names, readInstalled(nodeModules)));
-        return {
-          installation: Installation.Installed({ packages: Record.fromEntries(read.found) }),
-          skipped: read.skipped,
-        };
-      },
-    },
+): { readonly installation: Installation; readonly skipped: ReadonlyArray<FileError> } => {
+  const nodeModules = Array.map(lineage(path.resolve(rootDir)), (dir) =>
+    path.join(dir, 'node_modules'),
   );
+  const read = gatherAll(Array.map(names, readInstalled(nodeModules)));
+  return {
+    installation: Array.match(read.found, {
+      onEmpty: () => Installation.NotInstalled(),
+      onNonEmpty: (found) => Installation.Installed({ packages: Record.fromEntries(found) }),
+    }),
+    skipped: read.skipped,
+  };
+};
