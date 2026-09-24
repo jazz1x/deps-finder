@@ -68,6 +68,19 @@ describe('elideTypeOnlyImports', () => {
     ]);
   });
 
+  test('a declared name, class member, enum member or label spelled like a binding is no use of it', async () => {
+    const content = [
+      "import { D } from 'd';",
+      'type T = { D: string };',
+      'function f<D>(x: D): D { return x; }',
+      'enum E { D = 1 }',
+      'export class C { D = 1; M(): D | null { return null; } static D(): void {} }',
+      'D: for (;;) { if (f) continue D; break D; }',
+      'export const v: T = { D: "" }, g = f, e = E;',
+    ].join('\n');
+    expect(await elided({ 'a.ts': content }, pkg({ devDependencies: ['d'] }))).toEqual(['d:type-only:a.ts:1']);
+  });
+
   test('a binding in any value position keeps the import', async () => {
     const content = [
       "import { Tag } from 'jsx-lib';",

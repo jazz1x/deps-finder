@@ -29,6 +29,16 @@ const typeSpan = (node: Spanned): ReadonlyArray<AstEvent> => [
   AstEvent.TypeSpan({ start: node.start, end: node.end }),
 ];
 
+const notReference = (name: Spanned | null): ReadonlyArray<AstEvent> =>
+  Array.map(Option.toArray(Option.fromNullOr(name)), ({ start }) =>
+    AstEvent.NotReference({ at: start }),
+  );
+
+const memberKey = (member: {
+  readonly computed: boolean;
+  readonly key: Spanned;
+}): ReadonlyArray<AstEvent> => (member.computed ? [] : notReference(member.key));
+
 const jsxRoot = (
   name: JSXElementName,
 ): Option.Option<{ readonly name: string; readonly start: number }> =>
@@ -42,8 +52,9 @@ const jsxRoot = (
 const factoryUse = (factories: ReadonlyArray<string>, at: number): ReadonlyArray<AstEvent> =>
   Array.map(factories, (name) => AstEvent.Name({ name, at }));
 
-// The bound names used anywhere outside a type position, an import or export of types, or a
-// property key.
+// The bound names used anywhere outside a type position, an import or export of types, a
+// property, member or enum key, or a label. Scopes are not tracked: a parameter or local that
+// reuses an imported name still counts as a use, which keeps the import.
 const valueUses = (
   program: Program,
   bound: ReadonlyArray<string>,
@@ -55,14 +66,19 @@ const valueUses = (
     TSTypeQuery: (node) => collect(typeSpan(node)),
     TSInterfaceDeclaration: (node) => collect(typeSpan(node)),
     TSClassImplements: (node) => collect(typeSpan(node)),
+    TSTypeAliasDeclaration: (node) => collect(typeSpan(node)),
+    TSTypeParameter: (node) => collect(typeSpan(node)),
+    TSEnumMember: (node) => collect(memberKey({ computed: node.computed, key: node.id })),
+    PropertyDefinition: (node) => collect(memberKey(node)),
+    MethodDefinition: (node) => collect(memberKey(node)),
+    LabeledStatement: (node) => collect(notReference(node.label)),
+    BreakStatement: (node) => collect(notReference(node.label)),
+    ContinueStatement: (node) => collect(notReference(node.label)),
     ExportNamedDeclaration: (node) => collect(node.exportKind === 'type' ? typeSpan(node) : []),
     ExportSpecifier: (node) => collect(node.exportKind === 'type' ? typeSpan(node) : []),
     MemberExpression: (node) =>
       collect(node.computed ? [] : [AstEvent.NotReference({ at: node.property.start })]),
-    Property: (node) =>
-      collect(
-        node.computed || node.shorthand ? [] : [AstEvent.NotReference({ at: node.key.start })],
-      ),
+    Property: (node) => collect(node.shorthand ? [] : memberKey(node)),
     Identifier: (node) =>
       collect(
         Array.contains(bound, node.name)
