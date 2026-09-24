@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { Option, Result } from 'effect';
+import { Option } from 'effect';
+import { MESSAGES } from '@/constants/messages';
 import { FileError } from '@/domain/errors';
+import { formatSkippedSource } from '@/reporters/error-reporter';
 import { type EmitSettings, type FileContext, JsxRuntime } from '@/domain/types';
 import { UNCONFIGURED } from './emit-settings';
 import {
@@ -251,13 +253,14 @@ describe('parseFile', () => {
     await writeFile(filePath, "import { a } from 'pkg';");
 
     const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED });
-    expect(Result.isSuccess(result)).toBe(true);
-    expect(Result.getOrThrow(result)[0]!.packageName).toBe('pkg');
+    expect(result.unreadable).toEqual([]);
+    expect(result.imports[0]!.packageName).toBe('pkg');
   });
 
   test('should return Error for non-existent file', () => {
     const result = parseFile({ path: `${testDir}/non-existent.ts`, context: 'production', emit: UNCONFIGURED });
-    expect(Result.isFailure(result)).toBe(true);
+    expect(result.imports).toEqual([]);
+    expect(result.unreadable).toHaveLength(1);
   });
 });
 
@@ -510,29 +513,13 @@ describe('parseFile error paths', () => {
   });
 
   test('returns Error tagged FileNotFound for missing file', () => {
-    const result = parseFile({ path: `${testDir}/missing.ts`, context: 'production', emit: UNCONFIGURED });
-    expect(Result.isFailure(result)).toBe(true);
-    Result.match(result, {
-      onSuccess: () => {
-        throw new Error('Should not be Ok');
-      },
-      onFailure: (err) => {
-        expect(FileError.$is('FileNotFound')(err)).toBe(true);
-      },
-    });
+    const { unreadable } = parseFile({ path: `${testDir}/missing.ts`, context: 'production', emit: UNCONFIGURED });
+    expect(unreadable.map(FileError.$is('FileNotFound'))).toEqual([true]);
   });
 
   test('returns Error tagged ReadFailed when path is a directory', () => {
-    const result = parseFile({ path: testDir, context: 'production', emit: UNCONFIGURED });
-    expect(Result.isFailure(result)).toBe(true);
-    Result.match(result, {
-      onSuccess: () => {
-        throw new Error('Should not be Ok');
-      },
-      onFailure: (err) => {
-        expect(FileError.$is('ReadFailed')(err)).toBe(true);
-      },
-    });
+    const { unreadable } = parseFile({ path: testDir, context: 'production', emit: UNCONFIGURED });
+    expect(unreadable.map(FileError.$is('ReadFailed'))).toEqual([true]);
   });
 });
 
@@ -784,7 +771,7 @@ describe('parseFile source kinds', () => {
   });
 
   const parsed = (file: string) =>
-    Result.getOrThrow(parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED })).map(
+    parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED }).imports.map(
       (found) => `${found.packageName}:${found.importType}:${found.context}`,
     );
 
@@ -803,7 +790,7 @@ describe('parseFile source kinds', () => {
   });
 
   const located = (file: string) =>
-    Result.getOrThrow(parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED })).map(
+    parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED }).imports.map(
       (found) => `${found.line}:${found.packageName}:${found.importType}:${found.importStatement}`,
     );
 
@@ -824,6 +811,7 @@ describe('parseFile source kinds', () => {
     expect(located('App.vue')).toEqual([
       "3:pinia:type-only:import type { Store } from 'pinia';",
       "6:dayjs:runtime:import dayjs from 'dayjs';",
+      '1:vue:runtime:App.vue',
     ]);
   });
 
@@ -843,6 +831,7 @@ describe('parseFile source kinds', () => {
     expect(located('App.svelte')).toEqual([
       "2:nanoid:runtime:import { nanoid } from 'nanoid';",
       "5:svelte:runtime:import { onMount } from 'svelte';",
+      '1:svelte:runtime:App.svelte',
     ]);
   });
 
@@ -860,7 +849,11 @@ describe('parseFile source kinds', () => {
         '</script>',
       ].join('\n'),
     );
-    expect(located('page.astro')).toEqual(["2:clsx:runtime:import clsx from 'clsx';", "7:date-fns:runtime:import 'date-fns';"]);
+    expect(located('page.astro')).toEqual([
+      "2:clsx:runtime:import clsx from 'clsx';",
+      "7:date-fns:runtime:import 'date-fns';",
+      '1:astro:runtime:page.astro',
+    ]);
   });
 
   test('a stylesheet contributes the packages its at-rules load', async () => {
@@ -886,14 +879,28 @@ describe('parseFile source kinds', () => {
       ].join('\n'),
     );
     expect(located('App.vue')).toEqual([
+      '1:vue:runtime:App.vue',
       "3:normalize.css:runtime:@import 'normalize.css'",
       "10:animate.css:runtime:@import url('animate.css')",
     ]);
   });
 
-  test('a component whose style block does not parse fails as a whole', async () => {
-    await writeFile(`${testDir}/App.svelte`, "<script>\nimport 'nanoid';\n</script>\n<style>\n.a { color: red\n</style>");
-    const result = parseFile({ path: `${testDir}/App.svelte`, context: 'production', emit: UNCONFIGURED });
-    expect(Result.isFailure(result)).toBe(true);
+  test('a style block that does not parse is skipped alone, and the scripts still count', async () => {
+    const file = `${testDir}/App.svelte`;
+    await writeFile(file, "<script>\nimport 'nanoid';\n</script>\n<style>\n.a { color: red\n</style>");
+    const { imports, unreadable } = parseMultipleFiles([{ path: file, context: 'production', emit: UNCONFIGURED }]);
+    expect(imports.map((found) => found.packageName)).toContain('nanoid');
+    expect(unreadable.map(formatSkippedSource)).toEqual([
+      MESSAGES.SOURCE_SKIPPED(MESSAGES.STYLE_BLOCK_OF(file), 'Unclosed block at line 5'),
+    ]);
+  });
+
+  test.each([
+    ['App.vue', 'vue'],
+    ['App.svelte', 'svelte'],
+    ['page.astro', 'astro'],
+  ])('%s uses %s, which its compiled output imports', async (file, framework) => {
+    await writeFile(`${testDir}/${file}`, '<p>x</p>\n');
+    expect(located(file)).toEqual([`1:${framework}:runtime:${file}`]);
   });
 });
