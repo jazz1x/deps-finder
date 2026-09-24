@@ -7,38 +7,64 @@ const DependencySection = Schema.optionalKey(
   Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-const DeclarationEntry = Schema.optionalKey(
-  Schema.NonEmptyString.pipe(Schema.catchDecoding(() => Effect.succeedNone)),
-);
+const lenient = <S extends Schema.Top>(schema: S) =>
+  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
+
+type ExportsTarget =
+  | string
+  | null
+  | ReadonlyArray<ExportsTarget>
+  | { readonly [condition: string]: ExportsTarget };
+
+const ExportsTarget: Schema.Codec<ExportsTarget> = Schema.Union([
+  Schema.String,
+  Schema.Null,
+  Schema.Array(Schema.suspend((): Schema.Codec<ExportsTarget> => ExportsTarget)),
+  Schema.Record(
+    Schema.String,
+    Schema.suspend((): Schema.Codec<ExportsTarget> => ExportsTarget),
+  ),
+]);
 
 const PackageJsonFile = Schema.Struct({
   dependencies: DependencySection,
   devDependencies: DependencySection,
   peerDependencies: DependencySection,
-  types: DeclarationEntry,
-  typings: DeclarationEntry,
-  exports: Schema.optionalKey(Schema.Unknown),
+  types: lenient(Schema.NonEmptyString),
+  typings: lenient(Schema.NonEmptyString),
+  exports: lenient(ExportsTarget),
 });
 
 const namesOf = (
   section: Readonly<Record<string, unknown>> | null | undefined,
 ): ReadonlyArray<PackageName> => Object.keys(section ?? {});
 
-const hasTypesCondition = (exports: unknown): boolean =>
-  Match.value(exports).pipe(
-    Match.when(globalThis.Array.isArray, (targets) => Array.some(targets, hasTypesCondition)),
-    Match.when(Match.record, (conditions) =>
-      Array.some(
-        Record.toEntries(conditions),
-        ([condition, target]) => condition === 'types' || hasTypesCondition(target),
-      ),
+const isTargetList = (target: ExportsTarget): target is ReadonlyArray<ExportsTarget> =>
+  globalThis.Array.isArray(target);
+
+// The targets of every "types" condition, at any depth.
+const typesConditions = (target: ExportsTarget | undefined): ReadonlyArray<ExportsTarget> =>
+  Match.value(target).pipe(
+    Match.when(Match.string, (): ReadonlyArray<ExportsTarget> => []),
+    Match.when(Match.null, (): ReadonlyArray<ExportsTarget> => []),
+    Match.when(Match.undefined, (): ReadonlyArray<ExportsTarget> => []),
+    Match.when(isTargetList, (targets) => Array.flatMap(targets, typesConditions)),
+    Match.orElse((conditions) =>
+      Array.flatMap(Record.toEntries(conditions), ([condition, nested]) => [
+        ...(condition === 'types' ? [nested] : []),
+        ...typesConditions(nested),
+      ]),
     ),
-    Match.orElse(() => false),
   );
 
-const publishesDeclarations = (file: typeof PackageJsonFile.Type): boolean =>
-  Array.some([file.types, file.typings], (entry) => entry !== undefined) ||
-  hasTypesCondition(file.exports);
+const declarationsOf = (file: typeof PackageJsonFile.Type): PackageJson['declarations'] =>
+  Array.match(
+    [
+      ...Array.filter([file.types, file.typings], (entry) => entry !== undefined),
+      ...typesConditions(file.exports),
+    ],
+    { onEmpty: () => 'none', onNonEmpty: () => 'published' },
+  );
 
 export const readPackageJson = (path: string): Result.Result<PackageJson, FileError> =>
   pipe(
@@ -47,6 +73,6 @@ export const readPackageJson = (path: string): Result.Result<PackageJson, FileEr
       dependencies: namesOf(file.dependencies),
       devDependencies: namesOf(file.devDependencies),
       peerDependencies: namesOf(file.peerDependencies),
-      declarations: publishesDeclarations(file) ? 'published' : 'none',
+      declarations: declarationsOf(file),
     })),
   );
