@@ -7,11 +7,12 @@ import type {
   TSImportEqualsDeclaration,
   TSModuleDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Order, Result, String, pipe } from 'effect';
+import { Array, Match, Option, Order, Record, Result, String, pipe } from 'effect';
 import {
   type Comment,
   type DynamicImport,
   type ParseResult,
+  type ParserOptions,
   type StaticExport,
   type StaticImport,
   Visitor,
@@ -297,8 +298,24 @@ const commentReferences = (comment: Comment): ReadonlyArray<ModuleReference> =>
     Match.orElse((): ReadonlyArray<ModuleReference> => []),
   );
 
+// CRA and older Vite projects write JSX in .js files.
+const JSX_LANG: ParserOptions = { lang: 'jsx' };
+
+const OPTIONS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
+  '.js': JSX_LANG,
+  '.mjs': JSX_LANG,
+  '.cjs': JSX_LANG,
+};
+
+const parse = (content: string, filePath: string): ParseResult =>
+  parseSync(
+    filePath,
+    content,
+    Option.getOrUndefined(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath))),
+  );
+
 const moduleReferences = (content: string, filePath: string): ReadonlyArray<ModuleReference> => {
-  const parsed = parseSync(filePath, content);
+  const parsed = parse(content, filePath);
   const ast =
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
       ? astReferences(parsed.program)

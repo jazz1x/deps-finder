@@ -480,6 +480,12 @@ describe('extractImports edge cases', () => {
     expect(findings.map((f) => f.packageName)).toContain('real-pkg');
   });
 
+  test.each(['src/App.js', 'src/App.mjs', 'src/App.cjs'])('JSX in %s hides none of its imports', (file) => {
+    const content =
+      'import React from "react";\nconst App = () => <div className="a">hi</div>;\nimport { z } from "zod";\nconst c = require("clsx");';
+    expect(extractImports(content, file).map((f) => f.packageName)).toEqual(['react', 'zod', 'clsx']);
+  });
+
   test('require() counts as exactly one runtime finding (no duplicate from REQUIRE_REGEX)', () => {
     const result = extractImports("const m = require('lodash');", 'src/index.ts');
     const lodashEntries = result.filter((f) => f.packageName === 'lodash');
