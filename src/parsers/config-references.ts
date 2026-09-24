@@ -77,8 +77,10 @@ const CONFIG_FILES: ReadonlyArray<readonly [RegExp, Tool]> = [
   [/^(?:project|nx)\.json$/, 'nx'],
   [/^[^/]+\.(?:config|preset)\.(?:[^/]+\.)?[cm]?[jt]sx?$/, 'other'],
   // Manifests and lockfiles list what is installed, not what is used; tsconfigs are read on their own.
+  // Dependency-manager configs (renovate, ncu, knip, syncpack, depcheck) name packages to manage or
+  // ignore them, so counting those names would hide a truly unused package.
   [
-    /^(?!package(?:-lock)?\.json$|npm-shrinkwrap\.json$|pnpm-(?:lock|workspace)\.yaml$|[jt]sconfig(?:\.[^/]+)?\.json$)[^/]+\.(?:jsonc?|ya?ml)$/,
+    /^(?!package(?:-lock)?\.json$|npm-shrinkwrap\.json$|pnpm-(?:lock|workspace)\.yaml$|[jt]sconfig(?:\.[^/]+)?\.json$|renovate\.json$|\.renovaterc\.json$|\.ncurc\.|\.?knip\.jsonc?$|\.syncpackrc\.|\.depcheckrc\.)[^/]+\.(?:jsonc?|ya?ml)$/,
     'other',
   ],
 ];

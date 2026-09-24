@@ -115,6 +115,17 @@ describe('readToolConfigs', () => {
     expect(referenced().toSorted()).toEqual(['@company/oxlint-rules', 'typescript-operations']);
   });
 
+  test('dependency-manager configs list names without using them', async () => {
+    await write('renovate.json', { packageRules: [{ matchPackageNames: ['moment'], enabled: false }] });
+    await write('.renovaterc.json', { ignoreDeps: ['lodash'] });
+    await write('.ncurc.json', { reject: ['left-pad'] });
+    await write('knip.json', { ignoreDependencies: ['chalk'] });
+    await write('.syncpackrc.yml', 'versionGroups:\n  - dependencies: [react]\n');
+    await write('.depcheckrc.json', { ignores: ['zod'] });
+
+    expect(referenced()).toEqual([]);
+  });
+
   test('a root YAML file with many aliases is read for its names', async () => {
     const steps = Array.from({ length: 120 }, () => '    - step: *lint').join('\n');
     await write(
