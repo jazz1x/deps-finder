@@ -3,7 +3,7 @@ import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Option, Result } from 'effect';
 import { FileError } from '@/domain/errors';
-import { type EmitSettings, JsxRuntime } from '@/domain/types';
+import { type EmitSettings, type FileContext, JsxRuntime } from '@/domain/types';
 import { UNCONFIGURED } from '@/parsers/emit-settings';
 import {
   extractImports,
@@ -645,14 +645,31 @@ describe('extractImports type positions', () => {
   });
 });
 
-const uses = (content: string, file: string, emit: EmitSettings = UNCONFIGURED) =>
-  extractImports(content, file, emit).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
+const uses = (content: string, file: string, emit: EmitSettings = UNCONFIGURED, context: FileContext = 'production') =>
+  extractImports(content, file, { context, emit }).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
+
+describe('extractImports test globals', () => {
+  test('a development file calling describe/it/expect as globals uses the test runner types', () => {
+    const content = 'describe("sum", () => {\n  it.each([1])("adds", (n) => expect(n).toBe(1));\n});';
+    expect(uses(content, 'src/sum.test.ts', UNCONFIGURED, 'development')).toEqual([
+      '@types/jest:type-only:1',
+      '@types/mocha:type-only:1',
+      '@types/jasmine:type-only:1',
+    ]);
+  });
+
+  test('imported test functions and production files are no global use', () => {
+    const imported = 'import { describe, it } from "vitest";\ndescribe("a", () => it("b", () => {}));';
+    expect(uses(imported, 'src/a.test.ts', UNCONFIGURED, 'development')).toEqual(['vitest:runtime:1']);
+    expect(uses('test("a", () => {});', 'src/a.ts')).toEqual([]);
+  });
+});
 
 describe('extractImports JSX runtime', () => {
   test('JSX is a runtime import of react/jsx-runtime, even beside a type-only react import', () => {
     const content = 'import type { FC } from "react";\nexport const A: FC = () => (\n  <div>hi</div>\n);';
     expect(uses(content, 'src/A.tsx')).toEqual(['react:type-only:1', 'react:runtime:3']);
-    expect(extractImports(content, 'src/A.tsx', UNCONFIGURED)[1]?.importStatement).toBe('<div>hi</div>');
+    expect(extractImports(content, 'src/A.tsx')[1]?.importStatement).toBe('<div>hi</div>');
   });
 
   test('a @jsxImportSource pragma overrides the source the settings name', () => {

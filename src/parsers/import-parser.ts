@@ -34,7 +34,6 @@ import {
 import type { FileError } from '../domain/errors.js';
 import {
   type DependencyType,
-  type EmitSettings,
   type FileContext,
   type Gathered,
   type ImportDetails,
@@ -404,10 +403,39 @@ const jsxRuntimeReference = (
       ),
   });
 
+const TEST_GLOBAL_CALL =
+  /(?<![\w$.])(describe|it|test|expect|beforeEach|afterEach)\s*(?:\.\s*[\w$]+\s*)*\(/g;
+
+const TEST_GLOBAL_TYPES = ['@types/jest', '@types/mocha', '@types/jasmine'] as const;
+
+const testGlobalReferences = (
+  content: string,
+  parsed: ParseResult,
+): ReadonlyArray<ModuleReference> => {
+  const imported = Array.flatMap(parsed.module.staticImports, (statement) =>
+    Array.map(statement.entries, (entry) => entry.localName.value),
+  );
+  return pipe(
+    Array.findFirst(
+      [...content.matchAll(TEST_GLOBAL_CALL)],
+      (call) => !Array.contains(imported, call[1]),
+    ),
+    Option.match({
+      onNone: () => [],
+      onSome: (call) =>
+        Array.map(TEST_GLOBAL_TYPES, (types) =>
+          referenceAt(types, true, { start: call.index, end: call.index + call[0].length }),
+        ),
+    }),
+  );
+};
+
+type Scope = Pick<SourceFile, 'context' | 'emit'>;
+
 const moduleReferences = (
   content: string,
   filePath: string,
-  emit: EmitSettings,
+  { context, emit }: Scope,
 ): ReadonlyArray<ModuleReference> => {
   const parsed = parse(content, filePath);
   const ast =
@@ -423,6 +451,11 @@ const moduleReferences = (
     ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
     ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
     ...jsxRuntimeReference(content, filePath, parsed, emit.jsx),
+    ...Match.value(context).pipe(
+      Match.when('development', () => testGlobalReferences(content, parsed)),
+      Match.when('production', () => []),
+      Match.exhaustive,
+    ),
   ];
 };
 
@@ -431,12 +464,12 @@ type FileImport = Omit<ImportDetails, 'context'>;
 export const extractImports = (
   content: string,
   filePath: string,
-  emit: EmitSettings = UNCONFIGURED,
+  scope: Scope = { context: 'production', emit: UNCONFIGURED },
 ): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
 
   return pipe(
-    moduleReferences(content, filePath, emit),
+    moduleReferences(content, filePath, scope),
     Array.map((ref) =>
       pipe(
         extractPackageName(ref.specifier),
@@ -457,7 +490,7 @@ const readImports = (source: SourceFile): Result.Result<ReadonlyArray<ImportDeta
   pipe(
     readFile(source.path),
     Result.map((content) =>
-      Array.map(extractImports(content, source.path, source.emit), (found): ImportDetails => ({
+      Array.map(extractImports(content, source.path, source), (found): ImportDetails => ({
         ...found,
         context: source.context,
       })),
