@@ -533,4 +533,16 @@ describe('compiler settings', () => {
 
     expect(result.unused).toEqual([]);
   });
+
+  test('JSX uses the runtime of the tsconfig that governs the file', async () => {
+    await write('tsconfig.json', { compilerOptions: { jsx: 'react-jsx' } });
+    await write('src/Btn.tsx', 'import type { FC } from "react";\nexport const Btn: FC = () => <button>x</button>;');
+    await write('apps/admin/package.json', { name: 'admin' });
+    await write('apps/admin/tsconfig.app.json', { compilerOptions: { jsxImportSource: '@emotion/react' } });
+    await write('apps/admin/src/Card.tsx', 'export const Card = () => <div css={{ color: "red" }} />;');
+
+    const result = analyze(pkg({ dependencies: ['react', '@emotion/react'], devDependencies: ['typescript'] }));
+
+    expect(result).toMatchObject({ unused: [], typeOnly: [], misplaced: [] });
+  });
 });

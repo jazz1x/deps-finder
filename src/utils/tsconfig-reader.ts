@@ -18,6 +18,12 @@ const TsConfig = Schema.Struct({
       declarationDir: option(Schema.NonEmptyString),
       types: option(Schema.NullOr(Schema.Array(Schema.String))),
       importHelpers: option(Schema.NullOr(Schema.Boolean)),
+      jsx: option(
+        Schema.NullOr(
+          Schema.Literals(['preserve', 'react', 'react-jsx', 'react-jsxdev', 'react-native']),
+        ),
+      ),
+      jsxImportSource: option(Schema.NullOr(Schema.NonEmptyString)),
     }),
   ),
 });

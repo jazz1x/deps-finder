@@ -1,3 +1,4 @@
+import { Data } from 'effect';
 import type { FileError } from './errors.js';
 
 export type PackageName = string;
@@ -16,9 +17,20 @@ export type ImportType = 'runtime' | 'type-only';
 
 export type FileContext = 'production' | 'development';
 
+export type JsxRuntime = Data.TaggedEnum<{
+  Classic: {};
+  Automatic: { readonly importSource: string };
+}>;
+
+export const JsxRuntime = Data.taggedEnum<JsxRuntime>();
+
+// How the compiler emits a file, from the tsconfig that governs it.
+export type EmitSettings = { readonly jsx: JsxRuntime };
+
 export type SourceFile = {
   readonly path: string;
   readonly context: FileContext;
+  readonly emit: EmitSettings;
 };
 
 export type ImportLocation = {

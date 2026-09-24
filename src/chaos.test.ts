@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { Option, Result, Schema } from 'effect';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
+import { UNCONFIGURED } from '@/parsers/emit-settings';
 import { extractImports, extractPackageName, parseFile } from '@/parsers/import-parser';
 import { readPackageJson } from '@/parsers/package-parser';
 import type { PackageJson } from '@/domain/types';
@@ -187,7 +188,7 @@ describe('chaos: file-reader on random file contents', () => {
     await Promise.all(paths.map((p) => writeFile(p, randomImportLikeContent(rng))));
 
     for (const filePath of paths) {
-      const result = parseFile({ path: filePath, context: 'production' });
+      const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED });
       if (Result.isSuccess(result)) {
         expect(Array.isArray(Result.getOrThrow(result))).toBe(true);
       }

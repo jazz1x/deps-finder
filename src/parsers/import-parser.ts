@@ -34,14 +34,17 @@ import {
 import type { FileError } from '../domain/errors.js';
 import {
   type DependencyType,
+  type EmitSettings,
   type FileContext,
   type Gathered,
   type ImportDetails,
   type ImportType,
+  JsxRuntime,
   type PackageJson,
   type PackageName,
   type SourceFile,
 } from '../domain/types.js';
+import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
 import { readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
 import { gatherAll, readFile } from '../utils/file-reader.js';
@@ -318,7 +321,74 @@ const parse = (content: string, filePath: string): ParseResult =>
     Option.getOrUndefined(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath))),
   );
 
-const moduleReferences = (content: string, filePath: string): ReadonlyArray<ModuleReference> => {
+const WITHOUT_JSX: Readonly<Record<string, ParserOptions>> = {
+  '.tsx': { lang: 'ts' },
+  '.jsx': { lang: 'js' },
+  '.js': { lang: 'js' },
+  '.mjs': { lang: 'js' },
+  '.cjs': { lang: 'js' },
+};
+
+// A file that parses only with JSX holds JSX. Walking every such AST for JSX nodes cost
+// foodspring-front 1.3s over a 0.2s parse; this second parse costs 30ms and fails on the same files.
+const firstJsxAt = (
+  content: string,
+  filePath: string,
+  parsed: ParseResult,
+): Option.Option<number> =>
+  pipe(
+    Record.get(WITHOUT_JSX, path.extname(filePath)),
+    Option.filter(() => content.includes('<') && Array.isReadonlyArrayEmpty(parsed.errors)),
+    Option.flatMap((options) => Array.head(parseSync(filePath, content, options).errors)),
+    Option.map((error) =>
+      Option.match(Array.head(error.labels), { onNone: () => 0, onSome: (label) => label.start }),
+    ),
+  );
+
+const lineAround = (content: string, at: number): Span => ({
+  start: content.lastIndexOf('\n', at - 1) + 1,
+  end: pipe(content.indexOf('\n', at), (end) => (end === -1 ? content.length : end)),
+});
+
+const JSX_IMPORT_SOURCE = /@jsxImportSource\s+(\S+)/;
+
+const pragmaSource = (content: string, parsed: ParseResult): Option.Option<string> =>
+  pipe(
+    Option.liftPredicate(content, String.includes('@jsxImportSource')),
+    Option.flatMap(() =>
+      Array.findFirst(parsed.comments, (comment) =>
+        Option.fromNullishOr(JSX_IMPORT_SOURCE.exec(comment.value)?.[1]),
+      ),
+    ),
+  );
+
+const jsxRuntimeReference = (
+  content: string,
+  filePath: string,
+  parsed: ParseResult,
+  jsx: JsxRuntime,
+): ReadonlyArray<ModuleReference> =>
+  JsxRuntime.$match(jsx, {
+    Classic: () => [],
+    Automatic: ({ importSource }) =>
+      pipe(
+        firstJsxAt(content, filePath, parsed),
+        Option.map((at) =>
+          referenceAt(
+            Option.getOrElse(pragmaSource(content, parsed), () => importSource),
+            false,
+            lineAround(content, at),
+          ),
+        ),
+        Option.toArray,
+      ),
+  });
+
+const moduleReferences = (
+  content: string,
+  filePath: string,
+  emit: EmitSettings,
+): ReadonlyArray<ModuleReference> => {
   const parsed = parse(content, filePath);
   const ast =
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
@@ -331,16 +401,21 @@ const moduleReferences = (content: string, filePath: string): ReadonlyArray<Modu
     ...ast.references,
     ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
     ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
+    ...jsxRuntimeReference(content, filePath, parsed, emit.jsx),
   ];
 };
 
 type FileImport = Omit<ImportDetails, 'context'>;
 
-export const extractImports = (content: string, filePath: string): ReadonlyArray<FileImport> => {
+export const extractImports = (
+  content: string,
+  filePath: string,
+  emit: EmitSettings = UNCONFIGURED,
+): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
 
   return pipe(
-    moduleReferences(content, filePath),
+    moduleReferences(content, filePath, emit),
     Array.map((ref) =>
       pipe(
         extractPackageName(ref.specifier),
@@ -361,7 +436,7 @@ const readImports = (source: SourceFile): Result.Result<ReadonlyArray<ImportDeta
   pipe(
     readFile(source.path),
     Result.map((content) =>
-      Array.map(extractImports(content, source.path), (found): ImportDetails => ({
+      Array.map(extractImports(content, source.path, source.emit), (found): ImportDetails => ({
         ...found,
         context: source.context,
       })),
@@ -476,13 +551,14 @@ export const findFiles = (
     isSource: shouldAnalyzeFile,
   });
   const tsconfigs = governingTsConfigs(rootDir, walked.found);
+  const emitOf = emitSettingsOf(tsconfigs.found);
   return {
     found: pipe(
       walked.found,
-      Array.map((source) => ({
-        path: path.resolve(rootDir, source.path),
-        context: fileContextOf(source),
-      })),
+      Array.map((source): SourceFile => {
+        const absolute = path.resolve(rootDir, source.path);
+        return { path: absolute, context: fileContextOf(source), emit: emitOf(absolute) };
+      }),
       (files) => Array.sort(files, byPath),
     ),
     // Build-directory detection reads the root tsconfig files too.
@@ -511,7 +587,11 @@ const installs =
 const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileError> =>
   Result.map(readPackageJson(path.join(leftOut.dir, 'package.json')), (declared) => {
     const parsed = parseMultipleFiles(
-      Array.map(leftOut.files, (file): SourceFile => ({ path: file, context: 'development' })),
+      Array.map(leftOut.files, (file): SourceFile => ({
+        path: file,
+        context: 'development',
+        emit: UNCONFIGURED,
+      })),
     );
     return {
       ...parsed,
