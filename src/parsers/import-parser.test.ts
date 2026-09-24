@@ -684,6 +684,13 @@ describe('extractImports JSX runtime', () => {
       uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] }),
     ).toEqual([]);
   });
+
+  test('a @jsxRuntime pragma switches the file to that runtime', () => {
+    const emotion = "/** @jsxRuntime classic */\n/** @jsx jsx */\nimport { jsx } from '@emotion/react';\nexport const A = () => <div />;";
+    expect(uses(emotion, 'src/A.tsx')).toEqual(['@emotion/react:runtime:3']);
+    const automatic = '/** @jsxRuntime automatic */\nexport const A = () => <div />;';
+    expect(uses(automatic, 'src/A.tsx', { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] })).toEqual(['react:runtime:2']);
+  });
 });
 
 describe('extractImports under verbatimModuleSyntax', () => {

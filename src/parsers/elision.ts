@@ -13,7 +13,7 @@ import {
 } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
-import { collectVisiting, parse } from './import-parser.js';
+import { collectVisiting, fileJsxRuntimes, parse } from './import-parser.js';
 
 type AstEvent = Data.TaggedEnum<{
   TypeSpan: { readonly start: number; readonly end: number };
@@ -96,28 +96,16 @@ const valueUses = (
   );
 };
 
-const JSX_PRAGMA = /@jsx\s+([\w$]+)/;
-
 const classicFactories = (
-  runtimes: ReadonlyArray<JsxRuntime>,
   content: string,
   parsed: ParseResult,
+  configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
 ): ReadonlyArray<string> =>
   Array.flatMap(
-    runtimes,
+    fileJsxRuntimes(content, parsed, configured),
     JsxRuntime.$match({
       Automatic: (): ReadonlyArray<string> => [],
-      Classic: ({ factory }) => [
-        pipe(
-          Option.liftPredicate(content, (text) => JSX_PRAGMA.test(text)),
-          Option.flatMap(() =>
-            Array.findFirst(parsed.comments, (comment) =>
-              Option.fromNullishOr(JSX_PRAGMA.exec(comment.value)?.[1]),
-            ),
-          ),
-          Option.getOrElse(() => factory),
-        ),
-      ],
+      Classic: ({ factory }) => [factory],
     }),
   );
 
@@ -138,7 +126,7 @@ const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<st
     Array.flatMap(withValues, (statement) =>
       Array.map(valueEntries(statement), (entry) => entry.localName.value),
     ),
-    classicFactories(source.emit.jsx, content, parsed),
+    classicFactories(content, parsed, source.emit.jsx),
   );
   const lineStarts = buildLineStarts(content);
   return pipe(

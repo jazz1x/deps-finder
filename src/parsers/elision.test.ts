@@ -114,6 +114,11 @@ describe('elideTypeOnlyImports', () => {
     ]);
   });
 
+  test('a @jsxRuntime classic pragma makes its @jsx factory a value use under the automatic runtime', async () => {
+    const content = "/** @jsxRuntime classic */\n/** @jsx jsx */\nimport { jsx } from '@emotion/react';\nexport const A = () => <div />;";
+    expect(await elided({ 'a.tsx': content }, pkg({ dependencies: ['@emotion/react'] }))).toEqual(['@emotion/react:runtime:a.tsx:3']);
+  });
+
   test('verbatim and decorator metadata keep imports, and so does JavaScript', async () => {
     const content = "import { T } from 'lib';\nexport type X = T;";
     const packageJson = pkg({ dependencies: ['lib'] });

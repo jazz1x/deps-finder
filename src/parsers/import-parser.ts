@@ -399,37 +399,76 @@ const lineAround = (content: string, at: number): Span => ({
   end: pipe(content.indexOf('\n', at), (end) => (end === -1 ? content.length : end)),
 });
 
-const JSX_IMPORT_SOURCE = /@jsxImportSource\s+(\S+)/;
-
-const pragmaSource = (content: string, parsed: ParseResult): Option.Option<string> =>
-  pipe(
-    Option.liftPredicate(content, String.includes('@jsxImportSource')),
-    Option.flatMap(() =>
-      Array.findFirst(parsed.comments, (comment) =>
-        Option.fromNullishOr(JSX_IMPORT_SOURCE.exec(comment.value)?.[1]),
+const pragmaIn =
+  (content: string, parsed: ParseResult) =>
+  (pragma: RegExp): Option.Option<string> =>
+    pipe(
+      Option.liftPredicate(content, String.includes('@jsx')),
+      Option.flatMap(() =>
+        Array.findFirst(parsed.comments, (comment) =>
+          Option.fromNullishOr(pragma.exec(comment.value)?.[1]),
+        ),
       ),
+    );
+
+const toClassic = JsxRuntime.$match({
+  Classic: (classic) => classic,
+  Automatic: () => JsxRuntime.Classic({ factory: 'React' }),
+});
+
+const toAutomatic = JsxRuntime.$match({
+  Classic: () => JsxRuntime.Automatic({ importSource: 'react' }),
+  Automatic: (automatic) => automatic,
+});
+
+const RUNTIME_PRAGMAS: Readonly<Record<string, (runtime: JsxRuntime) => JsxRuntime>> = {
+  classic: toClassic,
+  automatic: toAutomatic,
+};
+
+// A file's @jsxRuntime, @jsx and @jsxImportSource pragmas override its tsconfig, as in tsc and Babel.
+export const fileJsxRuntimes = (
+  content: string,
+  parsed: ParseResult,
+  configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
+): Array.NonEmptyReadonlyArray<JsxRuntime> => {
+  const pragma = pragmaIn(content, parsed);
+  const switchTo = pipe(
+    pragma(/@jsxRuntime\s+(\S+)/),
+    Option.flatMap((mode) => Record.get(RUNTIME_PRAGMAS, mode)),
+    Option.getOrElse(() => (runtime: JsxRuntime) => runtime),
+  );
+  const factory = pragma(/@jsx\s+([\w$]+)/);
+  const importSource = pragma(/@jsxImportSource\s+(\S+)/);
+  return Array.dedupe(
+    Array.map(configured, (runtime): JsxRuntime =>
+      JsxRuntime.$match(switchTo(runtime), {
+        Classic: (classic) =>
+          JsxRuntime.Classic({ factory: Option.getOrElse(factory, () => classic.factory) }),
+        Automatic: (automatic) =>
+          JsxRuntime.Automatic({
+            importSource: Option.getOrElse(importSource, () => automatic.importSource),
+          }),
+      }),
     ),
   );
+};
 
 const jsxRuntimeReferences = (
   content: string,
   filePath: string,
   parsed: ParseResult,
-  runtimes: ReadonlyArray<JsxRuntime>,
+  configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
 ): ReadonlyArray<ModuleReference> =>
   Option.match(firstJsxAt(content, filePath, parsed), {
     onNone: () => [],
     onSome: (at) =>
       Array.flatMap(
-        runtimes,
+        fileJsxRuntimes(content, parsed, configured),
         JsxRuntime.$match({
           Classic: (): ReadonlyArray<ModuleReference> => [],
           Automatic: ({ importSource }) => [
-            referenceAt(
-              Option.getOrElse(pragmaSource(content, parsed), () => importSource),
-              false,
-              lineAround(content, at),
-            ),
+            referenceAt(importSource, false, lineAround(content, at)),
           ],
         }),
       ),
