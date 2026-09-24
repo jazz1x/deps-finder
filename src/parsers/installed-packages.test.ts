@@ -49,6 +49,10 @@ describe('readInstallation', () => {
     expect(readInstallation(`${testDir}/app`, ['absent']).installation).toEqual(Installation.NotInstalled());
   });
 
+  test('a project that declares nothing needs no install', () => {
+    expect(readInstallation(`${testDir}/app`, []).installation).toEqual(Installation.Installed({ packages: {} }));
+  });
+
   test('peers come from peerDependencies and peerDependenciesMeta', async () => {
     await install(`${testDir}/app/node_modules/next`, {
       peerDependencies: { react: '*' },

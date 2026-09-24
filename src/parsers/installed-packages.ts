@@ -62,6 +62,18 @@ const readInstalled =
     );
 
 // A node_modules above that resolves none of the declared packages belongs to something else.
+// With nothing declared, nothing is missing.
+const installationOf = (
+  names: ReadonlyArray<PackageName>,
+  found: ReadonlyArray<readonly [PackageName, InstalledPackage]>,
+): Installation =>
+  Match.value({ names, found }).pipe(
+    Match.when({ names: Array.isReadonlyArrayNonEmpty, found: Array.isReadonlyArrayEmpty }, () =>
+      Installation.NotInstalled(),
+    ),
+    Match.orElse(() => Installation.Installed({ packages: Record.fromEntries(found) })),
+  );
+
 export const readInstallation = (
   rootDir: string,
   names: ReadonlyArray<PackageName>,
@@ -70,11 +82,5 @@ export const readInstallation = (
     path.join(dir, 'node_modules'),
   );
   const read = gatherAll(Array.map(names, readInstalled(nodeModules)));
-  return {
-    installation: Array.match(read.found, {
-      onEmpty: () => Installation.NotInstalled(),
-      onNonEmpty: (found) => Installation.Installed({ packages: Record.fromEntries(found) }),
-    }),
-    skipped: read.skipped,
-  };
+  return { installation: installationOf(names, read.found), skipped: read.skipped };
 };
