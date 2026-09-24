@@ -411,25 +411,27 @@ const pragmaSource = (content: string, parsed: ParseResult): Option.Option<strin
     ),
   );
 
-const jsxRuntimeReference = (
+const jsxRuntimeReferences = (
   content: string,
   filePath: string,
   parsed: ParseResult,
-  jsx: JsxRuntime,
+  runtimes: ReadonlyArray<JsxRuntime>,
 ): ReadonlyArray<ModuleReference> =>
-  JsxRuntime.$match(jsx, {
-    Classic: () => [],
-    Automatic: ({ importSource }) =>
-      pipe(
-        firstJsxAt(content, filePath, parsed),
-        Option.map((at) =>
-          referenceAt(
-            Option.getOrElse(pragmaSource(content, parsed), () => importSource),
-            false,
-            lineAround(content, at),
-          ),
-        ),
-        Option.toArray,
+  Option.match(firstJsxAt(content, filePath, parsed), {
+    onNone: () => [],
+    onSome: (at) =>
+      Array.flatMap(
+        runtimes,
+        JsxRuntime.$match({
+          Classic: (): ReadonlyArray<ModuleReference> => [],
+          Automatic: ({ importSource }) => [
+            referenceAt(
+              Option.getOrElse(pragmaSource(content, parsed), () => importSource),
+              false,
+              lineAround(content, at),
+            ),
+          ],
+        }),
       ),
   });
 
@@ -480,7 +482,7 @@ const moduleReferences = (
     ...ast.references,
     ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
     ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
-    ...jsxRuntimeReference(content, filePath, parsed, emit.jsx),
+    ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
     ...Match.value(context).pipe(
       Match.when('development', () => testGlobalReferences(content, parsed)),
       Match.when('production', () => []),

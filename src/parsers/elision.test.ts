@@ -106,7 +106,7 @@ describe('elideTypeOnlyImports', () => {
       'b.tsx': "import React from 'react';\nexport const B = () => <></>;",
       'c.tsx': "/** @jsx h */\nimport { h } from 'preact';\nexport const C = () => <p />;",
     };
-    const classic = { ...UNCONFIGURED, jsx: JsxRuntime.Classic({ factory: 'React' }) };
+    const classic: EmitSettings = { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] };
     expect(await elided(files, pkg({ devDependencies: ['react', 'preact'] }), classic)).toEqual([
       'react:runtime:a.tsx:1',
       'react:runtime:b.tsx:1',

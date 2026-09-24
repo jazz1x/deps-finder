@@ -12,6 +12,9 @@ const option = <S extends Schema.Top>(schema: S) =>
 const TsConfig = Schema.Struct({
   extends: option(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
   references: option(Schema.Array(Schema.Struct({ path: Schema.String }))),
+  files: option(Schema.NullOr(Schema.Array(Schema.String))),
+  include: option(Schema.NullOr(Schema.Array(Schema.String))),
+  exclude: option(Schema.NullOr(Schema.Array(Schema.String))),
   compilerOptions: Schema.optionalKey(
     Schema.Struct({
       outDir: option(Schema.NonEmptyString),

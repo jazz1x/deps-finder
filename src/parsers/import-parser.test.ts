@@ -673,7 +673,7 @@ describe('extractImports JSX runtime', () => {
   });
 
   test('a @jsxImportSource pragma overrides the source the settings name', () => {
-    const emit = { ...UNCONFIGURED, jsx: JsxRuntime.Automatic({ importSource: '@emotion/react' }) };
+    const emit: EmitSettings = { ...UNCONFIGURED, jsx: [JsxRuntime.Automatic({ importSource: '@emotion/react' })] };
     expect(uses('/** @jsxImportSource preact */\nexport const A = () => <></>;', 'src/A.jsx', emit)).toEqual(['preact:runtime:2']);
     expect(uses('export const A = () => <b />;', 'src/A.js', emit)).toEqual(['@emotion/react:runtime:1']);
   });
@@ -681,7 +681,7 @@ describe('extractImports JSX runtime', () => {
   test('no runtime import without JSX or under the classic runtime', () => {
     expect(uses('export const lt = (a: number) => a < 2;\nexport const id = <T,>(v: T) => v;', 'src/a.tsx')).toEqual([]);
     expect(
-      uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: JsxRuntime.Classic({ factory: 'React' }) }),
+      uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] }),
     ).toEqual([]);
   });
 });

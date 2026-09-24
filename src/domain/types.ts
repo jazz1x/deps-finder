@@ -1,4 +1,4 @@
-import { Data } from 'effect';
+import { type Array, Data } from 'effect';
 import type { FileError } from './errors.js';
 
 export type PackageName = string;
@@ -33,7 +33,10 @@ export const JsxRuntime = Data.taggedEnum<JsxRuntime>();
 export type ImportElision = 'unused-bindings' | 'verbatim' | 'decorator-metadata';
 
 // How the compiler emits a file, from the tsconfig that governs it.
-export type EmitSettings = { readonly jsx: JsxRuntime; readonly elision: ImportElision };
+export type EmitSettings = {
+  readonly jsx: Array.NonEmptyReadonlyArray<JsxRuntime>;
+  readonly elision: ImportElision;
+};
 
 export type SourceFile = {
   readonly path: string;

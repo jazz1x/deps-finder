@@ -39,15 +39,15 @@ const jsxRoot = (
   );
 
 // A classic JSX element calls its factory, React.createElement unless configured otherwise.
-const factoryUse = (factory: Option.Option<string>, at: number): ReadonlyArray<AstEvent> =>
-  Option.toArray(Option.map(factory, (name) => AstEvent.Name({ name, at })));
+const factoryUse = (factories: ReadonlyArray<string>, at: number): ReadonlyArray<AstEvent> =>
+  Array.map(factories, (name) => AstEvent.Name({ name, at }));
 
 // The bound names used anywhere outside a type position, an import or export of types, or a
 // property key.
 const valueUses = (
   program: Program,
   bound: ReadonlyArray<string>,
-  factory: Option.Option<string>,
+  factories: ReadonlyArray<string>,
 ): ReadonlyArray<string> => {
   const events = collectVisiting<AstEvent>(program, (collect) => ({
     ImportDeclaration: (node) => collect(typeSpan(node)),
@@ -76,9 +76,9 @@ const valueUses = (
             AstEvent.Name({ name: root.name, at: root.start }),
           ),
         ),
-        ...factoryUse(factory, node.start),
+        ...factoryUse(factories, node.start),
       ]),
-    JSXFragment: (node) => collect(factoryUse(factory, node.start)),
+    JSXFragment: (node) => collect(factoryUse(factories, node.start)),
   }));
   const typeSpans = Array.filter(events, AstEvent.$is('TypeSpan'));
   const detached = new Set(
@@ -98,24 +98,28 @@ const valueUses = (
 
 const JSX_PRAGMA = /@jsx\s+([\w$]+)/;
 
-const classicFactory = (
-  jsx: JsxRuntime,
+const classicFactories = (
+  runtimes: ReadonlyArray<JsxRuntime>,
   content: string,
   parsed: ParseResult,
-): Option.Option<string> =>
-  JsxRuntime.$match(jsx, {
-    Automatic: () => Option.none(),
-    Classic: ({ factory }) =>
-      pipe(
-        Option.liftPredicate(content, (text) => JSX_PRAGMA.test(text)),
-        Option.flatMap(() =>
-          Array.findFirst(parsed.comments, (comment) =>
-            Option.fromNullishOr(JSX_PRAGMA.exec(comment.value)?.[1]),
+): ReadonlyArray<string> =>
+  Array.flatMap(
+    runtimes,
+    JsxRuntime.$match({
+      Automatic: (): ReadonlyArray<string> => [],
+      Classic: ({ factory }) => [
+        pipe(
+          Option.liftPredicate(content, (text) => JSX_PRAGMA.test(text)),
+          Option.flatMap(() =>
+            Array.findFirst(parsed.comments, (comment) =>
+              Option.fromNullishOr(JSX_PRAGMA.exec(comment.value)?.[1]),
+            ),
           ),
+          Option.getOrElse(() => factory),
         ),
-        Option.orElse(() => Option.some(factory)),
-      ),
-  });
+      ],
+    }),
+  );
 
 const valueEntries = (statement: StaticImport) =>
   Array.filter(statement.entries, (entry) => !entry.isType);
@@ -134,7 +138,7 @@ const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<st
     Array.flatMap(withValues, (statement) =>
       Array.map(valueEntries(statement), (entry) => entry.localName.value),
     ),
-    classicFactory(source.emit.jsx, content, parsed),
+    classicFactories(source.emit.jsx, content, parsed),
   );
   const lineStarts = buildLineStarts(content);
   return pipe(

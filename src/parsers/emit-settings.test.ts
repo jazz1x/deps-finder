@@ -21,33 +21,41 @@ describe('emitSettingsOf', () => {
     await writeFile(path.join(testDir, file), JSON.stringify(json));
   };
 
-  const jsxOf = (roots: ReadonlyArray<string>, file: string) =>
-    emitSettingsOf(readTsConfigChains(roots.map((root) => path.join(testDir, root))).found)(path.join(testDir, file)).jsx;
+  const settingsOf = (roots: ReadonlyArray<string>, file: string) =>
+    emitSettingsOf(readTsConfigChains(roots.map((root) => path.join(testDir, root))).found)(path.join(testDir, file));
+
+  const jsxOf = (roots: ReadonlyArray<string>, file: string) => settingsOf(roots, file).jsx;
 
   test('without a jsx setting JSX goes through the react runtime', () => {
-    expect(jsxOf([], 'src/App.tsx')).toEqual(JsxRuntime.Automatic({ importSource: 'react' }));
+    expect(jsxOf([], 'src/App.tsx')).toEqual([JsxRuntime.Automatic({ importSource: 'react' })]);
   });
 
   test('jsx "react" is the classic runtime, whose factory is React unless jsxFactory names another', async () => {
     await write('tsconfig.json', { compilerOptions: { jsx: 'react' } });
-    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual(JsxRuntime.Classic({ factory: 'React' }));
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual([JsxRuntime.Classic({ factory: 'React' })]);
     await write('tsconfig.json', { compilerOptions: { jsx: 'react', jsxFactory: 'preact.h' } });
-    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual(JsxRuntime.Classic({ factory: 'preact' }));
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual([JsxRuntime.Classic({ factory: 'preact' })]);
   });
 
-  test('react-jsxdev takes an inherited jsxImportSource', async () => {
-    await write('tsconfig.base.json', { compilerOptions: { jsxImportSource: '@emotion/react' } });
+  test('react-jsxdev takes an inherited jsxImportSource, and a null jsx clears the inherited one', async () => {
+    await write('tsconfig.base.json', { compilerOptions: { jsx: 'react', jsxImportSource: '@emotion/react' } });
     await write('tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { jsx: 'react-jsxdev' } });
-    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual(JsxRuntime.Automatic({ importSource: '@emotion/react' }));
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual([JsxRuntime.Automatic({ importSource: '@emotion/react' })]);
+    await write('tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { jsx: null } });
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual([JsxRuntime.Automatic({ importSource: '@emotion/react' })]);
   });
 
-  const elisionOf = (file: string) =>
-    emitSettingsOf(readTsConfigChains([path.join(testDir, 'tsconfig.json')]).found)(path.join(testDir, file)).elision;
+  const elisionOf = (file: string) => settingsOf(['tsconfig.json'], file).elision;
 
-  test('verbatimModuleSyntax, preserveValueImports or importsNotUsedAsValues preserve keep value imports', async () => {
+  test('verbatimModuleSyntax, preserveValueImports or importsNotUsedAsValues preserve or error keep value imports', async () => {
     await write('tsconfig.json', { compilerOptions: {} });
     expect(elisionOf('src/a.ts')).toBe('unused-bindings');
-    for (const options of [{ verbatimModuleSyntax: true }, { preserveValueImports: true }, { importsNotUsedAsValues: 'preserve' }]) {
+    for (const options of [
+      { verbatimModuleSyntax: true },
+      { preserveValueImports: true },
+      { importsNotUsedAsValues: 'preserve' },
+      { importsNotUsedAsValues: 'error' },
+    ]) {
       await write('tsconfig.json', { compilerOptions: options });
       expect(elisionOf('src/a.ts')).toBe('verbatim');
     }
@@ -61,7 +69,37 @@ describe('emitSettingsOf', () => {
     await write('tsconfig.json', { compilerOptions: { jsx: 'react' } });
     await write('apps/web/tsconfig.app.json', { compilerOptions: { jsx: 'preserve', jsxImportSource: 'preact' } });
     const roots = ['tsconfig.json', 'apps/web/tsconfig.app.json'];
-    expect(jsxOf(roots, 'apps/web/src/App.tsx')).toEqual(JsxRuntime.Automatic({ importSource: 'preact' }));
-    expect(jsxOf(roots, 'src/App.tsx')).toEqual(JsxRuntime.Classic({ factory: 'React' }));
+    expect(jsxOf(roots, 'apps/web/src/App.tsx')).toEqual([JsxRuntime.Automatic({ importSource: 'preact' })]);
+    expect(jsxOf(roots, 'src/App.tsx')).toEqual([JsxRuntime.Classic({ factory: 'React' })]);
+  });
+
+  test('among sibling tsconfig files, those whose include or files cover the file decide, each with its own options', async () => {
+    await write('tsconfig.json', {
+      files: [],
+      references: [{ path: './tsconfig.web.json' }, { path: './tsconfig.app.json' }, { path: './tsconfig.spec.json' }],
+      compilerOptions: { jsx: 'react' },
+    });
+    await write('tsconfig.app.json', {
+      include: ['src'],
+      exclude: ['src/**/*.test.tsx'],
+      compilerOptions: { jsx: 'react-jsx', verbatimModuleSyntax: true },
+    });
+    await write('tsconfig.web.json', { include: ['web/*.tsx'], compilerOptions: { jsx: 'react-jsx', jsxImportSource: 'preact' } });
+    await write('tsconfig.spec.json', {
+      include: ['**/*.test.tsx'],
+      compilerOptions: { jsx: 'react-jsx', jsxImportSource: '@emotion/react' },
+    });
+    const roots = ['tsconfig.json'];
+    expect(settingsOf(roots, 'src/App.tsx')).toEqual({ jsx: [JsxRuntime.Automatic({ importSource: 'react' })], elision: 'verbatim' });
+    expect(settingsOf(roots, 'web/W.tsx')).toEqual({
+      jsx: [JsxRuntime.Automatic({ importSource: 'preact' })],
+      elision: 'unused-bindings',
+    });
+    expect(jsxOf(roots, 'src/App.test.tsx')).toEqual([JsxRuntime.Automatic({ importSource: '@emotion/react' })]);
+    expect(jsxOf(roots, 'web/W.test.tsx')).toEqual([
+      JsxRuntime.Automatic({ importSource: '@emotion/react' }),
+      JsxRuntime.Automatic({ importSource: 'preact' }),
+    ]);
+    expect(jsxOf(roots, 'tools/run.tsx')).toEqual([JsxRuntime.Classic({ factory: 'React' })]);
   });
 });
