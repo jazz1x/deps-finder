@@ -1,35 +1,85 @@
-import { join } from 'node:path';
-import { Array, Option, Result, Schema, pipe } from 'effect';
+import path from 'node:path';
+import { Array, Option, Result, Schema, String, pipe } from 'effect';
 import type { Gathered } from '../domain/types.js';
-import { gatherAll, gatherOptional, readDirectory, readJsonFile } from './file-reader.js';
-import { type TsConfig, outDirsOf } from './tsconfig-reader.js';
+import { segmentsOf } from '../parsers/script-parser.js';
+import { gatherOptional, readDirectory, readJsonFile } from './file-reader.js';
+import { type TsConfigChain, outDirsOf } from './tsconfig-reader.js';
 
 const PackageScripts = Schema.Struct({
   scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
-const OUT_DIR_FLAG = /--outDir\s+(\S+)/;
+const OUT_DIR_FLAGS = ['--outDir', '--out-dir', '--outdir'];
 
-const outDirsFromScripts = (pkg: typeof PackageScripts.Type): ReadonlyArray<string> =>
-  pipe(
-    Object.values(pkg.scripts ?? {}),
-    Array.map((script) => Option.fromNullishOr(OUT_DIR_FLAG.exec(script)?.[1])),
+// Elsewhere -d is a flag of its own, such as tsup's --dts.
+const SHORT_OUT_DIR_COMPILERS = ['babel', 'swc'];
+
+const outDirFlagsOf = (words: ReadonlyArray<string>): ReadonlyArray<string> =>
+  Array.some(words, (word) => Array.contains(SHORT_OUT_DIR_COMPILERS, path.basename(word)))
+    ? [...OUT_DIR_FLAGS, '-d']
+    : OUT_DIR_FLAGS;
+
+const outDirsIn = (words: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const flags = outDirFlagsOf(words);
+  return pipe(
+    words,
+    Array.map((word, index) => {
+      const [flag = '', ...inline] = String.split(word, '=');
+      return pipe(
+        Option.liftPredicate(flag, (name) => Array.contains(flags, name)),
+        Option.map(() =>
+          Array.match(inline, {
+            onEmpty: () => words[index + 1] ?? '',
+            onNonEmpty: (value) => value.join('='),
+          }),
+        ),
+        Option.filter(String.isNonEmpty),
+      );
+    }),
     Array.getSomes,
   );
+};
+
+const outDirsFromScripts = (pkg: typeof PackageScripts.Type): ReadonlyArray<string> =>
+  pipe(Object.values(pkg.scripts ?? {}), Array.flatMap(segmentsOf), Array.flatMap(outDirsIn));
+
+// The project root or a directory outside it holds no build output of its own to exclude.
+const insideRoot =
+  (projectRoot: string) =>
+  (absolute: string): Option.Option<string> =>
+    pipe(
+      path.relative(path.resolve(projectRoot), absolute),
+      Option.liftPredicate(
+        (relative) =>
+          relative !== '' &&
+          relative !== '..' &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(relative),
+      ),
+      Option.map((relative) => relative.split(path.sep).join('/')),
+    );
 
 export const detectBuildDirectories = (
   projectRoot: string,
-  tsconfigs: ReadonlyArray<TsConfig>,
-): Gathered<string> =>
-  gatherAll([
-    gatherOptional(
-      Result.map(
-        readJsonFile(PackageScripts)(join(projectRoot, 'package.json')),
-        outDirsFromScripts,
+  tsconfigs: ReadonlyArray<TsConfigChain>,
+): Gathered<string> => {
+  const scripts = gatherOptional(
+    Result.map(readJsonFile(PackageScripts)(path.join(projectRoot, 'package.json')), (pkg) =>
+      Array.map(outDirsFromScripts(pkg), (dir) =>
+        path.resolve(projectRoot, String.replaceAll('\\', '/')(dir)),
       ),
     ),
-    { found: outDirsOf(tsconfigs), skipped: [] },
-  ]);
+  );
+  return {
+    found: pipe(
+      [...scripts.found, ...Array.flatMap(tsconfigs, outDirsOf)],
+      Array.map(insideRoot(projectRoot)),
+      Array.getSomes,
+      Array.dedupe,
+    ),
+    skipped: scripts.skipped,
+  };
+};
 
 const BUILD_LIKE_SUFFIXES = ['-static', '-dist', '-build', '-output'];
 

@@ -21,30 +21,35 @@ describe('tsconfig-reader', () => {
     await writeFile(path.join(testDir, file), JSON.stringify(json));
   };
 
+  const rootOutDirs = () =>
+    readRootTsConfigs(testDir)
+      .found.flatMap(outDirsOf)
+      .map((dir) => path.relative(testDir, dir));
+
   test('reads outDir from tsconfig.json and tsconfig.base.json', async () => {
     await writeFile(`${testDir}/tsconfig.json`, JSON.stringify({ compilerOptions: { outDir: 'dist' } }));
     await writeFile(`${testDir}/tsconfig.base.json`, '{ "compilerOptions": { "outDir": "lib", }, }');
 
-    expect(outDirsOf(readRootTsConfigs(testDir).found)).toEqual(['dist', 'lib']);
+    expect(rootOutDirs()).toEqual(['lib', 'dist']);
   });
 
   test('a declarationDir is a build directory too', async () => {
     await write('tsconfig.json', { compilerOptions: { outDir: 'dist', declarationDir: 'typings' } });
-    expect(outDirsOf(readRootTsConfigs(testDir).found)).toEqual(['dist', 'typings']);
+    expect(rootOutDirs()).toEqual(['dist', 'typings']);
   });
 
   test('a null or mistyped option drops only that option', async () => {
     await write('tsconfig.json', { compilerOptions: { outDir: 'compiled', types: null, importHelpers: 'yes' } });
     await write('tsconfig.base.json', { extends: 3, compilerOptions: { outDir: 'lib', types: ['node', 1] } });
     const { found, skipped } = readRootTsConfigs(testDir);
-    expect(outDirsOf(found)).toEqual(['compiled', 'lib']);
-    expect(found.map((config) => config.compilerOptions?.types)).toEqual([null, undefined]);
+    expect(rootOutDirs()).toEqual(['lib', 'compiled']);
+    expect(found.map(([file]) => file.config.compilerOptions?.types)).toEqual([undefined, null]);
     expect(skipped).toEqual([]);
   });
 
   test('ignores an empty outDir instead of excluding everything', async () => {
     await writeFile(`${testDir}/tsconfig.json`, JSON.stringify({ compilerOptions: { outDir: '' } }));
-    expect(outDirsOf(readRootTsConfigs(testDir).found)).toEqual([]);
+    expect(rootOutDirs()).toEqual([]);
   });
 
   test('missing files are not a problem', () => {
