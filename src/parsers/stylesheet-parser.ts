@@ -13,7 +13,7 @@ import { FileError } from '../domain/errors.js';
 
 export type StyleSyntax = 'css' | 'scss' | 'less';
 
-export type StyleReference = {
+type StyleReference = {
   readonly specifier: string;
   readonly line: number;
   readonly statement: string;
@@ -70,6 +70,7 @@ const targetsOf = (params: string): ReadonlyArray<string> =>
 const referencesOf = (rule: AtRule): ReadonlyArray<StyleReference> =>
   Array.map(targetsOf(rule.params), (specifier) => ({
     specifier,
+    // postcss sets source.start on every node it parses; only nodes built in code lack it.
     line: rule.source?.start?.line ?? 1,
     statement: `@${rule.name} ${rule.params}`,
   }));
@@ -87,9 +88,10 @@ export const stylesheetReferences = (
           path: file,
           reason: Match.value(error).pipe(
             Match.when(Match.instanceOf(CssSyntaxError), (failure) =>
-              failure.line === undefined
-                ? failure.reason
-                : `${failure.reason} at line ${failure.line}`,
+              Option.match(Option.fromNullishOr(failure.line), {
+                onNone: () => failure.reason,
+                onSome: (line) => `${failure.reason} at line ${line}`,
+              }),
             ),
             Match.orElse((other) => `${other}`),
           ),

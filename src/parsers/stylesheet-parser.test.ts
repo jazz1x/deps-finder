@@ -43,8 +43,14 @@ describe('stylesheetReferences', () => {
   });
 
   test('reads a Less @import with options and @plugin', () => {
-    const less = ['@import (reference) "~ant-design-vue/lib/style/index.less";', '@plugin "less-plugin-x";', '@gap: 4px;'].join('\n');
-    expect(specifiers('less', less)).toEqual(['1:ant-design-vue/lib/style/index.less', '2:less-plugin-x']);
+    const less = [
+      '// @import "commented";',
+      '@import (reference) "~ant-design-vue/lib/style/index.less";',
+      '@plugin "less-plugin-x";',
+      '.m() { color: red; }',
+      '.a { .m(); }',
+    ].join('\n');
+    expect(specifiers('less', less)).toEqual(['2:ant-design-vue/lib/style/index.less', '3:less-plugin-x']);
   });
 
   test('a stylesheet that does not parse fails with the reason', () => {
