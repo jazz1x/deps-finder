@@ -322,7 +322,7 @@ const walkSubdirectory = (
   dir: string,
   inherited: ReadonlyArray<Gitignore>,
 ): Gathered<Walked> =>
-  Result.match(readDirectory(path.join(walk.rootDir, dir)), {
+  Result.match(readDirectory(path.resolve(walk.rootDir, dir)), {
     onFailure: (error): Gathered<Walked> => ({
       found: [Walked.Unreadable({ error })],
       skipped: [],

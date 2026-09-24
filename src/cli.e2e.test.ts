@@ -135,7 +135,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await chmod(path.join(tmpDir, 'src/locked'), 0o000);
     const r = runCli(['--json'], tmpDir);
     await chmod(path.join(tmpDir, 'src/locked'), 0o755);
-    expect(r.stderr).toContain('warning: skipped src/locked (');
+    expect(r.stderr).toMatch(/warning: skipped \/\S*\/src\/locked \(/);
     expect(r.stderr).toContain('its imports are not counted');
   });
 
