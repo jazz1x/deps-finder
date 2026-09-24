@@ -128,4 +128,13 @@ describe('elideTypeOnlyImports', () => {
     const files = { 'a.ts': "import { f } from 'dev-lib';\nf();", 'b.ts': "import { T } from 'dev-lib';\nexport type X = T;" };
     expect(await elided(files, pkg({ devDependencies: ['dev-lib'] }))).toEqual(['dev-lib:runtime:a.ts:1', 'dev-lib:type-only:b.ts:1']);
   });
+
+  test('an erased import leaves the other loads of its package on the same line', async () => {
+    const content = "import { D } from 'd'; import { E } from 'd'; const r = require('d');\nexport const x: D = E ?? r;";
+    expect(await elided({ 'a.ts': content }, pkg({ devDependencies: ['d'] }))).toEqual([
+      'd:type-only:a.ts:1',
+      'd:runtime:a.ts:1',
+      'd:runtime:a.ts:1',
+    ]);
+  });
 });

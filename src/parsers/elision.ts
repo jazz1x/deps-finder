@@ -13,7 +13,7 @@ import {
 } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
-import { collectVisiting, extractPackageName, parse } from './import-parser.js';
+import { collectVisiting, parse } from './import-parser.js';
 
 type AstEvent = Data.TaggedEnum<{
   TypeSpan: { readonly start: number; readonly end: number };
@@ -120,10 +120,11 @@ const classicFactory = (
 const valueEntries = (statement: StaticImport) =>
   Array.filter(statement.entries, (entry) => !entry.isType);
 
-const lineKey = (line: number, packageName: PackageName): string => `${line}:${packageName}`;
+// Other loads of the same package can share an import's line.
+const statementKey = (line: number, statement: string): string => `${line}:${statement}`;
 
-// The import lines TypeScript erases: every binding is used only as a type, or not at all.
-const erasedLines = (content: string, source: SourceFile): ReadonlyArray<string> => {
+// The import statements TypeScript erases: every binding is used only as a type, or not at all.
+const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<string> => {
   const parsed = parse(content, source.path);
   const withValues = Array.filter(parsed.module.staticImports, (statement) =>
     Array.isReadonlyArrayNonEmpty(valueEntries(statement)),
@@ -144,11 +145,10 @@ const erasedLines = (content: string, source: SourceFile): ReadonlyArray<string>
           Array.contains(used, entry.localName.value),
         ),
     ),
-    Array.flatMap((statement) =>
-      Option.toArray(
-        Option.map(extractPackageName(statement.moduleRequest.value), (packageName) =>
-          lineKey(lineNumberAt(lineStarts, statement.start), packageName),
-        ),
+    Array.map((statement) =>
+      statementKey(
+        lineNumberAt(lineStarts, statement.start),
+        content.slice(statement.start, statement.end).trim(),
       ),
     ),
   );
@@ -231,7 +231,7 @@ type Refining = {
 };
 
 const detailKey = (detail: ImportDetails): string =>
-  `${detail.file}:${lineKey(detail.line, detail.packageName)}`;
+  `${detail.file}:${statementKey(detail.line, detail.importStatement)}`;
 
 const refineFile = (
   state: Refining,
@@ -241,9 +241,12 @@ const refineFile = (
     Result.match(readFile(source.path), {
       onFailure: (error) => ({ ...state, skipped: [...state.skipped, error] }),
       onSuccess: (content) => {
-        const erased = erasedLines(content, source);
+        const erased = erasedStatements(content, source);
         const [kept, dropped] = Array.partition(candidates, (candidate) =>
-          Array.contains(erased, lineKey(candidate.detail.line, candidate.detail.packageName))
+          Array.contains(
+            erased,
+            statementKey(candidate.detail.line, candidate.detail.importStatement),
+          )
             ? Result.succeed(candidate)
             : Result.fail(candidate),
         );
