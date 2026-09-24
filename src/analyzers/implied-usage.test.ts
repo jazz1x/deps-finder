@@ -70,6 +70,11 @@ describe('peerUses', () => {
     ]);
   });
 
+  test('a peer cycle ends', () => {
+    const cycle = installed({ a: { peers: ['b'] }, b: { peers: ['a'] } });
+    expect(names(peerUses(cycle, ['a', 'b'], [developmentUse('a', 'a.ts', '')]))).toEqual(['b']);
+  });
+
   test('nothing without an install', () => {
     expect(peerUses(Installation.NotInstalled(), ['next', 'sass'], [developmentUse('next', 'a.ts', '')])).toEqual([]);
   });

@@ -442,6 +442,17 @@ describe('CLI e2e (bin/cli.js)', () => {
       expect(r.stderr.match(/node_modules/g)).toHaveLength(1);
     });
 
+    test('a lint-staged command runs a declared binary', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': {
+          'lint-staged': { '*.css': 'stylelint --fix' },
+          devDependencies: { stylelint: '16', 'left-pad': '1' },
+        },
+      });
+
+      expect(JSON.parse(runCli(['--json', '-a'], tmpDir).stdout).unused).toEqual(['left-pad']);
+    });
+
     test('tool configs that name a package by string use it', async () => {
       await writeFiles(tmpDir, {
         'package.json': {
