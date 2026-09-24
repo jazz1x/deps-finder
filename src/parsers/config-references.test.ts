@@ -89,6 +89,16 @@ describe('readToolConfigs', () => {
     expect(referenced()).toEqual(['terser']);
   });
 
+  test('root JSON and YAML configs count exact package names, but not manifests or lockfiles', async () => {
+    await write('.oxlintrc.manners.json', { jsPlugins: ['@company/oxlint-rules', './local.js'] });
+    await write('codegen.yml', 'generates:\n  out.ts:\n    plugins: [typescript-operations]\n');
+    await write('package-lock.json', { packages: { '': { name: 'lockfile-name' } } });
+    await write('pnpm-workspace.yaml', 'onlyBuiltDependencies: [esbuild]\n');
+    await write('tsconfig.app.json', { compilerOptions: { jsxImportSource: '@emotion/react' } });
+
+    expect(referenced().toSorted()).toEqual(['@company/oxlint-rules', 'typescript-operations']);
+  });
+
   test('a malformed config is skipped with its error', async () => {
     await write('.eslintrc', '{ "plugins": [');
 

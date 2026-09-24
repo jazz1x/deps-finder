@@ -64,6 +64,11 @@ const CONFIG_FILES: ReadonlyArray<readonly [RegExp, Tool]> = [
   ],
   [/^(?:project|nx)\.json$/, 'nx'],
   [/^[^/]+\.(?:config|preset)\.(?:[^/]+\.)?[cm]?[jt]sx?$/, 'other'],
+  // Manifests and lockfiles list what is installed, not what is used; tsconfigs are read on their own.
+  [
+    /^(?!package(?:-lock)?\.json$|npm-shrinkwrap\.json$|pnpm-(?:lock|workspace)\.yaml$|[jt]sconfig(?:\.[^/]+)?\.json$)[^/]+\.(?:jsonc?|ya?ml)$/,
+    'other',
+  ],
 ];
 
 const PACKAGE_JSON_TOOLS: Readonly<Record<ToolKey, Tool>> = {
