@@ -487,7 +487,8 @@ const jsxRuntimeReferences = (
 
 const TEST_GLOBALS = ['describe', 'it', 'test', 'expect', 'beforeEach', 'afterEach'];
 
-const TEST_GLOBAL_MARKER = /\b(?:describe|it|test|expect|beforeEach|afterEach)\b/;
+const TEST_GLOBAL_CALL =
+  /(?<![\w$.])(describe|it|test|expect|beforeEach|afterEach)\s*(?:\.\s*[\w$]+\s*)*[(`]/g;
 
 const TEST_GLOBAL_TYPES = ['@types/jest', '@types/mocha', '@types/jasmine'] as const;
 
@@ -532,8 +533,11 @@ const functionBinding = (fn: {
   binding([...boundNames(fn.id), ...Array.flatMap(fn.params, boundNames)]);
 
 // A test runner puts these names in scope; a file that binds one itself calls its own.
-const testGlobalReferences = (parsed: ParseResult): ReadonlyArray<ModuleReference> => {
-  const events = collectVisiting<TestGlobalEvent>(parsed.program, (collect) => ({
+const unboundTestGlobalCall = (
+  program: Program,
+  imported: ReadonlySet<string>,
+): Option.Option<IdentifierReference> => {
+  const events = collectVisiting<TestGlobalEvent>(program, (collect) => ({
     CallExpression: (node) =>
       collect(
         pipe(
@@ -552,9 +556,7 @@ const testGlobalReferences = (parsed: ParseResult): ReadonlyArray<ModuleReferenc
     TSImportEqualsDeclaration: (node) => collect(binding([node.id.name])),
   }));
   const bound = new Set([
-    ...Array.flatMap(parsed.module.staticImports, (statement) =>
-      Array.map(statement.entries, (entry) => entry.localName.value),
-    ),
+    ...imported,
     ...pipe(
       events,
       Array.filter(TestGlobalEvent.$is('Binding')),
@@ -564,10 +566,31 @@ const testGlobalReferences = (parsed: ParseResult): ReadonlyArray<ModuleReferenc
   return pipe(
     Array.filter(events, TestGlobalEvent.$is('Call')),
     Array.findFirst(({ callee }) => !bound.has(callee.name)),
+    Option.map(({ callee }) => callee),
+  );
+};
+
+// The text is scanned first: walking every story and test that imports its test functions cost
+// foodspring-front 150ms.
+const testGlobalReferences = (
+  content: string,
+  parsed: ParseResult,
+): ReadonlyArray<ModuleReference> => {
+  const imported = new Set(
+    Array.flatMap(parsed.module.staticImports, (statement) =>
+      Array.map(statement.entries, (entry) => entry.localName.value),
+    ),
+  );
+  return pipe(
+    Option.liftPredicate(parsed, () =>
+      Array.some([...content.matchAll(TEST_GLOBAL_CALL)], (call) =>
+        Option.exists(Option.fromUndefinedOr(call[1]), (name) => !imported.has(name)),
+      ),
+    ),
+    Option.flatMap((unresolved) => unboundTestGlobalCall(unresolved.program, imported)),
     Option.match({
       onNone: () => [],
-      onSome: ({ callee }) =>
-        Array.map(TEST_GLOBAL_TYPES, (types) => referenceAt(types, true, callee)),
+      onSome: (callee) => Array.map(TEST_GLOBAL_TYPES, (types) => referenceAt(types, true, callee)),
     }),
   );
 };
@@ -594,9 +617,7 @@ const moduleReferences = (
     ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
     ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
     ...Match.value(context).pipe(
-      Match.when('development', () =>
-        TEST_GLOBAL_MARKER.test(content) ? testGlobalReferences(parsed) : [],
-      ),
+      Match.when('development', () => testGlobalReferences(content, parsed)),
       Match.when('production', () => []),
       Match.exhaustive,
     ),
