@@ -524,24 +524,34 @@ const calleeRoot = (callee: Expression): Option.Option<IdentifierReference> =>
     Match.orElse(() => Option.none()),
   );
 
+// Bound: names a function or catch clause binds inside its own span. Declared: names bound in the
+// innermost block around them.
 type TestGlobalEvent = Data.TaggedEnum<{
   Call: { readonly callee: IdentifierReference };
-  Binding: { readonly names: ReadonlyArray<string> };
+  Block: { readonly span: Span };
+  Bound: { readonly names: ReadonlyArray<string>; readonly span: Span };
+  Declared: { readonly names: ReadonlyArray<string>; readonly at: number };
 }>;
 
 const TestGlobalEvent = Data.taggedEnum<TestGlobalEvent>();
 
-const binding = (names: ReadonlyArray<string>): ReadonlyArray<TestGlobalEvent> => [
-  TestGlobalEvent.Binding({ names }),
+type Binding = { readonly names: ReadonlyArray<string>; readonly span: Span };
+
+const within = (span: Span) => (at: number) => span.start <= at && at < span.end;
+
+const block = (span: Span): ReadonlyArray<TestGlobalEvent> => [TestGlobalEvent.Block({ span })];
+
+const declaration = (names: ReadonlyArray<string>, at: number): ReadonlyArray<TestGlobalEvent> => [
+  TestGlobalEvent.Declared({ names, at }),
 ];
 
-const functionBinding = (fn: {
-  readonly id: BindingPattern | null;
-  readonly params: ReadonlyArray<ParamPattern>;
-}): ReadonlyArray<TestGlobalEvent> =>
-  binding([...boundNames(fn.id), ...Array.flatMap(fn.params, boundNames)]);
+const boundIn = (span: Span, binders: ReadonlyArray<Binder>): ReadonlyArray<TestGlobalEvent> => [
+  TestGlobalEvent.Bound({ names: Array.flatMap(binders, boundNames), span }),
+];
 
-// A test runner puts these names in scope; a file that binds one itself calls its own.
+const byLength = Order.mapInput(Order.Number, (span: Span) => span.end - span.start);
+
+// A test runner puts these names in scope; a scope that binds one itself calls its own.
 const unboundTestGlobalCall = (
   program: Program,
   imported: ReadonlySet<string>,
@@ -556,25 +566,49 @@ const unboundTestGlobalCall = (
           Option.toArray,
         ),
       ),
-    VariableDeclarator: (node) => collect(binding(boundNames(node.id))),
-    FunctionDeclaration: (node) => collect(functionBinding(node)),
-    FunctionExpression: (node) => collect(functionBinding(node)),
-    ArrowFunctionExpression: (node) => collect(functionBinding(node)),
-    ClassDeclaration: (node) => collect(binding(boundNames(node.id))),
-    CatchClause: (node) => collect(binding(boundNames(node.param))),
-    TSImportEqualsDeclaration: (node) => collect(binding([node.id.name])),
+    BlockStatement: (node) => collect(block(node)),
+    StaticBlock: (node) => collect(block(node)),
+    ForStatement: (node) => collect(block(node)),
+    ForInStatement: (node) => collect(block(node)),
+    ForOfStatement: (node) => collect(block(node)),
+    SwitchStatement: (node) => collect(block(node)),
+    VariableDeclarator: (node) => collect(declaration(boundNames(node.id), node.start)),
+    ClassDeclaration: (node) => collect(declaration(boundNames(node.id), node.start)),
+    TSImportEqualsDeclaration: (node) => collect(declaration([node.id.name], node.start)),
+    FunctionDeclaration: (node) =>
+      collect([...declaration(boundNames(node.id), node.start), ...boundIn(node, node.params)]),
+    FunctionExpression: (node) => collect(boundIn(node, [node.id, ...node.params])),
+    ArrowFunctionExpression: (node) => collect(boundIn(node, node.params)),
+    CatchClause: (node) => collect(boundIn(node, [node.param])),
   }));
-  const bound = new Set([
-    ...imported,
-    ...pipe(
-      events,
-      Array.filter(TestGlobalEvent.$is('Binding')),
-      Array.flatMap((event) => event.names),
-    ),
-  ]);
+  const file: Span = { start: program.start, end: program.end };
+  const blocks = [
+    file,
+    ...Array.map(Array.filter(events, TestGlobalEvent.$is('Block')), ({ span }) => span),
+  ];
+  const innermost = (at: number): Span =>
+    Array.reduce(
+      Array.filter(blocks, (span) => within(span)(at)),
+      file,
+      (inner, span) => Order.min(byLength)(inner, span),
+    );
+  const bindings: ReadonlyArray<Binding> = [
+    { names: [...imported], span: file },
+    ...Array.filter(events, TestGlobalEvent.$is('Bound')),
+    ...Array.map(Array.filter(events, TestGlobalEvent.$is('Declared')), ({ names, at }) => ({
+      names,
+      span: innermost(at),
+    })),
+  ];
   return pipe(
     Array.filter(events, TestGlobalEvent.$is('Call')),
-    Array.findFirst(({ callee }) => !bound.has(callee.name)),
+    Array.findFirst(
+      ({ callee }) =>
+        !Array.some(
+          bindings,
+          ({ names, span }) => Array.contains(names, callee.name) && within(span)(callee.start),
+        ),
+    ),
     Option.map(({ callee }) => callee),
   );
 };

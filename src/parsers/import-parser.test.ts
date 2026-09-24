@@ -674,6 +674,14 @@ describe('extractImports test globals', () => {
     expect(typesOf('const { describe, it: spec } = require("node:test");\ndescribe("a", () => spec("b", () => {}));')).toEqual([]);
     expect(typesOf('function expect(v) { return v; }\nexport const run = (it) => it(expect(1));')).toEqual([]);
   });
+
+  test('a name bound in one scope leaves the global of that name in the others', () => {
+    expect(
+      typesOf('test("sums", () => {\n  const expect = (v) => v;\n  expect(1);\n});\nconst rows = [1].map((test) => test);'),
+    ).toHaveLength(3);
+    expect(typesOf('for (const it of [1]) { it(); }\nit("runs", () => {});')).toHaveLength(3);
+    expect(typesOf('function f() { function test() {} test(); }\ntry {} catch (expect) { expect(); }')).toEqual([]);
+  });
 });
 
 describe('extractImports JSX runtime', () => {
