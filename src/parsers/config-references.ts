@@ -434,28 +434,34 @@ const configFilesIn = (layoutRoot: string): Gathered<ConfigFile> =>
     ),
   );
 
-// A config file without an extension, such as .eslintrc, holds JSON or YAML.
-const JSON_START = /^\s*[{["]/;
+// rc: a file without an extension, such as .eslintrc, which its tools read as JSON with comments
+// or as YAML. Every other extension CONFIG_FILES admits is JS or TS.
+type Format = 'script' | 'json' | 'yaml' | 'rc';
 
-const decodeData = (file: string, text: string): Result.Result<unknown, FileError> =>
+const formatOf = (file: string): Format =>
   Match.value(path.extname(file)).pipe(
-    Match.when('.json', () => decodeJsonc(Schema.Unknown)(file)(text)),
-    Match.whenOr('.yaml', '.yml', () => decodeYaml(Schema.Unknown)(file)(text)),
-    Match.orElse(() =>
-      JSON_START.test(text)
-        ? decodeJsonc(Schema.Unknown)(file)(text)
-        : decodeYaml(Schema.Unknown)(file)(text),
-    ),
+    Match.when('', (): Format => 'rc'),
+    Match.whenOr('.json', '.jsonc', (): Format => 'json'),
+    Match.whenOr('.yaml', '.yml', (): Format => 'yaml'),
+    Match.orElse((): Format => 'script'),
   );
 
-const SCRIPT_EXTENSION = /\.[cm]?[jt]sx?$/;
+const collectFrom =
+  (file: string) =>
+  (text: string): Result.Result<Collected, FileError> => {
+    const json = () => decodeJsonc(Schema.Unknown)(file)(text);
+    const yaml = () => decodeYaml(Schema.Unknown)(file)(text);
+    return Match.value(formatOf(file)).pipe(
+      Match.when('script', () => Result.succeed(fromProgram(parse(text, file).program))),
+      Match.when('json', () => Result.map(json(), fromData)),
+      Match.when('yaml', () => Result.map(yaml(), fromData)),
+      Match.when('rc', () => Result.map(Result.orElse(json(), yaml), fromData)),
+      Match.exhaustive,
+    );
+  };
 
 const collect = (file: string): Result.Result<Collected, FileError> =>
-  Result.flatMap(readFile(file), (text) =>
-    SCRIPT_EXTENSION.test(file)
-      ? Result.succeed(fromProgram(parse(text, file).program))
-      : Result.map(decodeData(file, text), fromData),
-  );
+  Result.flatMap(readFile(file), collectFrom(file));
 
 export const readToolConfigs = (
   layoutRoots: ReadonlyArray<string>,

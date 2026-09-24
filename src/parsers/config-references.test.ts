@@ -99,6 +99,13 @@ describe('readToolConfigs', () => {
     expect(referenced().toSorted()).toEqual(['@company/oxlint-rules', 'typescript-operations']);
   });
 
+  test('an rc file without an extension is JSON with comments, or else YAML', async () => {
+    await write('.eslintrc', '// legacy\n{ "plugins": ["react"] }\n');
+    await write('.babelrc', 'plugins:\n  - macros\n');
+
+    expect(referenced().toSorted()).toEqual(['babel-plugin-macros', 'eslint-plugin-react']);
+  });
+
   test('a malformed config is skipped with its error', async () => {
     await write('.eslintrc', '{ "plugins": [');
 
