@@ -113,3 +113,5 @@ export const decodeJsonc = decodeStructured(jsonWithComments);
 export const readJsoncFile = readStructured(jsonWithComments);
 
 export const readYamlFile = readStructured(yaml);
+
+export const decodeYaml = decodeStructured(yaml);

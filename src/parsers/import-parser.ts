@@ -52,9 +52,9 @@ import {
   type SourceFile,
 } from '../domain/types.js';
 import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
-import { readPackageJson } from './package-parser.js';
+import { type LayoutManifest, readLayoutManifest, readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
-import { gatherAll, readFile } from '../utils/file-reader.js';
+import { gatherAll, gatherOptional, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { type LeftOut, walkProject } from '../utils/project-walk.js';
 import {
@@ -124,20 +124,21 @@ const isDevelopmentPath: ReadonlyArray<(placement: Placement) => boolean> = [
     ),
 ];
 
-export const fileContextOf = (source: {
-  readonly path: string;
-  readonly layoutRoots: ReadonlyArray<string>;
-}): FileContext => {
-  const placement: Placement = {
-    segments: segmentsOf(source.path),
-    fromLayoutRoots: Array.map(source.layoutRoots, (root) =>
-      segmentsOf(path.posix.relative(root, source.path)),
-    ),
+// A package.json "bin" target ships to users wherever it sits.
+export const fileContextOf =
+  (shipped: ReadonlyArray<string>) =>
+  (source: { readonly path: string; readonly layoutRoots: ReadonlyArray<string> }): FileContext => {
+    const placement: Placement = {
+      segments: segmentsOf(source.path),
+      fromLayoutRoots: Array.map(source.layoutRoots, (root) =>
+        segmentsOf(path.posix.relative(root, source.path)),
+      ),
+    };
+    return !Array.contains(shipped, source.path) &&
+      Array.some(isDevelopmentPath, (matches) => matches(placement))
+      ? 'development'
+      : 'production';
   };
-  return Array.some(isDevelopmentPath, (matches) => matches(placement))
-    ? 'development'
-    : 'production';
-};
 
 type ModuleReference = {
   readonly specifier: string;
@@ -800,6 +801,8 @@ export const findFiles = (
 ): Gathered<SourceFile> & {
   readonly packages: ReadonlyArray<LeftOut>;
   readonly tsconfigs: ReadonlyArray<TsConfigChain>;
+  readonly layoutRoots: ReadonlyArray<string>;
+  readonly manifests: ReadonlyArray<LayoutManifest>;
 } => {
   const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
   const walked = walkProject(rootDir, {
@@ -812,6 +815,20 @@ export const findFiles = (
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
     isSource: shouldAnalyzeFile,
   });
+  const layoutRoots = pipe(
+    walked.found,
+    Array.flatMap((source) => source.layoutRoots),
+    Array.prepend(''),
+    Array.dedupe,
+    (roots) => Array.sort(roots, Order.String),
+  );
+  // The walk already reports a layout root's broken package.json.
+  const manifests = gatherAll(
+    Array.map(layoutRoots, (root) =>
+      gatherOptional(Result.map(readLayoutManifest(rootDir)(root), Array.of)),
+    ),
+  );
+  const contextOf = fileContextOf(Array.flatMap(manifests.found, (manifest) => manifest.bins));
   const tsconfigs = governingTsConfigs(rootDir, walked.found);
   const emitOf = emitSettingsOf(tsconfigs.found);
   return {
@@ -819,7 +836,7 @@ export const findFiles = (
       walked.found,
       Array.map((source): SourceFile => {
         const absolute = path.resolve(rootDir, source.path);
-        return { path: absolute, context: fileContextOf(source), emit: emitOf(absolute) };
+        return { path: absolute, context: contextOf(source), emit: emitOf(absolute) };
       }),
       (files) => Array.sort(files, byPath),
     ),
@@ -830,6 +847,8 @@ export const findFiles = (
       files: Array.map(files, (file) => path.resolve(rootDir, file)),
     })),
     tsconfigs: tsconfigs.found,
+    layoutRoots: Array.map(layoutRoots, (root) => path.join(rootDir, root)),
+    manifests: manifests.found,
   };
 };
 

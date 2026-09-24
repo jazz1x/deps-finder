@@ -24,6 +24,7 @@ const TsConfig = Schema.Struct({
       outDir: lenientKey(Schema.NonEmptyString),
       declarationDir: lenientKey(Schema.NonEmptyString),
       types: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
+      plugins: lenientKey(Schema.NullOr(Schema.Array(Schema.Struct({ name: Schema.String })))),
       importHelpers: lenientKey(Schema.NullOr(Schema.Boolean)),
       jsx: lenientKey(
         Schema.NullOr(
