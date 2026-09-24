@@ -1,11 +1,14 @@
 export const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'] as const;
 
+export const COMPONENT_EXTENSIONS = ['.vue', '.svelte', '.astro'] as const;
+
 export const ANALYZABLE_EXTENSIONS = [
   ...TYPESCRIPT_EXTENSIONS,
   '.js',
   '.jsx',
   '.mjs',
   '.cjs',
+  ...COMPONENT_EXTENSIONS,
 ] as const;
 
 export const DECLARATION_FILE_PATTERN = /\.d\.[cm]?ts$/;

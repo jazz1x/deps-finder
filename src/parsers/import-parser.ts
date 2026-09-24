@@ -29,6 +29,7 @@ import {
   ALWAYS_EXCLUDED,
   ANALYZABLE_EXTENSIONS,
   BUILD_OUTPUT_DIRECTORIES,
+  COMPONENT_EXTENSIONS,
   DECLARATION_FILE_PATTERN,
   DEVELOPMENT_DIRECTORIES,
   DEVELOPMENT_FILENAME_PATTERNS,
@@ -51,6 +52,7 @@ import {
   type PackageName,
   type SourceFile,
 } from '../domain/types.js';
+import { componentScripts } from './component-blocks.js';
 import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
 import { type LayoutManifest, readLayoutManifest, readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
@@ -77,11 +79,15 @@ const isTsConfig = (filePath: string): boolean =>
 export const shouldAnalyzeFile = (filePath: string): boolean =>
   hasAnalyzableExtension(filePath) || isTsConfig(filePath);
 
-type SourceKind = 'tsconfig' | 'declaration' | 'typescript' | 'javascript';
+type SourceKind = 'tsconfig' | 'declaration' | 'typescript' | 'javascript' | 'component';
 
 const sourceKindOf = (filePath: string): SourceKind =>
   Match.value(filePath).pipe(
     Match.when(isTsConfig, (): SourceKind => 'tsconfig'),
+    Match.when(
+      (file) => Array.contains(COMPONENT_EXTENSIONS, path.extname(file)),
+      (): SourceKind => 'component',
+    ),
     Match.when(
       (file) => DECLARATION_FILE_PATTERN.test(file),
       (): SourceKind => 'declaration',
@@ -670,15 +676,17 @@ const moduleReferences = (
 
 type FileImport = Omit<ImportDetails, 'context'>;
 
-export const extractImports = (
+// parsedAs: the name whose extension picks the parser, a component block's lang for one.
+const importsIn = (
   content: string,
   filePath: string,
+  parsedAs: string,
   scope: Scope,
 ): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
 
   return pipe(
-    moduleReferences(content, filePath, scope),
+    moduleReferences(content, parsedAs, scope),
     Array.map((ref) =>
       pipe(
         extractPackageName(ref.specifier),
@@ -695,16 +703,29 @@ export const extractImports = (
   );
 };
 
-const readImports = (source: SourceFile): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
-  pipe(
-    readFile(source.path),
-    Result.map((content) =>
-      Array.map(extractImports(content, source.path, source), (found): ImportDetails => ({
+export const extractImports = (
+  content: string,
+  filePath: string,
+  scope: Scope,
+): ReadonlyArray<FileImport> => importsIn(content, filePath, filePath, scope);
+
+const readWith =
+  (extract: (content: string, source: SourceFile) => ReadonlyArray<FileImport>) =>
+  (source: SourceFile): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
+    Result.map(readFile(source.path), (content) =>
+      Array.map(extract(content, source), (found): ImportDetails => ({
         ...found,
         context: source.context,
       })),
-    ),
-  );
+    );
+
+const readImports = readWith((content, source) => extractImports(content, source.path, source));
+
+const readComponentImports = readWith((content, source) =>
+  Array.flatMap(componentScripts(source.path, content), (script) =>
+    importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
+  ),
+);
 
 const typescriptUse = (file: string): ImportDetails => ({
   packageName: 'typescript',
@@ -735,6 +756,7 @@ export const parseFile = (
       Result.map(readImports(source), Array.append(typescriptUse(source.path))),
     ),
     Match.when('javascript', () => readImports(source)),
+    Match.when('component', () => readComponentImports(source)),
     Match.exhaustive,
   );
 

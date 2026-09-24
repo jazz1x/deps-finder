@@ -584,6 +584,9 @@ describe('shouldAnalyzeFile', () => {
     expect(shouldAnalyzeFile('src/types.d.ts')).toBe(true);
     expect(shouldAnalyzeFile('src/a.d.mts')).toBe(true);
     expect(shouldAnalyzeFile('libs/x/tsconfig.lib.json')).toBe(true);
+    expect(shouldAnalyzeFile('src/App.vue')).toBe(true);
+    expect(shouldAnalyzeFile('src/App.svelte')).toBe(true);
+    expect(shouldAnalyzeFile('src/pages/index.astro')).toBe(true);
     expect(shouldAnalyzeFile('package.json')).toBe(false);
   });
 });
@@ -795,5 +798,66 @@ describe('parseFile source kinds', () => {
     expect(parsed('a.ts')).toEqual(['pkg:runtime:production', 'typescript:runtime:development']);
     expect(parsed('b.js')).toEqual(['pkg:runtime:production']);
     expect(parsed('tsconfig.app.json')).toEqual(['typescript:runtime:development']);
+  });
+
+  const located = (file: string) =>
+    Result.getOrThrow(parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED })).map(
+      (found) => `${found.line}:${found.packageName}:${found.importType}:${found.importStatement}`,
+    );
+
+  test('a Vue component contributes the imports of each script block, parsed in its lang', async () => {
+    await writeFile(
+      `${testDir}/App.vue`,
+      [
+        '<template><div>{{ a < b }}</div></template>',
+        '<script lang="ts">',
+        "import type { Store } from 'pinia';",
+        '</script>',
+        '<script setup lang="ts">',
+        "import dayjs from 'dayjs';",
+        'const year: number = dayjs().year();',
+        '</script>',
+      ].join('\n'),
+    );
+    expect(located('App.vue')).toEqual([
+      "3:pinia:type-only:import type { Store } from 'pinia';",
+      "6:dayjs:runtime:import dayjs from 'dayjs';",
+    ]);
+  });
+
+  test('a Svelte component contributes its instance and module scripts', async () => {
+    await writeFile(
+      `${testDir}/App.svelte`,
+      [
+        '<script context="module">',
+        "import { nanoid } from 'nanoid';",
+        '</script>',
+        '<script lang="ts">',
+        "import { onMount } from 'svelte';",
+        '</script>',
+        '<p>{nanoid()}</p>',
+      ].join('\n'),
+    );
+    expect(located('App.svelte')).toEqual([
+      "2:nanoid:runtime:import { nanoid } from 'nanoid';",
+      "5:svelte:runtime:import { onMount } from 'svelte';",
+    ]);
+  });
+
+  test('an Astro component contributes its frontmatter and script tags', async () => {
+    await writeFile(
+      `${testDir}/page.astro`,
+      [
+        '---',
+        "import clsx from 'clsx';",
+        'const c: string = clsx();',
+        '---',
+        '<h1 class={c}>x</h1>',
+        '<script>',
+        "import 'date-fns';",
+        '</script>',
+      ].join('\n'),
+    );
+    expect(located('page.astro')).toEqual(["2:clsx:runtime:import clsx from 'clsx';", "7:date-fns:runtime:import 'date-fns';"]);
   });
 });

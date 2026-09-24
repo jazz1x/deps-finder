@@ -503,6 +503,16 @@ describe('file contexts', () => {
 
     expect(result.unused).toEqual(['dist-only', 'build-only', 'out-only', 'coverage-only']);
   });
+
+  test('component scripts count in their file context', async () => {
+    await write('src/A.vue', "<script>\nimport store from 'store2';\nimport Vue from 'vue';\n</script>");
+    await write('src/Btn.stories.svelte', "<script>\nimport { fn } from '@storybook/test';\n</script>");
+
+    const result = analyze(pkg({ dependencies: ['vue'], devDependencies: ['store2', '@storybook/test'] }));
+
+    expect(result.unused).toEqual([]);
+    expect(result.misplaced.map((usage) => usage.packageName)).toEqual(['store2']);
+  });
 });
 
 describe('compiler settings', () => {
