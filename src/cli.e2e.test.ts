@@ -23,6 +23,13 @@ const runCli = (args: ReadonlyArray<string>, cwd: string) => {
   };
 };
 
+const writeFiles = async (root: string, files: Readonly<Record<string, unknown>>) => {
+  for (const [file, content] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), typeof content === 'string' ? content : JSON.stringify(content));
+  }
+};
+
 describe('CLI e2e (bin/cli.js)', () => {
   let baseTmpDir = '';
   let tmpDir = '';
@@ -366,5 +373,163 @@ describe('CLI e2e (bin/cli.js)', () => {
     const r = runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout).unused.length).toBe(50000);
+  });
+
+  describe('packages used without an import', () => {
+    test('a package whose binary a script or git hook runs is used', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': {
+          scripts: {
+            prepare: 'husky',
+            lint: 'cross-env NODE_ENV=ci oxlint src && npm run fmt',
+            fmt: 'FORCE=1 pnpm exec prettier . | tee out',
+            format: 'biome format',
+          },
+          dependencies: { husky: '9' },
+          devDependencies: {
+            oxlint: '1',
+            'cross-env': '7',
+            prettier: '3',
+            'lint-staged': '15',
+            '@biomejs/biome': '1',
+            fmt: '1',
+            vitest: '3',
+            'left-pad': '1',
+          },
+        },
+        'packages/web/package.json': { name: 'web', scripts: { test: 'vitest run' } },
+        '.husky/pre-commit': 'npx lint-staged\n',
+        'node_modules/@biomejs/biome/package.json': { name: '@biomejs/biome', bin: { biome: 'bin/biome' } },
+        'src/a.ts': 'export const a = 1;',
+      });
+
+      const r = runCli(['--json', '-a'], tmpDir);
+      expect(JSON.parse(r.stdout).unused).toEqual(['fmt', 'left-pad']);
+    });
+
+    test("a declared package that satisfies a used package's peer is used, to a fixpoint", async () => {
+      await writeFiles(tmpDir, {
+        'package.json': {
+          scripts: { cycle: 'madge src' },
+          dependencies: { next: '14', '@opentelemetry/api': '1', 'react-apexcharts': '1', apexcharts: '3', 'left-pad': '1' },
+          devDependencies: { madge: '8', typescript: '5' },
+        },
+        'node_modules/next/package.json': {
+          name: 'next',
+          peerDependencies: { '@opentelemetry/api': '^1', react: '^18' },
+          peerDependenciesMeta: { '@opentelemetry/api': { optional: true } },
+        },
+        'node_modules/react-apexcharts/package.json': { name: 'react-apexcharts', peerDependencies: { apexcharts: '^3' } },
+        'node_modules/madge/package.json': { name: 'madge', bin: { madge: 'bin/cli.js' }, peerDependencies: { typescript: '^5' } },
+        'src/a.js': "import next from 'next'; import Chart from 'react-apexcharts'; export default [next, Chart];",
+        'src/b.ts': "import type { ApexOptions } from 'apexcharts'; export type Options = ApexOptions;",
+      });
+
+      const r = runCli(['--json', '-a'], tmpDir);
+      expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['left-pad'], misplaced: [], typeOnly: [] });
+    });
+
+    test('without node_modules, binaries match by package name and one note says so', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': {
+          scripts: { a: 'jest', b: 'vite build' },
+          devDependencies: { jest: '29', vite: '5', '@vitejs/plugin-react': '4' },
+        },
+      });
+
+      const r = runCli(['--json', '-a'], tmpDir);
+      expect(JSON.parse(r.stdout).unused).toEqual(['@vitejs/plugin-react']);
+      expect(r.stderr.match(/node_modules/g)).toHaveLength(1);
+    });
+
+    test('a lint-staged command runs a declared binary', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': {
+          'lint-staged': { '*.css': 'stylelint --fix' },
+          devDependencies: { stylelint: '16', 'left-pad': '1' },
+        },
+      });
+
+      expect(JSON.parse(runCli(['--json', '-a'], tmpDir).stdout).unused).toEqual(['left-pad']);
+    });
+
+    test('tool configs that name a package by string use it', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': {
+          devDependencies: Object.fromEntries(
+            [
+              '@typescript-eslint/parser',
+              'eslint-plugin-relay',
+              '@typescript-eslint/eslint-plugin',
+              'eslint-config-prettier',
+              'eslint-plugin-import',
+              'eslint-plugin-unused-imports',
+              'eslint-import-resolver-typescript',
+              '@babel/preset-env',
+              'babel-plugin-macros',
+              'tailwindcss',
+              'autoprefixer',
+              'ts-jest',
+              'jest-environment-jsdom',
+              'vue-jest',
+              'prettier-plugin-tailwindcss',
+              '@storybook/addon-a11y',
+              '@storybook/builder-vite',
+              'serverless-offline',
+              '@nx/jest',
+              '@nx/vite',
+              'typescript-plugin-css-modules',
+              'terser',
+              'jest-junit',
+              'stylelint-config-standard',
+              '@storybook/react-vite',
+              'left-pad',
+            ].map((name) => [name, '1']),
+          ),
+        },
+        '.eslintrc': JSON.stringify({
+          parser: '@typescript-eslint/parser',
+          plugins: ['relay'],
+          extends: ['prettier', 'plugin:@typescript-eslint/recommended'],
+          rules: { 'import/no-cycle': 'error' },
+          overrides: [{ files: ['*.ts'], rules: { 'unused-imports/no-unused-imports': 'error' } }],
+          settings: { 'import/resolver': { typescript: {} } },
+        }),
+        '.babelrc': { presets: ['@babel/preset-env'], plugins: ['macros'] },
+        'postcss.config.js': 'module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } };',
+        'jest.config.ts':
+          "export default { preset: 'ts-jest', testEnvironment: 'jsdom', transform: { '^.+\\\\.vue$': 'vue-jest' }, reporters: ['default', 'jest-junit'] };",
+        '.stylelintrc.json': { extends: ['stylelint-config-standard'] },
+        '.prettierrc.yaml': 'plugins:\n  - prettier-plugin-tailwindcss\n',
+        '.storybook/main.ts':
+          "export default { addons: ['@storybook/addon-a11y'], core: { builder: '@storybook/builder-vite' }, framework: { name: '@storybook/react-vite' } };",
+        'serverless.yml': 'service: s\nplugins:\n  - serverless-offline\n',
+        'project.json': { name: 'app', targets: { test: { executor: '@nx/jest:jest' } } },
+        'libs/ui/project.json': { name: 'ui', targets: { build: { executor: '@nx/vite:build' } } },
+        'tsconfig.json': { compilerOptions: { plugins: [{ name: 'typescript-plugin-css-modules' }] } },
+        'vite.config.ts': "export default { build: { minify: 'terser' } };",
+      });
+
+      const r = runCli(['--json', '-a'], tmpDir);
+      expect(JSON.parse(r.stdout).unused).toEqual(['left-pad']);
+    });
+
+    test('a package.json bin under scripts/ is production source', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': {
+          name: 'tool',
+          bin: { tool: 'scripts/cli.js' },
+          dependencies: { commander: '12' },
+          devDependencies: { kleur: '4', chalk: '5' },
+        },
+        'scripts/cli.js': "const { program } = require('commander'); const k = require('kleur'); program.parse(k);",
+        'packages/web/package.json': { name: 'web', bin: 'scripts/run.js' },
+        'packages/web/scripts/run.js': "require('chalk');",
+      });
+
+      const parsed = JSON.parse(runCli(['--json'], tmpDir).stdout);
+      expect(parsed.unused).toEqual([]);
+      expect(parsed.misplaced.map((d: { packageName: string }) => d.packageName)).toEqual(['kleur', 'chalk']);
+    });
   });
 });

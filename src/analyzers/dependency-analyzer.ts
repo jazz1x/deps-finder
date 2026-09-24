@@ -108,6 +108,7 @@ export const analyzeDependencies = (
   const production = Array.filter(allImports, (detail) => detail.context === 'production');
   const productionRuntime = indexUsage(Array.filter(production, ofType('runtime')));
   const productionTypeOnly = indexUsage(Array.filter(production, ofType('type-only')));
+  const productionPeer = indexUsage(Array.filter(production, ofType('peer')));
   const notIgnored = (name: PackageName): boolean => !Array.contains(options.ignoredPackages, name);
   const declared = declaredIn(packageJson, options.sections);
 
@@ -132,7 +133,10 @@ export const analyzeDependencies = (
       pipe(
         packageJson.dependencies,
         Array.filter(
-          (dep) => Record.has(productionTypeOnly, dep) && !Record.has(productionRuntime, dep),
+          (dep) =>
+            Record.has(productionTypeOnly, dep) &&
+            !Record.has(productionRuntime, dep) &&
+            !Record.has(productionPeer, dep),
         ),
         Array.filter(notIgnored),
       ),

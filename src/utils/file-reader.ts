@@ -65,19 +65,32 @@ const jsonWithComments: TextParser = (text) => {
 
 // yaml sends warnings to process.emitWarning (at parse time and from toJS) unless logLevel is
 // 'error'. A warning still leaves a usable value, as pnpm's reader does.
-const yaml: TextParser = (text) => {
+const yamlDocument = (text: string): Result.Result<YAML.Document.Parsed, string> => {
   const document = YAML.parseDocument(text, { prettyErrors: false, logLevel: 'error' });
   return pipe(
     Array.head(document.errors),
     Option.match({
-      onNone: () => Result.try({ try: (): unknown => document.toJS(), catch: messageOf }),
+      onNone: () => Result.succeed(document),
       onSome: (problem) => Result.fail(problem.message),
     }),
   );
 };
 
+const yaml: TextParser = (text) =>
+  Result.flatMap(yamlDocument(text), (document) =>
+    Result.try({ try: (): unknown => document.toJS(), catch: messageOf }),
+  );
+
 const stripByteOrderMark = (text: string): string =>
   text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+
+// The document before toJS, whose alias limit guards against expanding aliases.
+export const decodeYamlDocument =
+  (path: string) =>
+  (text: string): Result.Result<YAML.Document.Parsed, FileError> =>
+    Result.mapError(yamlDocument(stripByteOrderMark(text)), (reason) =>
+      FileError.ParseFailed({ path, reason }),
+    );
 
 const decodeStructured =
   (parse: TextParser) =>

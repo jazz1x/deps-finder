@@ -79,6 +79,25 @@ const typesImports = (chain: TsConfigChain): ReadonlyArray<ImportDetails> =>
     Option.getOrElse((): ReadonlyArray<ImportDetails> => []),
   );
 
+// The editor's language service loads these.
+const pluginImports = (chain: TsConfigChain): ReadonlyArray<ImportDetails> =>
+  pipe(
+    nearest(chain, (config) => config.compilerOptions?.plugins),
+    Option.flatMap(([file, plugins]) =>
+      Option.map(Option.fromNullOr(plugins), (listed) =>
+        Array.map(
+          packageUses(
+            Array.map(listed, (plugin) => plugin.name),
+            'runtime',
+            'development',
+          ),
+          usageAt(file, ['compilerOptions', 'plugins']),
+        ),
+      ),
+    ),
+    Option.getOrElse((): ReadonlyArray<ImportDetails> => []),
+  );
+
 // Emitted code requires tslib for its helpers.
 const helperImports = (chain: TsConfigChain): ReadonlyArray<ImportDetails> =>
   pipe(
@@ -97,6 +116,7 @@ const helperImports = (chain: TsConfigChain): ReadonlyArray<ImportDetails> =>
 const importsOf = (chain: TsConfigChain): ReadonlyArray<ImportDetails> => [
   ...Array.flatMap(chain, extendsImports),
   ...typesImports(chain),
+  ...pluginImports(chain),
   ...helperImports(chain),
 ];
 

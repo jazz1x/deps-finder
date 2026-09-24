@@ -16,7 +16,8 @@ export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<Packag
   readonly declarations: 'published' | 'none';
 };
 
-export type ImportType = 'runtime' | 'type-only';
+// peer: installed for a used package that names it in peerDependencies.
+export type ImportType = 'runtime' | 'type-only' | 'peer';
 
 export type FileContext = 'production' | 'development';
 
@@ -66,6 +67,40 @@ export type ImportDetails = {
   readonly line: number;
   readonly importStatement: string;
 };
+
+// A package a script or a tool config uses without an import.
+export const developmentUse = (
+  packageName: PackageName,
+  file: string,
+  importStatement: string,
+): ImportDetails => ({
+  packageName,
+  importType: 'runtime',
+  context: 'development',
+  file,
+  line: 1,
+  importStatement,
+});
+
+// A command line to run, and the scripts of the package.json it runs against.
+export type ScriptCommand = {
+  readonly file: string;
+  readonly script: string;
+  readonly scripts: ReadonlyArray<string>;
+};
+
+export type InstalledPackage = {
+  readonly manifest: string;
+  readonly bins: ReadonlyArray<string>;
+  readonly peers: ReadonlyArray<PackageName>;
+};
+
+export type Installation = Data.TaggedEnum<{
+  Installed: { readonly packages: Readonly<Record<PackageName, InstalledPackage>> };
+  NotInstalled: {};
+}>;
+
+export const Installation = Data.taggedEnum<Installation>();
 
 export type AnalysisResult = {
   readonly unused: ReadonlyArray<PackageName>;

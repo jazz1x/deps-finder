@@ -1,13 +1,25 @@
 import { join } from 'node:path';
-import { Array, Console, Effect, String, pipe } from 'effect';
+import { Array, Console, Effect, Option, Record, String, pipe } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 import { analyzeDependencies } from '../analyzers/dependency-analyzer.js';
+import { binaryUses, peerUses } from '../analyzers/implied-usage.js';
 import { CLI_TEXT, MESSAGES } from '../constants/messages.js';
 import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.js';
-import type { CliOptions, DependencyType } from '../domain/types.js';
+import {
+  type CliOptions,
+  DEPENDENCY_TYPES,
+  type DependencyType,
+  type ImportDetails,
+  Installation,
+  type PackageJson,
+  type ScriptCommand,
+} from '../domain/types.js';
+import { readToolConfigs } from '../parsers/config-references.js';
 import { elideTypeOnlyImports } from '../parsers/elision.js';
 import { findFiles, parseHoistedImports, parseMultipleFiles } from '../parsers/import-parser.js';
-import { readPackageJson } from '../parsers/package-parser.js';
+import { readInstallation } from '../parsers/installed-packages.js';
+import { type LayoutManifest, readPackageJson } from '../parsers/package-parser.js';
+import { readHookCommands } from '../parsers/script-parser.js';
 import { tsconfigImports } from '../parsers/tsconfig-parser.js';
 import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
 import { formatSkippedInput, formatSkippedSource } from '../reporters/error-reporter.js';
@@ -77,6 +89,50 @@ const paintForStdout = Effect.sync(() =>
   paintFor(process.stdout.isTTY === true, process.env['NO_COLOR']),
 );
 
+const scriptCommands = (manifest: LayoutManifest): ReadonlyArray<ScriptCommand> =>
+  Array.map(Record.values(manifest.scripts), (script) => ({
+    file: manifest.path,
+    script,
+    scripts: Record.keys(manifest.scripts),
+  }));
+
+// Scripts, git hooks, tool configs and peers use packages that no source file imports.
+const usesWithoutImport = (
+  rootDir: string,
+  packageJson: PackageJson,
+  files: ReturnType<typeof findFiles>,
+  imports: ReadonlyArray<ImportDetails>,
+) => {
+  const declared = Array.dedupe(Array.flatMap(DEPENDENCY_TYPES, (section) => packageJson[section]));
+  const { installation, skipped } = readInstallation(rootDir, declared);
+  const configs = readToolConfigs(files.layoutRoots, files.manifests);
+  const hooks = readHookCommands(
+    rootDir,
+    pipe(
+      Array.findFirst(
+        files.manifests,
+        (manifest) => manifest.path === join(rootDir, 'package.json'),
+      ),
+      Option.match({ onNone: () => [], onSome: (root) => Record.keys(root.scripts) }),
+    ),
+  );
+  const commands = [
+    ...Array.flatMap(files.manifests, scriptCommands),
+    ...hooks.found,
+    ...configs.commands,
+  ];
+  const seeds = [
+    ...imports,
+    ...configs.references,
+    ...binaryUses(commands, installation, declared),
+  ];
+  return {
+    installation,
+    imports: [...seeds, ...peerUses(installation, declared, seeds)],
+    skipped: [...skipped, ...configs.skipped, ...hooks.skipped],
+  };
+};
+
 const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | RunOutcome> =>
   pipe(
     Effect.fromResult(readPackageJson(join(options.rootDir, 'package.json'))),
@@ -106,11 +162,25 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     })),
     Effect.map(({ packageJson, files, own, hoisted, emitted }) => ({
       packageJson,
+      files,
+      own,
+      hoisted,
+      emitted,
+      unimported: usesWithoutImport(options.rootDir, packageJson, files, emitted.imports),
+    })),
+    Effect.map(({ packageJson, files, own, hoisted, emitted, unimported }) => ({
+      packageJson,
       // The walk, the hoisting credit and the elision re-read can each read the same file.
-      skippedInputs: Array.dedupe([...files.skipped, ...hoisted.skipped, ...emitted.skipped]),
+      skippedInputs: Array.dedupe([
+        ...files.skipped,
+        ...hoisted.skipped,
+        ...emitted.skipped,
+        ...unimported.skipped,
+      ]),
       packagesLeftOut: Array.map(files.packages, (leftOut) => leftOut.dir),
+      installation: unimported.installation,
       sources: {
-        imports: emitted.imports,
+        imports: unimported.imports,
         unreadable: [...own.unreadable, ...hoisted.unreadable],
       },
     })),
@@ -119,6 +189,12 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     ),
     Effect.tap(({ packagesLeftOut }) =>
       Effect.forEach(packagesLeftOut, (dir) => Console.error(MESSAGES.PACKAGE_LEFT_OUT(dir))),
+    ),
+    Effect.tap(({ installation }) =>
+      Installation.$match(installation, {
+        Installed: () => Effect.void,
+        NotInstalled: () => Console.error(MESSAGES.NOT_INSTALLED(options.rootDir)),
+      }),
     ),
     Effect.tap(({ sources }) =>
       Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),

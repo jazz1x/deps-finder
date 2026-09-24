@@ -1,4 +1,5 @@
-import { Array, Match, Record, Result, Schema, pipe } from 'effect';
+import path from 'node:path';
+import { Array, Match, Predicate, Record, Result, Schema, pipe } from 'effect';
 import type { FileError } from '../domain/errors.js';
 import type { PackageJson, PackageName } from '../domain/types.js';
 import { lenientKey, readJsonFile } from '../utils/file-reader.js';
@@ -64,9 +65,69 @@ const declarationsOf = (file: typeof PackageJsonFile.Type): PackageJson['declara
     { onEmpty: () => 'none', onNonEmpty: () => 'published' },
   );
 
-export const readPackageJson = (path: string): Result.Result<PackageJson, FileError> =>
+// Tools that read their settings from a package.json key of the same name.
+const TOOL_KEYS = [
+  'eslintConfig',
+  'babel',
+  'postcss',
+  'jest',
+  'prettier',
+  'stylelint',
+  'commitlint',
+  'lint-staged',
+] as const;
+
+export type ToolKey = (typeof TOOL_KEYS)[number];
+
+const LayoutManifestFile = Schema.Struct({
+  scripts: lenientKey(Schema.Record(Schema.String, Schema.Unknown)),
+  bin: lenientKey(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
+  eslintConfig: Schema.optionalKey(Schema.Unknown),
+  babel: Schema.optionalKey(Schema.Unknown),
+  postcss: Schema.optionalKey(Schema.Unknown),
+  jest: Schema.optionalKey(Schema.Unknown),
+  prettier: Schema.optionalKey(Schema.Unknown),
+  stylelint: Schema.optionalKey(Schema.Unknown),
+  commitlint: Schema.optionalKey(Schema.Unknown),
+  'lint-staged': Schema.optionalKey(Schema.Unknown),
+});
+
+// bins: the files its "bin" runs, relative to the project root.
+export type LayoutManifest = {
+  readonly path: string;
+  readonly scripts: Readonly<Record<string, string>>;
+  readonly bins: ReadonlyArray<string>;
+  readonly tools: ReadonlyArray<readonly [ToolKey, unknown]>;
+};
+
+const binTargetsOf = (bin: string | Readonly<Record<string, string>> | undefined) =>
+  Match.value(bin).pipe(
+    Match.when(Match.undefined, (): ReadonlyArray<string> => []),
+    Match.when(Match.string, (target) => [target]),
+    Match.orElse((targets) => Record.values(targets)),
+  );
+
+// layoutRoot is relative to rootDir, as the walk names it.
+export const readLayoutManifest =
+  (rootDir: string) =>
+  (layoutRoot: string): Result.Result<LayoutManifest, FileError> =>
+    pipe(
+      readJsonFile(LayoutManifestFile)(path.join(rootDir, layoutRoot, 'package.json')),
+      Result.map((file) => ({
+        path: path.join(rootDir, layoutRoot, 'package.json'),
+        scripts: Record.filter(file.scripts ?? {}, Predicate.isString),
+        bins: Array.map(binTargetsOf(file.bin), (target) => path.posix.join(layoutRoot, target)),
+        tools: pipe(
+          TOOL_KEYS,
+          Array.map((key) => [key, file[key]] as const),
+          Array.filter(([, value]) => value !== undefined),
+        ),
+      })),
+    );
+
+export const readPackageJson = (manifest: string): Result.Result<PackageJson, FileError> =>
   pipe(
-    readJsonFile(PackageJsonFile)(path),
+    readJsonFile(PackageJsonFile)(manifest),
     Result.map((file) => ({
       dependencies: namesOf(file.dependencies),
       devDependencies: namesOf(file.devDependencies),
