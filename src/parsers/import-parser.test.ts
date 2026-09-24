@@ -904,7 +904,7 @@ describe('parseFile source kinds', () => {
     const { imports, unreadable } = parseMultipleFiles([{ path: file, context: 'production', emit: UNCONFIGURED }]);
     expect(imports.map((found) => found.packageName)).toContain('nanoid');
     expect(unreadable.map(formatSkippedSource)).toEqual([
-      MESSAGES.SOURCE_SKIPPED(MESSAGES.STYLE_BLOCK_OF(file), 'Unclosed block at line 5'),
+      MESSAGES.SOURCE_SKIPPED(MESSAGES.STYLE_BLOCK_OF(file), MESSAGES.PARSE_FAILED_AT('Unclosed block', 5)),
     ]);
   });
 

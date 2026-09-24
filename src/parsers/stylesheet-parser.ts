@@ -9,6 +9,7 @@ import postcss, {
 } from 'postcss';
 import postcssLess from 'postcss-less';
 import postcssScss from 'postcss-scss';
+import { MESSAGES } from '../constants/messages.js';
 import { FileError } from '../domain/errors.js';
 
 export type StyleSyntax = 'css' | 'scss' | 'less';
@@ -109,7 +110,7 @@ export const stylesheetReferences = (
             Match.when(Match.instanceOf(CssSyntaxError), (failure) =>
               Option.match(Option.fromNullishOr(failure.line), {
                 onNone: () => failure.reason,
-                onSome: (line) => `${failure.reason} at line ${line}`,
+                onSome: (line) => MESSAGES.PARSE_FAILED_AT(failure.reason, line),
               }),
             ),
             Match.orElse((other) => `${other}`),
