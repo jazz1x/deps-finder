@@ -51,6 +51,29 @@ describe('componentBlocks scripts', () => {
     expect(bodies('A.vue', '<template><div/></template>\n<script>\nimport a from "a";\n')).toEqual(['import a from "a";']);
   });
 
+  test('Svelte reads only top-level blocks, as its compiler does; Astro reads a script anywhere in the markup', () => {
+    const svelte = [
+      '<script>let a=1</script>',
+      '<svelte:head><script>import "nested-head"</script></svelte:head>',
+      '<textarea><script>import "in-pre"</script></textarea>',
+      '<div><div></div><script>import "in-nested"</script></div>',
+    ].join('\n');
+    expect(bodies('C.svelte', svelte)).toEqual(['let a=1']);
+    expect(bodies('a.astro', '<head><script>import "h"</script></head>')).toEqual(['import "h"']);
+  });
+
+  test('a Svelte expression, void element or dotted component does not hide a later block', () => {
+    const content = [
+      '<script>let a=1</script>',
+      `{@html '<script>import "in-expr"</script>'}`,
+      '<img src="a.png">',
+      '<Tabs.Root value="a"></Tabs.Root>',
+      '<style>@import "s";</style>',
+    ].join('\n');
+    expect(bodies('C.svelte', content)).toEqual(['let a=1']);
+    expect(componentBlocks('C.svelte', content).styles.map((block) => block.text.trim())).toEqual(['@import "s";']);
+  });
+
   test('a Vue custom block is opaque: a script in it is text, and a stray <template in it opens nothing', () => {
     const docs = ['<docs>', '```vue', '<script>', "import Demo from 'docs-example'", '</script>', '```', '</docs>'];
     const shown = ['<template><button/></template>', "<script>export default { name: 'Btn' }</script>", ...docs].join('\n');

@@ -20,9 +20,9 @@ type Range = { readonly start: number; readonly end: number };
 
 type Tag = Range & { readonly name: string; readonly lang: Option.Option<string> };
 
-// Raw: the body is text up to the closing tag. Template: HTML, whose closing tag is the one that
-// matches its nesting. Inline: a tag in markup, whose body is more markup.
-type Body = Data.TaggedEnum<{ Raw: {}; Template: {}; Inline: {} }>;
+// Raw: the body is text up to the closing tag. Template and Element: markup, whose closing tag is
+// the one that matches its nesting. Inline: a tag in markup, whose body is more markup.
+type Body = Data.TaggedEnum<{ Raw: {}; Template: {}; Element: {}; Inline: {} }>;
 
 const Body = Data.taggedEnum<Body>();
 
@@ -33,10 +33,39 @@ const vueBody = (name: string, lang: Option.Option<string>): Body =>
     Match.orElse(() => Body.Raw()),
   );
 
+// Astro bundles a script tag anywhere in its markup.
 const markupBody = (name: string): Body =>
   Match.value(name).pipe(
     Match.whenOr('script', 'style', () => Body.Raw()),
     Match.orElse(() => Body.Inline()),
+  );
+
+const VOID_ELEMENTS = [
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+];
+
+// Svelte reads a script or style only at the top level; one inside an element is markup.
+const svelteBody = (name: string): Body =>
+  Match.value(name).pipe(
+    Match.whenOr('script', 'style', () => Body.Raw()),
+    Match.when(
+      (element) => Array.contains(VOID_ELEMENTS, element),
+      () => Body.Inline(),
+    ),
+    Match.orElse(() => Body.Element()),
   );
 
 // An attribute value can hold a '>', as in Vue's generic="T extends Record<string, any>". A
@@ -47,10 +76,16 @@ const COMMENT = '<!--[\\s\\S]*?-->';
 
 const NAME = '[a-zA-Z][\\w:-]*';
 
-const OPENING_TAG = new RegExp(
-  `${COMMENT}|<${NAME}${ATTRIBUTES}/>|<(${NAME})(${ATTRIBUTES})>`,
-  'g',
-);
+const openingTag = (name: string, ...opaque: ReadonlyArray<string>): RegExp =>
+  new RegExp(
+    [COMMENT, ...opaque, `<${name}${ATTRIBUTES}/>`, `<(${name})(${ATTRIBUTES})>`].join('|'),
+    'g',
+  );
+
+const OPENING_TAG = openingTag(NAME);
+
+// A Svelte component such as <Tabs.Root> is named with a dot, and an {expression} is code.
+const SVELTE_OPENING_TAG = openingTag('[a-zA-Z][\\w:.-]*', '\\{[^}]*\\}');
 
 // A '<template' in an interpolation or an attribute value is consumed with it.
 const TEMPLATE_TOKEN = new RegExp(
@@ -104,14 +139,21 @@ const nestingOf = (token: RegExpExecArray): number =>
     Match.orElse(() => 0),
   );
 
-const templateClose = (content: string, from: number): Option.Option<RegExpExecArray> => {
-  const tokens = [...matchesFrom(TEMPLATE_TOKEN, content, from)];
+const nestedClose = (
+  pattern: RegExp,
+  content: string,
+  from: number,
+): Option.Option<RegExpExecArray> => {
+  const tokens = [...matchesFrom(pattern, content, from)];
   return pipe(
     Array.scan(tokens, 1, (depth, token) => depth + nestingOf(token)),
     Array.findFirstIndex((depth) => depth === 0),
     Option.flatMap((closed) => Array.get(tokens, closed - 1)),
   );
 };
+
+const elementToken = (name: string): RegExp =>
+  new RegExp(`<(/?)${name}(?=[\\s/>])${ATTRIBUTES}>`, 'gi');
 
 const rawClose = (content: string, name: string, from: number): Option.Option<RegExpExecArray> =>
   firstFrom(new RegExp(`</${name}\\s*>`, 'gi'), content, from);
@@ -131,22 +173,33 @@ const blockThrough = (
 
 type BodyOf = (name: string, lang: Option.Option<string>) => Body;
 
+// tags: what the top level is scanned for; a match with no name in group 1 opens nothing.
+type Grammar = { readonly tags: RegExp; readonly bodyOf: BodyOf };
+
+const VUE: Grammar = { tags: OPENING_TAG, bodyOf: vueBody };
+
+const MARKUP: Grammar = { tags: OPENING_TAG, bodyOf: markupBody };
+
+const SVELTE: Grammar = { tags: SVELTE_OPENING_TAG, bodyOf: svelteBody };
+
 const langOf = (attributes: string): Option.Option<string> =>
   Option.map(Option.fromNullishOr(LANG.exec(attributes)?.[1]), (lang) => lang.toLowerCase());
 
 const opened = (markup: string, bodyOf: BodyOf, tag: Omit<Tag, 'end'>): Step =>
   Body.$match(bodyOf(tag.name, tag.lang), {
     Raw: () => blockThrough(markup, tag, rawClose(markup, tag.name, tag.start)),
-    Template: () => blockThrough(markup, tag, templateClose(markup, tag.start)),
+    Template: () => blockThrough(markup, tag, nestedClose(TEMPLATE_TOKEN, markup, tag.start)),
+    Element: () =>
+      blockThrough(markup, tag, nestedClose(elementToken(tag.name), markup, tag.start)),
     Inline: (): Step => [Option.none(), tag.start],
   });
 
 // One step from `from` to the next top-level tag: the block it opens, if any, and where to go on.
-// A comment or a self-closing tag names nothing.
+// A comment, a self-closing tag or a Svelte expression names nothing.
 const nextBlock =
-  (markup: string, bodyOf: BodyOf) =>
+  (markup: string, { tags, bodyOf }: Grammar) =>
   (from: number): Option.Option<Step> =>
-    Option.map(firstFrom(OPENING_TAG, markup, from), (found) =>
+    Option.map(firstFrom(tags, markup, from), (found) =>
       Option.match(Option.fromNullishOr(found[1]), {
         onNone: (): Step => [Option.none(), endOf(found)],
         onSome: (name) =>
@@ -158,8 +211,8 @@ const nextBlock =
       }),
     );
 
-const topLevelTags = (markup: string, bodyOf: BodyOf): ReadonlyArray<Tag> =>
-  Array.getSomes(Array.unfold(0, nextBlock(markup, bodyOf)));
+const topLevelTags = (markup: string, grammar: Grammar): ReadonlyArray<Tag> =>
+  Array.getSomes(Array.unfold(0, nextBlock(markup, grammar)));
 
 const blank = (text: string): string => text.replace(/[^\n]/g, ' ');
 
@@ -192,10 +245,10 @@ const styleOf =
 const blocksIn = (
   content: string,
   markup: string,
-  bodyOf: BodyOf,
+  grammar: Grammar,
   defaultExtension: string,
 ): ComponentBlocks => {
-  const tags = topLevelTags(markup, bodyOf);
+  const tags = topLevelTags(markup, grammar);
   return {
     scripts: pipe(
       Array.filter(tags, (tag) => tag.name === 'script'),
@@ -222,7 +275,7 @@ const astroBlocks = (content: string): ComponentBlocks => {
     onNone: () => content,
     onSome: ({ end }) => blank(content.slice(0, end)) + content.slice(end),
   });
-  const blocks = blocksIn(content, markup, markupBody, '.ts');
+  const blocks = blocksIn(content, markup, MARKUP, '.ts');
   return {
     ...blocks,
     scripts: [
@@ -247,8 +300,8 @@ export const componentFramework = (file: string): Option.Option<string> =>
 
 export const componentBlocks = (file: string, content: string): ComponentBlocks =>
   Match.value(path.extname(file)).pipe(
-    Match.when('.vue', () => blocksIn(content, content, vueBody, '.js')),
-    Match.when('.svelte', () => blocksIn(content, content, markupBody, '.js')),
+    Match.when('.vue', () => blocksIn(content, content, VUE, '.js')),
+    Match.when('.svelte', () => blocksIn(content, content, SVELTE, '.js')),
     Match.when('.astro', () => astroBlocks(content)),
     Match.orElse((): ComponentBlocks => ({ scripts: [], styles: [] })),
   );
