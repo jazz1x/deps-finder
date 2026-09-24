@@ -587,6 +587,8 @@ describe('shouldAnalyzeFile', () => {
     expect(shouldAnalyzeFile('src/App.vue')).toBe(true);
     expect(shouldAnalyzeFile('src/App.svelte')).toBe(true);
     expect(shouldAnalyzeFile('src/pages/index.astro')).toBe(true);
+    expect(['a.css', 'a.pcss', 'a.postcss', 'a.scss', 'a.less'].every(shouldAnalyzeFile)).toBe(true);
+    expect(['a.sass', 'a.styl'].some(shouldAnalyzeFile)).toBe(false);
     expect(shouldAnalyzeFile('package.json')).toBe(false);
   });
 });
@@ -859,5 +861,39 @@ describe('parseFile source kinds', () => {
       ].join('\n'),
     );
     expect(located('page.astro')).toEqual(["2:clsx:runtime:import clsx from 'clsx';", "7:date-fns:runtime:import 'date-fns';"]);
+  });
+
+  test('a stylesheet contributes the packages its at-rules load', async () => {
+    await writeFile(`${testDir}/app.scss`, "$c: red;\n@use '~bulma/sass' as b;");
+    expect(located('app.scss')).toEqual(["2:bulma:runtime:@use '~bulma/sass' as b"]);
+  });
+
+  test('a component contributes its style blocks in their lang, and skips Sass and Stylus', async () => {
+    await writeFile(
+      `${testDir}/App.vue`,
+      [
+        '<template><p/></template>',
+        '<style lang="scss" scoped>',
+        "@import 'normalize.css';",
+        '.a { .b { color: red; } }',
+        '</style>',
+        '<style lang="sass">',
+        "@import 'bourbon'",
+        '</style>',
+        '<style>',
+        "@import url('animate.css');",
+        '</style>',
+      ].join('\n'),
+    );
+    expect(located('App.vue')).toEqual([
+      "3:normalize.css:runtime:@import 'normalize.css'",
+      "10:animate.css:runtime:@import url('animate.css')",
+    ]);
+  });
+
+  test('a component whose style block does not parse fails as a whole', async () => {
+    await writeFile(`${testDir}/App.svelte`, "<script>\nimport 'nanoid';\n</script>\n<style>\n.a { color: red\n</style>");
+    const result = parseFile({ path: `${testDir}/App.svelte`, context: 'production', emit: UNCONFIGURED });
+    expect(Result.isFailure(result)).toBe(true);
   });
 });

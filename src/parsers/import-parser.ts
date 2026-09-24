@@ -36,6 +36,7 @@ import {
   EXCLUDED_WITHOUT_GITIGNORE,
   ROOT_TOOLING_DIRECTORIES,
   ROOT_TOOL_CONFIG_PATTERN,
+  STYLESHEET_EXTENSIONS,
   TSCONFIG_FILE_PATTERN,
   TYPESCRIPT_EXTENSIONS,
 } from '../constants/patterns.js';
@@ -52,8 +53,9 @@ import {
   type PackageName,
   type SourceFile,
 } from '../domain/types.js';
-import { componentScripts } from './component-blocks.js';
+import { componentScripts, componentStyles } from './component-blocks.js';
 import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
+import { type StyleSyntax, stylesheetReferences } from './stylesheet-parser.js';
 import { type LayoutManifest, readLayoutManifest, readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
 import { gatherAll, gatherOptional, readFile } from '../utils/file-reader.js';
@@ -79,7 +81,13 @@ const isTsConfig = (filePath: string): boolean =>
 export const shouldAnalyzeFile = (filePath: string): boolean =>
   hasAnalyzableExtension(filePath) || isTsConfig(filePath);
 
-type SourceKind = 'tsconfig' | 'declaration' | 'typescript' | 'javascript' | 'component';
+type SourceKind =
+  | 'tsconfig'
+  | 'declaration'
+  | 'typescript'
+  | 'javascript'
+  | 'component'
+  | 'stylesheet';
 
 const sourceKindOf = (filePath: string): SourceKind =>
   Match.value(filePath).pipe(
@@ -87,6 +95,10 @@ const sourceKindOf = (filePath: string): SourceKind =>
     Match.when(
       (file) => Array.contains(COMPONENT_EXTENSIONS, path.extname(file)),
       (): SourceKind => 'component',
+    ),
+    Match.when(
+      (file) => Array.contains(STYLESHEET_EXTENSIONS, path.extname(file)),
+      (): SourceKind => 'stylesheet',
     ),
     Match.when(
       (file) => DECLARATION_FILE_PATTERN.test(file),
@@ -709,21 +721,79 @@ export const extractImports = (
   scope: Scope,
 ): ReadonlyArray<FileImport> => importsIn(content, filePath, filePath, scope);
 
+const styleImports = (
+  content: string,
+  filePath: string,
+  syntax: StyleSyntax,
+): Result.Result<ReadonlyArray<FileImport>, FileError> =>
+  Result.map(
+    stylesheetReferences(filePath, content, syntax),
+    Array.flatMap((reference) =>
+      Option.toArray(
+        Option.map(extractPackageName(reference.specifier), (packageName): FileImport => ({
+          packageName,
+          importType: 'runtime',
+          file: filePath,
+          line: reference.line,
+          importStatement: reference.statement,
+        })),
+      ),
+    ),
+  );
+
+type Extract = (
+  content: string,
+  source: SourceFile,
+) => Result.Result<ReadonlyArray<FileImport>, FileError>;
+
 const readWith =
-  (extract: (content: string, source: SourceFile) => ReadonlyArray<FileImport>) =>
+  (extract: Extract) =>
   (source: SourceFile): Result.Result<ReadonlyArray<ImportDetails>, FileError> =>
-    Result.map(readFile(source.path), (content) =>
-      Array.map(extract(content, source), (found): ImportDetails => ({
-        ...found,
-        context: source.context,
-      })),
+    pipe(
+      readFile(source.path),
+      Result.flatMap((content) => extract(content, source)),
+      Result.map(
+        Array.map((found): ImportDetails => ({
+          ...found,
+          context: source.context,
+        })),
+      ),
     );
 
-const readImports = readWith((content, source) => extractImports(content, source.path, source));
+const readImports = readWith((content, source) =>
+  Result.succeed(extractImports(content, source.path, source)),
+);
 
+const STYLE_SYNTAX_BY_EXTENSION: Readonly<Record<string, StyleSyntax>> = {
+  '.scss': 'scss',
+  '.less': 'less',
+};
+
+const readStylesheetImports = readWith((content, source) =>
+  styleImports(
+    content,
+    source.path,
+    Option.getOrElse(
+      Record.get(STYLE_SYNTAX_BY_EXTENSION, path.extname(source.path)),
+      (): StyleSyntax => 'css',
+    ),
+  ),
+);
+
+// A style block that does not parse fails the component, as an unreadable file would.
 const readComponentImports = readWith((content, source) =>
-  Array.flatMap(componentScripts(source.path, content), (script) =>
-    importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
+  Result.map(
+    Result.all(
+      Array.map(componentStyles(content), (style) =>
+        styleImports(style.text, source.path, style.syntax),
+      ),
+    ),
+    (styles) => [
+      ...Array.flatMap(componentScripts(source.path, content), (script) =>
+        importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
+      ),
+      ...Array.flatten(styles),
+    ],
   ),
 );
 
@@ -757,6 +827,7 @@ export const parseFile = (
     ),
     Match.when('javascript', () => readImports(source)),
     Match.when('component', () => readComponentImports(source)),
+    Match.when('stylesheet', () => readStylesheetImports(source)),
     Match.exhaustive,
   );
 

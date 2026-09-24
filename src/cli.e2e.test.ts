@@ -115,6 +115,19 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
   });
 
+  test('counts packages a stylesheet imports, and warns about one it cannot parse', async () => {
+    await writeFile(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ dependencies: { 'slick-carousel': '1' }, devDependencies: { tailwindcss: '4' } }),
+    );
+    await mkdir(path.join(tmpDir, 'src'));
+    await writeFile(path.join(tmpDir, 'src/global.css'), "@import 'slick-carousel/slick/slick.css';");
+    await writeFile(path.join(tmpDir, 'src/broken.css'), '@import "tailwindcss";\n.a { color: red');
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(r.stderr).toMatch(/warning: skipped \S*src\/broken\.css \(/);
+    expect(JSON.parse(r.stdout).unused).toEqual(['tailwindcss']);
+  });
+
   test('warns about a source directory it cannot read as about a source file', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'src/locked'), { recursive: true });

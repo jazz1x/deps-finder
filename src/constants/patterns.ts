@@ -2,6 +2,9 @@ export const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'] as const;
 
 export const COMPONENT_EXTENSIONS = ['.vue', '.svelte', '.astro'] as const;
 
+// Indented Sass (.sass) and Stylus (.styl) are not read.
+export const STYLESHEET_EXTENSIONS = ['.css', '.pcss', '.postcss', '.scss', '.less'] as const;
+
 export const ANALYZABLE_EXTENSIONS = [
   ...TYPESCRIPT_EXTENSIONS,
   '.js',
@@ -9,6 +12,7 @@ export const ANALYZABLE_EXTENSIONS = [
   '.mjs',
   '.cjs',
   ...COMPONENT_EXTENSIONS,
+  ...STYLESHEET_EXTENSIONS,
 ] as const;
 
 export const DECLARATION_FILE_PATTERN = /\.d\.[cm]?ts$/;
