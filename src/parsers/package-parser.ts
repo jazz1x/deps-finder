@@ -66,7 +66,7 @@ const declarationsOf = (file: typeof PackageJsonFile.Type): PackageJson['declara
   );
 
 // Tools that read their settings from a package.json key of the same name.
-export const TOOL_KEYS = [
+const TOOL_KEYS = [
   'eslintConfig',
   'babel',
   'postcss',
