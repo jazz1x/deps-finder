@@ -54,7 +54,7 @@ import {
   type PackageName,
   type SourceFile,
 } from '../domain/types.js';
-import { componentFramework, componentScripts, componentStyles } from './component-blocks.js';
+import { componentBlocks, componentFramework } from './component-blocks.js';
 import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
 import { type StyleSyntax, stylesheetReferences } from './stylesheet-parser.js';
 import { type LayoutManifest, readLayoutManifest, readPackageJson } from './package-parser.js';
@@ -799,11 +799,12 @@ const frameworkUse = (file: string, framework: string): FileImport => ({
 });
 
 // A style block that does not parse is skipped on its own.
-const readComponentImports = readWith((content, source) =>
-  gatherAll([
+const readComponentImports = readWith((content, source) => {
+  const { scripts, styles } = componentBlocks(source.path, content);
+  return gatherAll([
     {
       found: [
-        ...Array.flatMap(componentScripts(source.path, content), (script) =>
+        ...Array.flatMap(scripts, (script) =>
           importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
         ),
         ...Array.map(Option.toArray(componentFramework(source.path)), (framework) =>
@@ -812,11 +813,11 @@ const readComponentImports = readWith((content, source) =>
       ],
       skipped: [],
     },
-    ...Array.map(componentStyles(content), (style) =>
+    ...Array.map(styles, (style) =>
       styleImports(style.text, source.path, MESSAGES.STYLE_BLOCK_OF(source.path), style.syntax),
     ),
-  ]),
-);
+  ]);
+});
 
 const typescriptUse = (file: string): ImportDetails => ({
   packageName: 'typescript',
