@@ -861,6 +861,19 @@ describe('parseFile source kinds', () => {
     expect(located('app.scss')).toEqual(["2:bulma:runtime:@use '~bulma/sass' as b"]);
   });
 
+  test('what @plugin, @config and @reference load is build tooling, what @import loads is content', async () => {
+    await writeFile(
+      `${testDir}/app.css`,
+      ['@import "tailwindcss";', '@plugin "daisyui";', '@config "tw-config";', '@reference "tw-theme";'].join('\n'),
+    );
+    expect(parsed('app.css')).toEqual([
+      'tailwindcss:runtime:production',
+      'daisyui:runtime:development',
+      'tw-config:runtime:development',
+      'tw-theme:runtime:development',
+    ]);
+  });
+
   test('a component contributes its style blocks in their lang, and skips Sass and Stylus', async () => {
     await writeFile(
       `${testDir}/App.vue`,

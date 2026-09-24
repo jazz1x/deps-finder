@@ -1,4 +1,4 @@
-import { Array, Match, Option, Result, String, pipe } from 'effect';
+import { Array, Match, Option, Record, Result, String, pipe } from 'effect';
 import postcss, {
   type AtRule,
   type ChildNode,
@@ -13,15 +13,27 @@ import { FileError } from '../domain/errors.js';
 
 export type StyleSyntax = 'css' | 'scss' | 'less';
 
+// content: the target is inlined into the stylesheet. tooling: the build runs it or reads it, and
+// nothing of it is emitted.
+export type StyleLoad = 'content' | 'tooling';
+
 type StyleReference = {
   readonly specifier: string;
   readonly line: number;
   readonly statement: string;
+  readonly loads: StyleLoad;
 };
 
 // Tailwind v4 loads packages with @plugin, @config and @reference; Sass with @use and @forward;
 // Less with @plugin.
-const LOADING_AT_RULES = ['import', 'use', 'forward', 'plugin', 'config', 'reference'];
+const LOADING_AT_RULES: Readonly<Record<string, StyleLoad>> = {
+  import: 'content',
+  use: 'content',
+  forward: 'content',
+  plugin: 'tooling',
+  config: 'tooling',
+  reference: 'tooling',
+};
 
 // A Less option such as (reference) may come first; the target is quoted or in url().
 const TARGET = /^\s*(?:\([^)]*\)\s*)?(?:(["'])(.*?)\1|url\(\s*(["']?)(.*?)\3\s*\))/;
@@ -68,12 +80,19 @@ const targetsOf = (params: string): ReadonlyArray<string> =>
   );
 
 const referencesOf = (rule: AtRule): ReadonlyArray<StyleReference> =>
-  Array.map(targetsOf(rule.params), (specifier) => ({
-    specifier,
-    // postcss sets source.start on every node it parses; only nodes built in code lack it.
-    line: rule.source?.start?.line ?? 1,
-    statement: `@${rule.name} ${rule.params}`,
-  }));
+  pipe(
+    Record.get(LOADING_AT_RULES, rule.name),
+    Option.toArray,
+    Array.flatMap((loads) =>
+      Array.map(targetsOf(rule.params), (specifier) => ({
+        specifier,
+        // postcss sets source.start on every node it parses; only nodes built in code lack it.
+        line: rule.source?.start?.line ?? 1,
+        statement: `@${rule.name} ${rule.params}`,
+        loads,
+      })),
+    ),
+  );
 
 export const stylesheetReferences = (
   file: string,
@@ -97,11 +116,5 @@ export const stylesheetReferences = (
           ),
         }),
     }),
-    Result.map((root) =>
-      pipe(
-        atRulesIn(root),
-        Array.filter((rule) => Array.contains(LOADING_AT_RULES, rule.name)),
-        Array.flatMap(referencesOf),
-      ),
-    ),
+    Result.map((root) => Array.flatMap(atRulesIn(root), referencesOf)),
   );

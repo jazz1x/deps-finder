@@ -56,7 +56,7 @@ import {
 } from '../domain/types.js';
 import { componentBlocks, componentFramework } from './component-blocks.js';
 import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
-import { type StyleSyntax, stylesheetReferences } from './stylesheet-parser.js';
+import { type StyleLoad, type StyleSyntax, stylesheetReferences } from './stylesheet-parser.js';
 import { type LayoutManifest, readLayoutManifest, readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
 import { gatherAll, gatherOptional, readFile } from '../utils/file-reader.js';
@@ -722,22 +722,34 @@ export const extractImports = (
   scope: Scope,
 ): ReadonlyArray<FileImport> => importsIn(content, filePath, filePath, scope);
 
+const inContext =
+  (context: FileContext) =>
+  (detail: FileImport): ImportDetails => ({ ...detail, context });
+
+// A package a stylesheet inlines ships with it; a build plugin or config it names does not.
+const loadContext = (loads: StyleLoad, context: FileContext): FileContext =>
+  Match.value(loads).pipe(
+    Match.when('content', () => context),
+    Match.when('tooling', (): FileContext => 'development'),
+    Match.exhaustive,
+  );
+
 // named: what a parse failure calls the stylesheet, a component's style block for one.
 const styleImports = (
-  content: string,
-  filePath: string,
+  style: { readonly text: string; readonly syntax: StyleSyntax },
+  source: SourceFile,
   named: string,
-  syntax: StyleSyntax,
-): Gathered<FileImport> =>
-  Result.match(stylesheetReferences(named, content, syntax), {
+): Gathered<ImportDetails> =>
+  Result.match(stylesheetReferences(named, style.text, style.syntax), {
     onFailure: (error) => ({ found: [], skipped: [error] }),
     onSuccess: (loaded) => ({
       found: Array.flatMap(loaded, (reference) =>
         Option.toArray(
-          Option.map(extractPackageName(reference.specifier), (packageName): FileImport => ({
+          Option.map(extractPackageName(reference.specifier), (packageName): ImportDetails => ({
             packageName,
             importType: 'runtime',
-            file: filePath,
+            context: loadContext(reference.loads, source.context),
+            file: source.path,
             line: reference.line,
             importStatement: reference.statement,
           })),
@@ -752,24 +764,18 @@ type ParsedSources = {
   readonly unreadable: ReadonlyArray<FileError>;
 };
 
-type Extract = (content: string, source: SourceFile) => Gathered<FileImport>;
+type Extract = (content: string, source: SourceFile) => Gathered<ImportDetails>;
 
 const readWith =
   (extract: Extract) =>
   (source: SourceFile): Result.Result<ParsedSources, FileError> =>
     Result.map(readFile(source.path), (content) => {
       const { found, skipped } = extract(content, source);
-      return {
-        imports: Array.map(found, (detail): ImportDetails => ({
-          ...detail,
-          context: source.context,
-        })),
-        unreadable: skipped,
-      };
+      return { imports: found, unreadable: skipped };
     });
 
 const readImports = readWith((content, source) => ({
-  found: extractImports(content, source.path, source),
+  found: Array.map(extractImports(content, source.path, source), inContext(source.context)),
   skipped: [],
 }));
 
@@ -780,13 +786,15 @@ const STYLE_SYNTAX_BY_EXTENSION: Readonly<Record<string, StyleSyntax>> = {
 
 const readStylesheetImports = readWith((content, source) =>
   styleImports(
-    content,
+    {
+      text: content,
+      syntax: Option.getOrElse(
+        Record.get(STYLE_SYNTAX_BY_EXTENSION, path.extname(source.path)),
+        (): StyleSyntax => 'css',
+      ),
+    },
+    source,
     source.path,
-    source.path,
-    Option.getOrElse(
-      Record.get(STYLE_SYNTAX_BY_EXTENSION, path.extname(source.path)),
-      (): StyleSyntax => 'css',
-    ),
   ),
 );
 
@@ -803,18 +811,21 @@ const readComponentImports = readWith((content, source) => {
   const { scripts, styles } = componentBlocks(source.path, content);
   return gatherAll([
     {
-      found: [
-        ...Array.flatMap(scripts, (script) =>
-          importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
-        ),
-        ...Array.map(Option.toArray(componentFramework(source.path)), (framework) =>
-          frameworkUse(source.path, framework),
-        ),
-      ],
+      found: Array.map(
+        [
+          ...Array.flatMap(scripts, (script) =>
+            importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
+          ),
+          ...Array.map(Option.toArray(componentFramework(source.path)), (framework) =>
+            frameworkUse(source.path, framework),
+          ),
+        ],
+        inContext(source.context),
+      ),
       skipped: [],
     },
     ...Array.map(styles, (style) =>
-      styleImports(style.text, source.path, MESSAGES.STYLE_BLOCK_OF(source.path), style.syntax),
+      styleImports(style, source, MESSAGES.STYLE_BLOCK_OF(source.path)),
     ),
   ]);
 });
