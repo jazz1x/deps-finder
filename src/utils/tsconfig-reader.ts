@@ -232,18 +232,21 @@ export type TsConfigChain = Array.NonEmptyReadonlyArray<TsConfigFile>;
 // Nearest first. roots: tsconfig files that govern a directory; the projects they reference do too.
 export const readTsConfigChains = (roots: ReadonlyArray<string>): Gathered<TsConfigChain> => {
   const loaded = load(roots, { read: new Map(), skipped: [] });
-  const isIn = (chain: TsConfigChain) => (other: TsConfigChain) =>
-    Array.some(other, (file) => file.path === Array.headNonEmpty(chain).path);
+  const chains = pipe(
+    withReferences(loaded, roots, []),
+    Array.map((head) => chainAt(loaded, head, [head])),
+    Array.filter(Array.isReadonlyArrayNonEmpty),
+  );
+  const inherits = (other: TsConfigChain, chain: TsConfigChain): boolean =>
+    Array.some(Array.tailNonEmpty(other), (file) => file.path === Array.headNonEmpty(chain).path);
+  // A root that another root extends is read through that root; of an extends cycle, the first.
+  const readThroughAnother = (chain: TsConfigChain, index: number): boolean =>
+    Array.some(
+      chains,
+      (other, at) => inherits(other, chain) && (at < index || !inherits(chain, other)),
+    );
   return {
-    // A root that an earlier root extends is read through that root.
-    found: pipe(
-      withReferences(loaded, roots, []),
-      Array.map((head) => chainAt(loaded, head, [head])),
-      Array.filter(Array.isReadonlyArrayNonEmpty),
-      Array.reduce([] as ReadonlyArray<TsConfigChain>, (kept, chain) =>
-        Array.some(kept, isIn(chain)) ? kept : [...kept, chain],
-      ),
-    ),
+    found: Array.filter(chains, (chain, index) => !readThroughAnother(chain, index)),
     skipped: Array.dedupe(loaded.skipped),
   };
 };

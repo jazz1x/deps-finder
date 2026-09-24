@@ -116,6 +116,15 @@ describe('readTsConfigChains', () => {
     expect(skipped.map(FileError.$is('FileNotFound'))).toEqual([true]);
   });
 
+  test('a root that another root extends is read only through it, whatever their names', async () => {
+    await write('tsconfig.base.json', { compilerOptions: { verbatimModuleSyntax: true } });
+    await write('tsconfig.json', { extends: './tsconfig.base.json' });
+    const roots = ['tsconfig.base.json', 'tsconfig.json'].map((name) => path.resolve(testDir, name));
+    expect(readTsConfigChains(roots).found.map((chain) => chain.map((file) => path.relative(testDir, file.path)))).toEqual([
+      ['tsconfig.json', 'tsconfig.base.json'],
+    ]);
+  });
+
   test('follows references to a file and to a directory; a missing reference is skipped', async () => {
     await write('tsconfig.json', {
       files: [],
