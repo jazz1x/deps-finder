@@ -47,7 +47,11 @@ import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build
 import { gatherAll, readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import { type LeftOut, walkProject } from '../utils/project-walk.js';
-import { readRootTsConfigs } from '../utils/tsconfig-reader.js';
+import {
+  type TsConfigChain,
+  readRootTsConfigs,
+  readTsConfigChains,
+} from '../utils/tsconfig-reader.js';
 
 const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
 
@@ -431,13 +435,35 @@ const anchoredExclude =
 
 const byPath = Order.mapInput(Order.String, (file: SourceFile) => file.path);
 
+const directoryOf = (relativePath: string): string =>
+  pipe(path.posix.dirname(relativePath), (dir) => (dir === '.' ? '' : dir));
+
+const governingTsConfigs = (
+  rootDir: string,
+  sources: ReadonlyArray<{ readonly path: string; readonly layoutRoots: ReadonlyArray<string> }>,
+): Gathered<TsConfigChain> =>
+  readTsConfigChains(
+    pipe(
+      sources,
+      Array.filter(
+        (source) =>
+          isTsConfig(source.path) && Array.contains(source.layoutRoots, directoryOf(source.path)),
+      ),
+      Array.map((source) => path.resolve(rootDir, source.path)),
+      (roots) => Array.sort(roots, Order.String),
+    ),
+  );
+
 export const findFiles = (
   rootDir: string,
   options: {
     readonly excludePatterns?: ReadonlyArray<string>;
     readonly noAutoDetect?: boolean;
   } = {},
-): Gathered<SourceFile> & { readonly packages: ReadonlyArray<LeftOut> } => {
+): Gathered<SourceFile> & {
+  readonly packages: ReadonlyArray<LeftOut>;
+  readonly tsconfigs: ReadonlyArray<TsConfigChain>;
+} => {
   const detected = options.noAutoDetect ? gatherAll<string>([]) : detectedBuildDirectories(rootDir);
   const walked = walkProject(rootDir, {
     always: [
@@ -449,6 +475,7 @@ export const findFiles = (
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
     isSource: shouldAnalyzeFile,
   });
+  const tsconfigs = governingTsConfigs(rootDir, walked.found);
   return {
     found: pipe(
       walked.found,
@@ -458,11 +485,13 @@ export const findFiles = (
       })),
       (files) => Array.sort(files, byPath),
     ),
-    skipped: [...detected.skipped, ...walked.skipped],
+    // Build-directory detection reads the root tsconfig files too.
+    skipped: Array.dedupe([...detected.skipped, ...walked.skipped, ...tsconfigs.skipped]),
     packages: Array.map(walked.packages, ({ dir, files }) => ({
       dir: path.join(rootDir, dir),
       files: Array.map(files, (file) => path.resolve(rootDir, file)),
     })),
+    tsconfigs: tsconfigs.found,
   };
 };
 

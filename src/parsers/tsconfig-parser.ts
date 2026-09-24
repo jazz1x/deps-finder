@@ -1,19 +1,12 @@
 import { Array, Option, String, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
-import type {
-  FileContext,
-  Gathered,
-  ImportDetails,
-  ImportType,
-  PackageName,
-} from '../domain/types.js';
+import type { FileContext, ImportDetails, ImportType, PackageName } from '../domain/types.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
 import {
   type TsConfig,
   type TsConfigChain,
   type TsConfigFile,
   extendsOf,
-  readTsConfigChains,
 } from '../utils/tsconfig-reader.js';
 import { extractPackageName } from './import-parser.js';
 
@@ -110,10 +103,6 @@ const importsOf = (chain: TsConfigChain): ReadonlyArray<ImportDetails> => [
 const sameUse = (a: ImportDetails, b: ImportDetails): boolean =>
   a.packageName === b.packageName && a.file === b.file && a.line === b.line;
 
-export const readTsConfigImports = (projectRoot: string): Gathered<ImportDetails> => {
-  const chains = readTsConfigChains(projectRoot);
-  return {
-    found: Array.dedupeWith(Array.flatMap(chains.found, importsOf), sameUse),
-    skipped: chains.skipped,
-  };
-};
+export const tsconfigImports = (
+  chains: ReadonlyArray<TsConfigChain>,
+): ReadonlyArray<ImportDetails> => Array.dedupeWith(Array.flatMap(chains, importsOf), sameUse);

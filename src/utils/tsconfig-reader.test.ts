@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { FileError } from '@/domain/errors';
@@ -58,6 +59,9 @@ describe('tsconfig-reader', () => {
   });
 });
 
+const rootsIn = (dir: string) =>
+  ['tsconfig.json', 'tsconfig.base.json'].map((name) => path.resolve(dir, name)).filter((file) => existsSync(file));
+
 describe('readTsConfigChains', () => {
   const testDir = './test-tsconfig-chains';
 
@@ -75,7 +79,7 @@ describe('readTsConfigChains', () => {
   };
 
   const chainsFrom = (root: string) =>
-    readTsConfigChains(root).found.map((chain) => chain.map((file) => path.relative(testDir, file.path)));
+    readTsConfigChains(rootsIn(root)).found.map((chain) => chain.map((file) => path.relative(testDir, file.path)));
 
   test.each([
     ['a bare package', '@tsconfig/node20', 'node_modules/@tsconfig/node20/tsconfig.json'],
@@ -90,7 +94,7 @@ describe('readTsConfigChains', () => {
   test('a package extends resolves through node_modules above the project', async () => {
     await write('pkg/tsconfig.json', { extends: '@tsconfig/node20/tsconfig.json' });
     await write('node_modules/@tsconfig/node20/tsconfig.json', {});
-    const { found, skipped } = readTsConfigChains(path.join(testDir, 'pkg'));
+    const { found, skipped } = readTsConfigChains(rootsIn(path.join(testDir, 'pkg')));
     expect(found.map((chain) => chain.map((file) => path.relative(testDir, file.path)))).toEqual([
       ['pkg/tsconfig.json', 'node_modules/@tsconfig/node20/tsconfig.json'],
     ]);
@@ -107,8 +111,25 @@ describe('readTsConfigChains', () => {
   test('a missing extended file is skipped, and an extends cycle ends', async () => {
     await write('tsconfig.json', { extends: ['./missing', './tsconfig.base.json'] });
     await write('tsconfig.base.json', { extends: './tsconfig.json' });
-    const { found, skipped } = readTsConfigChains(testDir);
+    const { found, skipped } = readTsConfigChains(rootsIn(testDir));
     expect(found.map((chain) => chain.map((file) => path.relative(testDir, file.path)))).toEqual([['tsconfig.json', 'tsconfig.base.json']]);
     expect(skipped.map(FileError.$is('FileNotFound'))).toEqual([true]);
+  });
+
+  test('follows references to a file and to a directory; a missing reference is skipped', async () => {
+    await write('tsconfig.json', {
+      files: [],
+      references: [{ path: './tsconfig.app.json' }, { path: './packages/ui' }, { path: './gone' }],
+    });
+    await write('tsconfig.app.json', { extends: './tsconfig.base.json' });
+    await write('packages/ui/tsconfig.json', { extends: '../../tsconfig.base.json' });
+    await write('tsconfig.base.json', {});
+    const { found, skipped } = readTsConfigChains([path.resolve(testDir, 'tsconfig.json')]);
+    expect(found.map((chain) => chain.map((file) => path.relative(testDir, file.path)))).toEqual([
+      ['tsconfig.json'],
+      ['tsconfig.app.json', 'tsconfig.base.json'],
+      ['packages/ui/tsconfig.json', 'tsconfig.base.json'],
+    ]);
+    expect(skipped.map((error) => path.relative(testDir, error.path))).toEqual(['gone']);
   });
 });
