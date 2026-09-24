@@ -15,9 +15,10 @@ const OUT_DIR_FLAGS = ['--outDir', '--out-dir', '--outdir'];
 const SHORT_OUT_DIR_COMPILERS = ['babel', 'swc'];
 
 const outDirFlagsOf = (words: ReadonlyArray<string>): ReadonlyArray<string> =>
-  Array.some(words, (word) => Array.contains(SHORT_OUT_DIR_COMPILERS, path.basename(word)))
-    ? [...OUT_DIR_FLAGS, '-d']
-    : OUT_DIR_FLAGS;
+  Option.match(
+    Array.findFirst(words, (word) => Array.contains(SHORT_OUT_DIR_COMPILERS, path.basename(word))),
+    { onNone: () => OUT_DIR_FLAGS, onSome: () => [...OUT_DIR_FLAGS, '-d'] },
+  );
 
 const outDirsIn = (words: ReadonlyArray<string>): ReadonlyArray<string> => {
   const flags = outDirFlagsOf(words);
