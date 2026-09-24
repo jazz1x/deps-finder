@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { Array, Match, Option, Result, String, pipe } from 'effect';
+import { Array, Data, Match, Option, Result, String, pipe } from 'effect';
 import type { Gathered, ScriptCommand } from '../domain/types.js';
 import { gatherAll, gatherOptional, readDirectory, readFile } from '../utils/file-reader.js';
 
@@ -31,19 +31,60 @@ const RUNNERS: ReadonlyArray<Runner> = [
   { words: ['yarn'], hands: 'script' },
 ];
 
-const SEPARATORS = /&&|\|\||[;|\n]/;
+// A comment, a word with its quoted parts, or a separator between commands.
+const TOKEN = /#[^\n]*|(?:[^\s'"`;&|()]|'[^']*'|"(?:\\.|[^"\\])*")+|&&|\|\||[;&|()\n]/g;
 
-const COMMENT = /(^|\s)#.*$/gm;
+const SEPARATOR = /^(?:&&|\|\||[;&|()\n])$/;
+
+const QUOTES = /'([^']*)'|"((?:\\.|[^"\\])*)"/g;
+
+// Words that open or close a shell construct before the command itself.
+const KEYWORDS = [
+  'if',
+  'then',
+  'else',
+  'elif',
+  'fi',
+  'do',
+  'done',
+  'while',
+  'until',
+  '!',
+  'time',
+  'exec',
+  '{',
+  '}',
+];
 
 const ENV_ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
-const QUOTED = /^(['"])(.*)\1$/;
+type Token = Data.TaggedEnum<{ Word: { readonly text: string }; Break: {} }>;
 
-const wordsOf = (segment: string): ReadonlyArray<string> =>
-  pipe(
-    String.split(String.trim(segment), /\s+/),
-    Array.filter(String.isNonEmpty),
-    Array.map(String.replace(QUOTED, '$2')),
+const Token = Data.taggedEnum<Token>();
+
+const tokenOf = (text: string): ReadonlyArray<Token> =>
+  Match.value(text).pipe(
+    Match.when(String.startsWith('#'), (): ReadonlyArray<Token> => []),
+    Match.when(
+      (separator) => SEPARATOR.test(separator),
+      () => [Token.Break()],
+    ),
+    Match.orElse((word) => [Token.Word({ text: String.replace(QUOTES, '$1$2')(word) })]),
+  );
+
+const segmentsOf = (script: string): ReadonlyArray<ReadonlyArray<string>> =>
+  Array.reduce(
+    Array.flatMap(Array.fromIterable(script.matchAll(TOKEN)), ([text]) => tokenOf(text)),
+    Array.of<ReadonlyArray<string>>([]),
+    (segments, token) =>
+      Token.$match(token, {
+        Break: () => Array.append(segments, []),
+        Word: ({ text }) =>
+          Array.append(
+            Array.initNonEmpty(segments),
+            Array.append(Array.lastNonEmpty(segments), text),
+          ),
+      }),
   );
 
 const startsWith = (words: ReadonlyArray<string>, prefix: ReadonlyArray<string>): boolean =>
@@ -80,7 +121,7 @@ const commandWords =
   (scripts: ReadonlyArray<string>) =>
   (words: ReadonlyArray<string>): ReadonlyArray<string> =>
     Array.match(
-      Array.dropWhile(words, (word) => ENV_ASSIGNMENT.test(word)),
+      Array.dropWhile(words, (word) => ENV_ASSIGNMENT.test(word) || Array.contains(KEYWORDS, word)),
       {
         onEmpty: (): ReadonlyArray<string> => [],
         onNonEmpty: (command) => [
@@ -98,12 +139,7 @@ export const invokedCommands = (
   script: string,
   scripts: ReadonlyArray<string>,
 ): ReadonlyArray<string> =>
-  pipe(
-    String.split(String.replace(COMMENT, '$1')(script), SEPARATORS),
-    Array.map(wordsOf),
-    Array.flatMap(commandWords(scripts)),
-    Array.dedupe,
-  );
+  pipe(segmentsOf(script), Array.flatMap(commandWords(scripts)), Array.dedupe);
 
 // Husky runs the git hooks in .husky/ at the project root. A hook is named after its git event,
 // without an extension; other files there are scripts a hook may call.

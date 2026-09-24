@@ -29,6 +29,20 @@ describe('invokedCommands', () => {
   test('dotenv hands on the command after --, and comments are not commands', () => {
     expect(invokedCommands('# lint-staged\ndotenv -e .env -- next dev # oxlint', [])).toEqual(['dotenv', 'next']);
   });
+
+  test('separators, spaces and # inside quotes stay in the word', () => {
+    expect(invokedCommands(`echo "done; eslint #" && echo 'a | prettier' && FOO="a b" NODE_OPTIONS='--x --y' mocha; "jest"`, [])).toEqual([
+      'echo',
+      'mocha',
+      'jest',
+    ]);
+  });
+
+  test('subshells, groups and shell keywords are not commands', () => {
+    expect(
+      invokedCommands('(cd a; jest --ci) || { ava; } && if [ -n "$CI" ]; then echo ci; else oxlint src; fi; V=$(node -v) vite', []),
+    ).toEqual(['cd', 'jest', 'ava', '[', 'echo', 'oxlint', 'node', 'vite']);
+  });
 });
 
 describe('readHookCommands', () => {
