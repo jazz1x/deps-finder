@@ -11,7 +11,10 @@ export type Gathered<A> = {
 export const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
 
-export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> };
+// A package that publishes declarations exposes its dependencies' types to its consumers.
+export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> } & {
+  readonly declarations: 'published' | 'none';
+};
 
 export type ImportType = 'runtime' | 'type-only';
 

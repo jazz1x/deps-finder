@@ -62,6 +62,7 @@ describe('Integration Tests', () => {
       dependencies: ['react', 'lodash', 'styled-components', 'date-fns', 'unused-dep'],
       devDependencies: ['type-fest', 'jest', 'typescript', 'compression'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     // 3. Run Analysis
@@ -103,6 +104,7 @@ describe('Integration Tests', () => {
       dependencies: ['dep-a'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -124,6 +126,7 @@ describe('Integration Tests', () => {
       dependencies: ['pkg-x'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -143,6 +146,7 @@ describe('Integration Tests', () => {
       dependencies: [],
       devDependencies: ['tailwindcss'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -163,6 +167,7 @@ describe('Integration Tests', () => {
       dependencies: [],
       devDependencies: ['autoprefixer'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -182,6 +187,7 @@ describe('Integration Tests', () => {
       dependencies: [],
       devDependencies: ['happy-dom'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -232,6 +238,7 @@ const pkg = (sections: Partial<PackageJson>): PackageJson => ({
   dependencies: [],
   devDependencies: [],
   peerDependencies: [],
+  declarations: 'none',
   ...sections,
 });
 

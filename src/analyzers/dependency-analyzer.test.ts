@@ -29,6 +29,7 @@ describe('dependency-analyzer', () => {
       dependencies: ['@mobily/ts-belt', 'unused-package'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -51,6 +52,7 @@ describe('dependency-analyzer', () => {
       dependencies: [],
       devDependencies: ['express', 'typescript'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -77,6 +79,7 @@ describe('dependency-analyzer', () => {
       dependencies: [],
       devDependencies: ['typescript', 'jest'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -97,6 +100,7 @@ describe('dependency-analyzer', () => {
       dependencies: [],
       devDependencies: ['typescript', 'jest'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -119,6 +123,7 @@ describe('dependency-analyzer', () => {
       dependencies: ['react', 'eslint'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -148,6 +153,7 @@ describe('dependency-analyzer', () => {
       dependencies: ['type-only-lib', 'runtime-lib', 'mixed-lib', 'only-runtime-lib', 'unused-lib'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -182,6 +188,7 @@ describe('dependency-analyzer', () => {
       dependencies: ['common-lib'],
       devDependencies: [],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -210,6 +217,7 @@ describe('dependency-analyzer', () => {
       dependencies: ['type-lib', 'runtime-lib', 'unused-lib'],
       devDependencies: ['dev-lib'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -233,6 +241,7 @@ describe('dependency-analyzer', () => {
       dependencies: [],
       devDependencies: ['vite'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -257,6 +266,7 @@ describe('dependency-analyzer', () => {
       dependencies: [],
       devDependencies: ['vite'],
       peerDependencies: [],
+      declarations: 'none',
     };
 
     const files = findFiles(testDir).found;
@@ -293,6 +303,7 @@ describe('dependency-analyzer: peerDependencies', () => {
     dependencies: [],
     devDependencies: [],
     peerDependencies: ['typescript', 'react'],
+    declarations: 'none',
   };
 
   test('default: peerDependencies are not flagged as unused', async () => {
@@ -403,6 +414,7 @@ const pkg = (sections: Partial<PackageJson>): PackageJson => ({
   dependencies: [],
   devDependencies: [],
   peerDependencies: [],
+  declarations: 'none',
   ...sections,
 });
 
@@ -417,6 +429,16 @@ describe('dependency-analyzer: section classification', () => {
   test('--all still reports misplaced devDependencies', () => {
     const result = analyzeDependencies(pkg({ devDependencies: ['chalk'] }), [use('chalk')], { sections: ALL, ignoredPackages: [] });
     expect(result.misplaced.map((m) => m.packageName)).toEqual(['chalk']);
+  });
+
+  test('a library that publishes declarations keeps its type-only dependencies', () => {
+    const imports = [use('type-fest', 'type-only')];
+    const options = { sections: ['dependencies' as const], ignoredPackages: [] };
+    expect(analyzeDependencies(pkg({ dependencies: ['type-fest'] }), imports, options).typeOnly).toEqual(['type-fest']);
+    expect(analyzeDependencies(pkg({ dependencies: ['type-fest'], declarations: 'published' }), imports, options)).toMatchObject({
+      typeOnly: [],
+      totalIssues: 0,
+    });
   });
 
   test('a devDependency used only for types is correctly placed, even with --all', () => {
