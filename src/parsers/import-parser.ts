@@ -1,7 +1,13 @@
 import path from 'node:path';
 import type {
   Argument,
+  BindingPattern,
+  BindingProperty,
+  BindingRestElement,
   CallExpression,
+  Expression,
+  IdentifierReference,
+  ParamPattern,
   Program,
   TSGlobalDeclaration,
   TSImportEqualsDeclaration,
@@ -474,29 +480,89 @@ const jsxRuntimeReferences = (
       ),
   });
 
-const TEST_GLOBAL_CALL =
-  /(?<![\w$.])(describe|it|test|expect|beforeEach|afterEach)\s*(?:\.\s*[\w$]+\s*)*\(/g;
+const TEST_GLOBALS = ['describe', 'it', 'test', 'expect', 'beforeEach', 'afterEach'];
+
+const TEST_GLOBAL_MARKER = /\b(?:describe|it|test|expect|beforeEach|afterEach)\b/;
 
 const TEST_GLOBAL_TYPES = ['@types/jest', '@types/mocha', '@types/jasmine'] as const;
 
-const testGlobalReferences = (
-  content: string,
-  parsed: ParseResult,
-): ReadonlyArray<ModuleReference> => {
-  const imported = Array.flatMap(parsed.module.staticImports, (statement) =>
-    Array.map(statement.entries, (entry) => entry.localName.value),
+type Binder = BindingPattern | BindingProperty | BindingRestElement | ParamPattern | null;
+
+const boundNames = (binder: Binder): ReadonlyArray<string> =>
+  Match.value(binder).pipe(
+    Match.when({ type: 'Identifier' }, (identifier) => [identifier.name]),
+    Match.when({ type: 'ObjectPattern' }, (object) => Array.flatMap(object.properties, boundNames)),
+    Match.when({ type: 'Property' }, (property) => boundNames(property.value)),
+    Match.when({ type: 'ArrayPattern' }, (array) => Array.flatMap(array.elements, boundNames)),
+    Match.when({ type: 'RestElement' }, (rest) => boundNames(rest.argument)),
+    Match.when({ type: 'AssignmentPattern' }, (assignment) => boundNames(assignment.left)),
+    Match.when({ type: 'TSParameterProperty' }, (property) => boundNames(property.parameter)),
+    Match.orElse(() => []),
   );
-  return pipe(
-    Array.findFirst(
-      [...content.matchAll(TEST_GLOBAL_CALL)],
-      (call) => !Array.contains(imported, call[1]),
+
+// describe(), describe.each([...])() and it.each`...`() are all rooted at the global.
+const calleeRoot = (callee: Expression): Option.Option<IdentifierReference> =>
+  Match.value(callee).pipe(
+    Match.when({ type: 'Identifier' }, (identifier) => Option.some(identifier)),
+    Match.when({ type: 'MemberExpression' }, (member) => calleeRoot(member.object)),
+    Match.when({ type: 'TaggedTemplateExpression' }, (tagged) => calleeRoot(tagged.tag)),
+    Match.orElse(() => Option.none()),
+  );
+
+type TestGlobalEvent = Data.TaggedEnum<{
+  Call: { readonly callee: IdentifierReference };
+  Binding: { readonly names: ReadonlyArray<string> };
+}>;
+
+const TestGlobalEvent = Data.taggedEnum<TestGlobalEvent>();
+
+const binding = (names: ReadonlyArray<string>): ReadonlyArray<TestGlobalEvent> => [
+  TestGlobalEvent.Binding({ names }),
+];
+
+const functionBinding = (fn: {
+  readonly id: BindingPattern | null;
+  readonly params: ReadonlyArray<ParamPattern>;
+}): ReadonlyArray<TestGlobalEvent> =>
+  binding([...boundNames(fn.id), ...Array.flatMap(fn.params, boundNames)]);
+
+// A test runner puts these names in scope; a file that binds one itself calls its own.
+const testGlobalReferences = (parsed: ParseResult): ReadonlyArray<ModuleReference> => {
+  const events = collectVisiting<TestGlobalEvent>(parsed.program, (collect) => ({
+    CallExpression: (node) =>
+      collect(
+        pipe(
+          calleeRoot(node.callee),
+          Option.filter((root) => Array.contains(TEST_GLOBALS, root.name)),
+          Option.map((callee) => TestGlobalEvent.Call({ callee })),
+          Option.toArray,
+        ),
+      ),
+    VariableDeclarator: (node) => collect(binding(boundNames(node.id))),
+    FunctionDeclaration: (node) => collect(functionBinding(node)),
+    FunctionExpression: (node) => collect(functionBinding(node)),
+    ArrowFunctionExpression: (node) => collect(functionBinding(node)),
+    ClassDeclaration: (node) => collect(binding(boundNames(node.id))),
+    CatchClause: (node) => collect(binding(boundNames(node.param))),
+    TSImportEqualsDeclaration: (node) => collect(binding([node.id.name])),
+  }));
+  const bound = new Set([
+    ...Array.flatMap(parsed.module.staticImports, (statement) =>
+      Array.map(statement.entries, (entry) => entry.localName.value),
     ),
+    ...pipe(
+      events,
+      Array.filter(TestGlobalEvent.$is('Binding')),
+      Array.flatMap((event) => event.names),
+    ),
+  ]);
+  return pipe(
+    Array.filter(events, TestGlobalEvent.$is('Call')),
+    Array.findFirst(({ callee }) => !bound.has(callee.name)),
     Option.match({
       onNone: () => [],
-      onSome: (call) =>
-        Array.map(TEST_GLOBAL_TYPES, (types) =>
-          referenceAt(types, true, { start: call.index, end: call.index + call[0].length }),
-        ),
+      onSome: ({ callee }) =>
+        Array.map(TEST_GLOBAL_TYPES, (types) => referenceAt(types, true, callee)),
     }),
   );
 };
@@ -523,7 +589,9 @@ const moduleReferences = (
     ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
     ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
     ...Match.value(context).pipe(
-      Match.when('development', () => testGlobalReferences(content, parsed)),
+      Match.when('development', () =>
+        TEST_GLOBAL_MARKER.test(content) ? testGlobalReferences(parsed) : [],
+      ),
       Match.when('production', () => []),
       Match.exhaustive,
     ),

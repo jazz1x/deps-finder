@@ -648,6 +648,9 @@ describe('extractImports type positions', () => {
 const uses = (content: string, file: string, emit: EmitSettings = UNCONFIGURED, context: FileContext = 'production') =>
   extractImports(content, file, { context, emit }).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
 
+const typesOf = (content: string) =>
+  uses(content, 'test/a.test.js', UNCONFIGURED, 'development').filter((found) => found.startsWith('@types/'));
+
 describe('extractImports test globals', () => {
   test('a development file calling describe/it/expect as globals uses the test runner types', () => {
     const content = 'describe("sum", () => {\n  it.each([1])("adds", (n) => expect(n).toBe(1));\n});';
@@ -662,6 +665,13 @@ describe('extractImports test globals', () => {
     const imported = 'import { describe, it } from "vitest";\ndescribe("a", () => it("b", () => {}));';
     expect(uses(imported, 'src/a.test.ts', UNCONFIGURED, 'development')).toEqual(['vitest:runtime:1']);
     expect(uses('test("a", () => {});', 'src/a.ts')).toEqual([]);
+  });
+
+  test('comments, strings, member calls and locally bound names are no global use', () => {
+    expect(typesOf('// run it (twice)\nconst s = "describe(";\n/x/.test("x");')).toEqual([]);
+    expect(typesOf('const test = base.extend({});\ntest.describe("a", () => test("b", () => {}));')).toEqual([]);
+    expect(typesOf('const { describe, it: spec } = require("node:test");\ndescribe("a", () => spec("b", () => {}));')).toEqual([]);
+    expect(typesOf('function expect(v) { return v; }\nexport const run = (it) => it(expect(1));')).toEqual([]);
   });
 });
 
