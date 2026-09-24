@@ -1,14 +1,11 @@
-import { Array, Effect, Match, Record, Result, Schema, pipe } from 'effect';
+import { Array, Match, Record, Result, Schema, pipe } from 'effect';
 import type { FileError } from '../domain/errors.js';
 import type { PackageJson, PackageName } from '../domain/types.js';
-import { readJsonFile } from '../utils/file-reader.js';
+import { lenientKey, readJsonFile } from '../utils/file-reader.js';
 
 const DependencySection = Schema.optionalKey(
   Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown)),
 );
-
-const lenient = <S extends Schema.Top>(schema: S) =>
-  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
 
 type ExportsTarget =
   | string
@@ -30,9 +27,9 @@ const PackageJsonFile = Schema.Struct({
   dependencies: DependencySection,
   devDependencies: DependencySection,
   peerDependencies: DependencySection,
-  types: lenient(Schema.NonEmptyString),
-  typings: lenient(Schema.NonEmptyString),
-  exports: lenient(ExportsTarget),
+  types: lenientKey(Schema.NonEmptyString),
+  typings: lenientKey(Schema.NonEmptyString),
+  exports: lenientKey(ExportsTarget),
 });
 
 const namesOf = (
@@ -40,7 +37,7 @@ const namesOf = (
 ): ReadonlyArray<PackageName> => Object.keys(section ?? {});
 
 const isTargetList = (target: ExportsTarget): target is ReadonlyArray<ExportsTarget> =>
-  globalThis.Array.isArray(target);
+  Array.isArray(target);
 
 // The targets of every "types" condition, at any depth.
 const typesConditions = (target: ExportsTarget | undefined): ReadonlyArray<ExportsTarget> =>
@@ -49,12 +46,13 @@ const typesConditions = (target: ExportsTarget | undefined): ReadonlyArray<Expor
     Match.when(Match.null, (): ReadonlyArray<ExportsTarget> => []),
     Match.when(Match.undefined, (): ReadonlyArray<ExportsTarget> => []),
     Match.when(isTargetList, (targets) => Array.flatMap(targets, typesConditions)),
-    Match.orElse((conditions) =>
+    Match.when(Match.record, (conditions) =>
       Array.flatMap(Record.toEntries(conditions), ([condition, nested]) => [
         ...(condition === 'types' ? [nested] : []),
         ...typesConditions(nested),
       ]),
     ),
+    Match.exhaustive,
   );
 
 const declarationsOf = (file: typeof PackageJsonFile.Type): PackageJson['declarations'] =>

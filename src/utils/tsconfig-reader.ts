@@ -1,37 +1,41 @@
 import path from 'node:path';
-import { Array, Effect, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Match, Option, Result, Schema, pipe } from 'effect';
 import { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
-import { decodeJsonc, gatherAll, gatherOptional, readFile, readStats } from './file-reader.js';
+import {
+  decodeJsonc,
+  gatherAll,
+  gatherOptional,
+  lenientKey,
+  readFile,
+  readStats,
+} from './file-reader.js';
 import { lineage } from './project-walk.js';
 
-// tsc accepts null (it clears an inherited option); a value that fits no field leaves the rest usable.
-const option = <S extends Schema.Top>(schema: S) =>
-  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
-
+// tsc accepts null: it clears an inherited option.
 const TsConfig = Schema.Struct({
-  extends: option(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
-  references: option(Schema.Array(Schema.Struct({ path: Schema.String }))),
-  files: option(Schema.NullOr(Schema.Array(Schema.String))),
-  include: option(Schema.NullOr(Schema.Array(Schema.String))),
-  exclude: option(Schema.NullOr(Schema.Array(Schema.String))),
+  extends: lenientKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  references: lenientKey(Schema.Array(Schema.Struct({ path: Schema.String }))),
+  files: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
+  include: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
+  exclude: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
   compilerOptions: Schema.optionalKey(
     Schema.Struct({
-      outDir: option(Schema.NonEmptyString),
-      declarationDir: option(Schema.NonEmptyString),
-      types: option(Schema.NullOr(Schema.Array(Schema.String))),
-      importHelpers: option(Schema.NullOr(Schema.Boolean)),
-      jsx: option(
+      outDir: lenientKey(Schema.NonEmptyString),
+      declarationDir: lenientKey(Schema.NonEmptyString),
+      types: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
+      importHelpers: lenientKey(Schema.NullOr(Schema.Boolean)),
+      jsx: lenientKey(
         Schema.NullOr(
           Schema.Literals(['preserve', 'react', 'react-jsx', 'react-jsxdev', 'react-native']),
         ),
       ),
-      jsxImportSource: option(Schema.NullOr(Schema.NonEmptyString)),
-      jsxFactory: option(Schema.NullOr(Schema.NonEmptyString)),
-      emitDecoratorMetadata: option(Schema.NullOr(Schema.Boolean)),
-      verbatimModuleSyntax: option(Schema.NullOr(Schema.Boolean)),
-      preserveValueImports: option(Schema.NullOr(Schema.Boolean)),
-      importsNotUsedAsValues: option(
+      jsxImportSource: lenientKey(Schema.NullOr(Schema.NonEmptyString)),
+      jsxFactory: lenientKey(Schema.NullOr(Schema.NonEmptyString)),
+      emitDecoratorMetadata: lenientKey(Schema.NullOr(Schema.Boolean)),
+      verbatimModuleSyntax: lenientKey(Schema.NullOr(Schema.Boolean)),
+      preserveValueImports: lenientKey(Schema.NullOr(Schema.Boolean)),
+      importsNotUsedAsValues: lenientKey(
         Schema.NullOr(Schema.Literals(['remove', 'preserve', 'error'])),
       ),
     }),
