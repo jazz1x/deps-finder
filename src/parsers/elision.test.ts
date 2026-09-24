@@ -76,6 +76,8 @@ describe('elideTypeOnlyImports', () => {
       'enum E { D = 1 }',
       'export class C { D = 1; M(): D | null { return null; } static D(): void {} }',
       'D: for (;;) { if (f) continue D; break D; }',
+      'declare const obj: { D: number };',
+      'export const w = obj.D as unknown as { D: 1 };',
       'export const v: T = { D: "" }, g = f, e = E;',
     ].join('\n');
     expect(await elided({ 'a.ts': content }, pkg({ devDependencies: ['d'] }))).toEqual(['d:type-only:a.ts:1']);
