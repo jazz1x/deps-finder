@@ -857,8 +857,10 @@ describe('parseFile source kinds', () => {
   });
 
   test('a stylesheet contributes the packages its at-rules load', async () => {
-    await writeFile(`${testDir}/app.scss`, "$c: red;\n@use '~bulma/sass' as b;");
+    await writeFile(`${testDir}/app.scss`, "// theme\n@use '~bulma/sass' as b;");
+    await writeFile(`${testDir}/app.less`, "// theme\n@import (reference) 'antd/lib/style';\n.a { .mixin(); }");
     expect(located('app.scss')).toEqual(["2:bulma:runtime:@use '~bulma/sass' as b"]);
+    expect(located('app.less')).toEqual(["2:antd:runtime:@import (reference) 'antd/lib/style'"]);
   });
 
   test('what @plugin, @config and @reference load is build tooling, what @import loads is content', async () => {
@@ -871,6 +873,28 @@ describe('parseFile source kinds', () => {
       'daisyui:runtime:development',
       'tw-config:runtime:development',
       'tw-theme:runtime:development',
+    ]);
+  });
+
+  test('a Vue component reads <script lang="tsx"> as TSX and <style lang="less"> as Less', async () => {
+    await writeFile(
+      `${testDir}/C.vue`,
+      [
+        '<script lang="tsx">',
+        "import c from 'pkg-c';",
+        "import type { T } from 'pkg-t';",
+        '</script>',
+        '<style lang="less">',
+        "@import 'pkg-d';",
+        '.a { .mixin(); }',
+        '</style>',
+      ].join('\n'),
+    );
+    expect(located('C.vue')).toEqual([
+      "2:pkg-c:runtime:import c from 'pkg-c';",
+      "3:pkg-t:type-only:import type { T } from 'pkg-t';",
+      '1:vue:runtime:C.vue',
+      "6:pkg-d:runtime:@import 'pkg-d'",
     ]);
   });
 
