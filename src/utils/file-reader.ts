@@ -1,4 +1,11 @@
-import { type Dirent, type Stats, readFileSync, readdirSync, statSync } from 'node:fs';
+import {
+  type Dirent,
+  type Stats,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { Array, Effect, Match, Option, Result, Schema, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
 import YAML from 'yaml';
@@ -38,6 +45,9 @@ export const readFile = (path: string): Result.Result<string, FileError> =>
 
 export const readStats = (path: string): Result.Result<Stats, FileError> =>
   Result.try({ try: () => statSync(path), catch: readFailure(path) });
+
+export const readRealPath = (path: string): Result.Result<string, FileError> =>
+  Result.try({ try: () => realpathSync(path), catch: readFailure(path) });
 
 export const readDirectory = (path: string): Result.Result<ReadonlyArray<Dirent>, FileError> =>
   Result.try({ try: () => readdirSync(path, { withFileTypes: true }), catch: readFailure(path) });

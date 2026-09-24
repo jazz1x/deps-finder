@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { detectBuildDirectories, detectByHeuristic } from './detect-build-dirs';
 import { readRootTsConfigs } from './tsconfig-reader';
@@ -57,6 +58,15 @@ describe('detect-build-dirs', () => {
     test('takes an absolute outDir inside the project', async () => {
       await scripts(`tsc --outDir ${path.resolve(testDir, 'lib')}`);
       expect(detect()).toEqual(['lib']);
+    });
+
+    test('takes an absolute outDir inside the project reached through a symlink', async () => {
+      const linked = `${testDir}-link`;
+      await symlink(path.resolve(testDir), linked);
+      await tsconfig({ outDir: path.join(realpathSync(testDir), 'lib') });
+      const found = detectBuildDirectories(linked, readRootTsConfigs(linked).found).found;
+      await rm(linked);
+      expect(found).toEqual(['lib']);
     });
 
     test.each(['.', './', '..', '../elsewhere'])('an outDir of %s excludes nothing', async (outDir) => {
