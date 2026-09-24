@@ -171,7 +171,19 @@ const fromValue = (root: Value): Collected => ({
 const staticRecord = (object: ObjectExpression): ConfigRecord =>
   Record.fromEntries(Array.getSomes(Array.map(object.properties, staticProperty)));
 
-// The value an expression spells out literally; anything computed is opaque.
+// Each value a condition can take; a && b and a ?? b take b when they take a string.
+const alternatives = (node: ArrayExpressionElement): ReadonlyArray<ArrayExpressionElement> =>
+  Match.value(node).pipe(
+    Match.when({ type: 'ConditionalExpression' }, (condition) => [
+      ...alternatives(condition.consequent),
+      ...alternatives(condition.alternate),
+    ]),
+    Match.when({ type: 'LogicalExpression' }, (logical) => alternatives(logical.right)),
+    Match.orElse((value) => [value]),
+  );
+
+// The value an expression spells out literally; anything computed is opaque. A call with one
+// argument, such as Storybook's getAbsolutePath('<package>'), stands for that argument.
 const staticValue = (node: ArrayExpressionElement): Value =>
   Match.value(node).pipe(
     Match.when(Match.null, () => Value.Opaque()),
@@ -185,7 +197,17 @@ const staticValue = (node: ArrayExpressionElement): Value =>
       ),
     ),
     Match.when({ type: 'ArrayExpression' }, (list) =>
-      Value.List({ items: Array.map(list.elements, staticValue) }),
+      Value.List({ items: Array.map(Array.flatMap(list.elements, alternatives), staticValue) }),
+    ),
+    Match.whenOr({ type: 'ConditionalExpression' }, { type: 'LogicalExpression' }, (condition) =>
+      Value.List({ items: Array.map(alternatives(condition), staticValue) }),
+    ),
+    Match.when({ type: 'CallExpression' }, (call) =>
+      pipe(
+        Option.liftPredicate(call.arguments, (args) => args.length === 1),
+        Option.flatMap(Array.head),
+        Option.match({ onNone: () => Value.Opaque(), onSome: staticValue }),
+      ),
     ),
     Match.when({ type: 'ObjectExpression' }, (object) =>
       Value.Map({ fields: staticRecord(object) }),

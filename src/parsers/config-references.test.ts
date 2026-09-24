@@ -111,6 +111,26 @@ describe('readToolConfigs', () => {
     expect(found.references.map((use) => use.packageName)).toEqual(['prettier']);
   });
 
+  test('known keys read call arguments, both branches of a condition, templates and as const', async () => {
+    await write(
+      '.storybook/main.ts',
+      "export default { addons: [getAbsolutePath('@storybook/addon-a'), `@storybook/addon-b`], framework: { name: getAbsolutePath('@storybook/react-vite') as const } };",
+    );
+    await write(
+      'postcss.config.cjs',
+      "module.exports = { plugins: [prod ? 'cssnano' : null, prod ? null : ['postcss-nesting', {}], prod && 'autoprefixer'] };",
+    );
+
+    expect(referenced().toSorted()).toEqual([
+      '@storybook/addon-a',
+      '@storybook/addon-b',
+      '@storybook/react-vite',
+      'autoprefixer',
+      'cssnano',
+      'postcss-nesting',
+    ]);
+  });
+
   test('an rc file without an extension is JSON with comments, or else YAML', async () => {
     await write('.eslintrc', '// legacy\n{ "plugins": ["react"] }\n');
     await write('.babelrc', 'plugins:\n  - macros\n');
