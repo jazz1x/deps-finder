@@ -1,22 +1,26 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { invokedCommands, readHookCommands } from './script-parser';
+import { Invoked, invokedCommands, readHookCommands } from './script-parser';
+
+const commands = (script: string, scripts: ReadonlyArray<string>) =>
+  invokedCommands(script, scripts).map(Invoked.$match({ Binary: ({ name }) => name, Package: ({ name }) => `package ${name}` }));
 
 describe('invokedCommands', () => {
   test('each command of a chain, past env assignments and runners', () => {
-    expect(invokedCommands('NODE_ENV=ci cross-env A=1 webpack --mode x && tsc | tee log; npx -y jest', [])).toEqual([
+    expect(commands('NODE_ENV=ci cross-env A=1 webpack --mode x && tsc | tee log; npx -y jest@29', [])).toEqual([
       'cross-env',
       'webpack',
       'tsc',
       'tee',
       'npx',
-      'jest',
+      'package jest',
+      'jest@29',
     ]);
   });
 
   test('a script runner hands on a binary but not a script of the same package.json', () => {
-    expect(invokedCommands('npm run fmt && yarn tsc && pnpm build && bun deps-finder', ['fmt', 'build'])).toEqual([
+    expect(commands('npm run fmt && yarn tsc && pnpm build && bun deps-finder', ['fmt', 'build'])).toEqual([
       'npm',
       'yarn',
       'tsc',
@@ -27,11 +31,11 @@ describe('invokedCommands', () => {
   });
 
   test('dotenv hands on the command after --, and comments are not commands', () => {
-    expect(invokedCommands('# lint-staged\ndotenv -e .env -- next dev # oxlint', [])).toEqual(['dotenv', 'next']);
+    expect(commands('# lint-staged\ndotenv -e .env -- next dev # oxlint', [])).toEqual(['dotenv', 'next']);
   });
 
   test('separators, spaces and # inside quotes stay in the word', () => {
-    expect(invokedCommands(`echo "done; eslint #" && echo 'a | prettier' && FOO="a b" NODE_OPTIONS='--x --y' mocha; "jest"`, [])).toEqual([
+    expect(commands(`echo "done; eslint #" && echo 'a | prettier' && FOO="a b" NODE_OPTIONS='--x --y' mocha; "jest"`, [])).toEqual([
       'echo',
       'mocha',
       'jest',
@@ -39,9 +43,16 @@ describe('invokedCommands', () => {
   });
 
   test('subshells, groups and shell keywords are not commands', () => {
-    expect(
-      invokedCommands('(cd a; jest --ci) || { ava; } && if [ -n "$CI" ]; then echo ci; else oxlint src; fi; V=$(node -v) vite', []),
-    ).toEqual(['cd', 'jest', 'ava', '[', 'echo', 'oxlint', 'node', 'vite']);
+    expect(commands('(cd a; jest --ci) || { ava; } && if [ -n "$CI" ]; then echo ci; else oxlint src; fi; V=$(node -v) vite', [])).toEqual([
+      'cd',
+      'jest',
+      'ava',
+      '[',
+      'echo',
+      'oxlint',
+      'node',
+      'vite',
+    ]);
   });
 });
 

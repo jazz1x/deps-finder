@@ -27,6 +27,24 @@ describe('binaryUses', () => {
     ]);
     expect(names(binaryUses(command('jest'), Installation.NotInstalled(), ['jest']))).toEqual(['jest']);
   });
+
+  test('a runner that fetches a package takes the next word as a package, less its version', () => {
+    const installation = installed({ '@biomejs/biome': { bins: ['biome'] }, prettier: { bins: ['prettier'] } });
+    expect(
+      names(binaryUses(command('npx @biomejs/biome check . && pnpm dlx prettier@3 -c .'), installation, ['@biomejs/biome', 'prettier'])),
+    ).toEqual(['@biomejs/biome', 'prettier']);
+  });
+
+  test('env, sh -c and backticks run commands, and npm run runs only scripts', () => {
+    const installation = installed({
+      jest: { bins: ['jest'] },
+      eslint: { bins: ['eslint'] },
+      vite: { bins: ['vite'] },
+      tsup: { bins: ['tsup'] },
+    });
+    const script = "env NODE_ENV=test jest && sh -c 'eslint . && echo ok' && echo `vite --version` && npm run tsup";
+    expect(names(binaryUses(command(script), installation, ['jest', 'eslint', 'vite', 'tsup']))).toEqual(['jest', 'eslint', 'vite']);
+  });
 });
 
 describe('peerUses', () => {

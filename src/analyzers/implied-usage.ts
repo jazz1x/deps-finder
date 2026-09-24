@@ -9,7 +9,7 @@ import {
   developmentUse,
 } from '../domain/types.js';
 import { unscoped } from '../parsers/installed-packages.js';
-import { invokedCommands } from '../parsers/script-parser.js';
+import { Invoked, invokedCommands } from '../parsers/script-parser.js';
 
 const installedIn = (installation: Installation) => (name: PackageName) =>
   Installation.$match(installation, {
@@ -35,10 +35,20 @@ export const binaryUses = (
     Array.map(binariesOf(installation)(name), (binary) => ({ binary, name })),
   );
   return Array.flatMap(commands, ({ file, script, scripts }) =>
-    pipe(
+    Array.flatMap(
       invokedCommands(script, scripts),
-      Array.flatMap((command) => Array.filter(providers, ({ binary }) => binary === command)),
-      Array.map(({ name, binary }) => developmentUse(name, file, binary)),
+      Invoked.$match({
+        Binary: ({ name: command }) =>
+          pipe(
+            Array.filter(providers, ({ binary }) => binary === command),
+            Array.map(({ name, binary }) => developmentUse(name, file, binary)),
+          ),
+        Package: ({ name }) =>
+          Array.map(
+            Array.filter(declared, (known) => known === name),
+            (known) => developmentUse(known, file, known),
+          ),
+      }),
     ),
   );
 };

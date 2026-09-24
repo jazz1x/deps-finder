@@ -3,27 +3,32 @@ import { Array, Data, Match, Option, Result, String, pipe } from 'effect';
 import type { Gathered, ScriptCommand } from '../domain/types.js';
 import { gatherAll, gatherOptional, readDirectory, readFile } from '../utils/file-reader.js';
 
-// binary: the next word is a binary. script: the next word is a script of the same package.json
-// when it names one, else a binary. separated: the command follows `--` when there is one.
-type Hands = 'binary' | 'script' | 'separated';
+// binary: the next word is a binary. package: the next word is a binary, or a package to fetch
+// and run. script: the next word is a script of the same package.json when it names one, else a
+// binary. script-only: the next word is a script. separated: the command follows `--` when there
+// is one. nested: the next word is a script of its own.
+type Hands = 'binary' | 'package' | 'script' | 'script-only' | 'separated' | 'nested';
 
 type Runner = { readonly words: ReadonlyArray<string>; readonly hands: Hands };
 
 // Longer prefixes first: `pnpm exec` is not `pnpm` running a script named exec.
 const RUNNERS: ReadonlyArray<Runner> = [
-  { words: ['npx'], hands: 'binary' },
-  { words: ['npm', 'exec'], hands: 'binary' },
+  { words: ['npx'], hands: 'package' },
+  { words: ['npm', 'exec'], hands: 'package' },
   { words: ['pnpm', 'exec'], hands: 'binary' },
-  { words: ['pnpm', 'dlx'], hands: 'binary' },
+  { words: ['pnpm', 'dlx'], hands: 'package' },
   { words: ['yarn', 'exec'], hands: 'binary' },
-  { words: ['yarn', 'dlx'], hands: 'binary' },
-  { words: ['bunx'], hands: 'binary' },
-  { words: ['bun', 'x'], hands: 'binary' },
+  { words: ['yarn', 'dlx'], hands: 'package' },
+  { words: ['bunx'], hands: 'package' },
+  { words: ['bun', 'x'], hands: 'package' },
   { words: ['cross-env'], hands: 'binary' },
+  { words: ['env'], hands: 'binary' },
   { words: ['dotenv'], hands: 'separated' },
-  { words: ['npm', 'run'], hands: 'script' },
-  { words: ['npm', 'run-script'], hands: 'script' },
-  { words: ['pnpm', 'run'], hands: 'script' },
+  { words: ['sh'], hands: 'nested' },
+  { words: ['bash'], hands: 'nested' },
+  { words: ['npm', 'run'], hands: 'script-only' },
+  { words: ['npm', 'run-script'], hands: 'script-only' },
+  { words: ['pnpm', 'run'], hands: 'script-only' },
   { words: ['yarn', 'run'], hands: 'script' },
   { words: ['bun', 'run'], hands: 'script' },
   { words: ['bun'], hands: 'script' },
@@ -32,9 +37,9 @@ const RUNNERS: ReadonlyArray<Runner> = [
 ];
 
 // A comment, a word with its quoted parts, or a separator between commands.
-const TOKEN = /#[^\n]*|(?:[^\s'"`;&|()]|'[^']*'|"(?:\\.|[^"\\])*")+|&&|\|\||[;&|()\n]/g;
+const TOKEN = /#[^\n]*|(?:[^\s'"`;&|()]|'[^']*'|"(?:\\.|[^"\\])*")+|&&|\|\||[;&|()\n`]/g;
 
-const SEPARATOR = /^(?:&&|\|\||[;&|()\n])$/;
+const SEPARATOR = /^(?:&&|\|\||[;&|()\n`])$/;
 
 const QUOTES = /'([^']*)'|"((?:\\.|[^"\\])*)"/g;
 
@@ -92,25 +97,47 @@ const startsWith = (words: ReadonlyArray<string>, prefix: ReadonlyArray<string>)
 
 const isFlag = String.startsWith('-');
 
+// Binary: a command. Package: a package that a runner fetches and runs, less its @version.
+export type Invoked = Data.TaggedEnum<{
+  Binary: { readonly name: string };
+  Package: { readonly name: string };
+}>;
+
+export const Invoked = Data.taggedEnum<Invoked>();
+
+const VERSION = /(?!^)@.*$/;
+
 const handedOn = (
   runner: Runner,
   words: ReadonlyArray<string>,
   scripts: ReadonlyArray<string>,
-): ReadonlyArray<string> => {
+): ReadonlyArray<Invoked> => {
   const rest = Array.dropWhile(words.slice(runner.words.length), isFlag);
   return Match.value(runner.hands).pipe(
-    Match.when('binary', () => rest),
+    Match.when('binary', () => commandWords(scripts)(rest)),
+    Match.when('package', () => [
+      ...Array.map(Array.take(rest, 1), (spec) =>
+        Invoked.Package({ name: String.replace(VERSION, '')(spec) }),
+      ),
+      ...commandWords(scripts)(rest),
+    ]),
     Match.when('script', () =>
       Array.match(rest, {
-        onEmpty: (): ReadonlyArray<string> => [],
-        onNonEmpty: (next) => (Array.contains(scripts, Array.headNonEmpty(next)) ? [] : next),
+        onEmpty: (): ReadonlyArray<Invoked> => [],
+        onNonEmpty: (next) =>
+          Array.contains(scripts, Array.headNonEmpty(next)) ? [] : commandWords(scripts)(next),
       }),
     ),
+    Match.when('script-only', (): ReadonlyArray<Invoked> => []),
     Match.when('separated', () =>
       pipe(
         Array.findFirstIndex(words, (word) => word === '--'),
         Option.match({ onNone: () => rest, onSome: (at) => words.slice(at + 1) }),
+        commandWords(scripts),
       ),
+    ),
+    Match.when('nested', () =>
+      Array.flatMap(Array.take(rest, 1), (nested) => invokedCommands(nested, scripts)),
     ),
     Match.exhaustive,
   );
@@ -119,17 +146,17 @@ const handedOn = (
 // A runner is a command too: cross-env or dotenv-cli is the package that provides it.
 const commandWords =
   (scripts: ReadonlyArray<string>) =>
-  (words: ReadonlyArray<string>): ReadonlyArray<string> =>
+  (words: ReadonlyArray<string>): ReadonlyArray<Invoked> =>
     Array.match(
       Array.dropWhile(words, (word) => ENV_ASSIGNMENT.test(word) || Array.contains(KEYWORDS, word)),
       {
-        onEmpty: (): ReadonlyArray<string> => [],
+        onEmpty: (): ReadonlyArray<Invoked> => [],
         onNonEmpty: (command) => [
-          Array.headNonEmpty(command),
+          Invoked.Binary({ name: Array.headNonEmpty(command) }),
           ...pipe(
             Array.findFirst(RUNNERS, (runner) => startsWith(command, runner.words)),
-            Option.map((runner) => commandWords(scripts)(handedOn(runner, command, scripts))),
-            Option.getOrElse((): ReadonlyArray<string> => []),
+            Option.map((runner) => handedOn(runner, command, scripts)),
+            Option.getOrElse((): ReadonlyArray<Invoked> => []),
           ),
         ],
       },
@@ -138,7 +165,7 @@ const commandWords =
 export const invokedCommands = (
   script: string,
   scripts: ReadonlyArray<string>,
-): ReadonlyArray<string> =>
+): ReadonlyArray<Invoked> =>
   pipe(segmentsOf(script), Array.flatMap(commandWords(scripts)), Array.dedupe);
 
 // Husky runs the git hooks in .husky/ at the project root. A hook is named after its git event,
