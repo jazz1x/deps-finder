@@ -21,14 +21,16 @@ export type ImportType = 'runtime' | 'type-only';
 export type FileContext = 'production' | 'development';
 
 export type JsxRuntime = Data.TaggedEnum<{
-  Classic: {};
+  Classic: { readonly factory: string };
   Automatic: { readonly importSource: string };
 }>;
 
 export const JsxRuntime = Data.taggedEnum<JsxRuntime>();
 
+// unused-bindings: an import none of whose bindings is used as a value is erased.
 // verbatim: an import is erased only when written `import type`.
-export type ImportElision = 'unused-bindings' | 'verbatim';
+// decorator-metadata: emitted metadata can name a type-position binding, so none is known erased.
+export type ImportElision = 'unused-bindings' | 'verbatim' | 'decorator-metadata';
 
 // How the compiler emits a file, from the tsconfig that governs it.
 export type EmitSettings = { readonly jsx: JsxRuntime; readonly elision: ImportElision };

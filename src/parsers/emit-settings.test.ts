@@ -28,9 +28,11 @@ describe('emitSettingsOf', () => {
     expect(jsxOf([], 'src/App.tsx')).toEqual(JsxRuntime.Automatic({ importSource: 'react' }));
   });
 
-  test('jsx "react" is the classic runtime', async () => {
+  test('jsx "react" is the classic runtime, whose factory is React unless jsxFactory names another', async () => {
     await write('tsconfig.json', { compilerOptions: { jsx: 'react' } });
-    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual(JsxRuntime.Classic());
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual(JsxRuntime.Classic({ factory: 'React' }));
+    await write('tsconfig.json', { compilerOptions: { jsx: 'react', jsxFactory: 'preact.h' } });
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual(JsxRuntime.Classic({ factory: 'preact' }));
   });
 
   test('react-jsxdev takes an inherited jsxImportSource', async () => {
@@ -51,6 +53,8 @@ describe('emitSettingsOf', () => {
     }
     await write('tsconfig.json', { compilerOptions: { verbatimModuleSyntax: false, importsNotUsedAsValues: 'remove' } });
     expect(elisionOf('src/a.ts')).toBe('unused-bindings');
+    await write('tsconfig.json', { compilerOptions: { emitDecoratorMetadata: true } });
+    expect(elisionOf('src/a.ts')).toBe('decorator-metadata');
   });
 
   test('a file follows the tsconfig of the nearest directory that has one', async () => {
@@ -58,6 +62,6 @@ describe('emitSettingsOf', () => {
     await write('apps/web/tsconfig.app.json', { compilerOptions: { jsx: 'preserve', jsxImportSource: 'preact' } });
     const roots = ['tsconfig.json', 'apps/web/tsconfig.app.json'];
     expect(jsxOf(roots, 'apps/web/src/App.tsx')).toEqual(JsxRuntime.Automatic({ importSource: 'preact' }));
-    expect(jsxOf(roots, 'src/App.tsx')).toEqual(JsxRuntime.Classic());
+    expect(jsxOf(roots, 'src/App.tsx')).toEqual(JsxRuntime.Classic({ factory: 'React' }));
   });
 });

@@ -5,6 +5,7 @@ import { analyzeDependencies } from '../analyzers/dependency-analyzer.js';
 import { CLI_TEXT, MESSAGES } from '../constants/messages.js';
 import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.js';
 import type { CliOptions, DependencyType } from '../domain/types.js';
+import { elideTypeOnlyImports } from '../parsers/elision.js';
 import { findFiles, parseHoistedImports, parseMultipleFiles } from '../parsers/import-parser.js';
 import { readPackageJson } from '../parsers/package-parser.js';
 import { tsconfigImports } from '../parsers/tsconfig-parser.js';
@@ -94,11 +95,22 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     })),
     Effect.map(({ packageJson, files, own, hoisted }) => ({
       packageJson,
-      // The walk and the hoisting credit can each read the same file.
-      skippedInputs: Array.dedupe([...files.skipped, ...hoisted.skipped]),
+      files,
+      own,
+      hoisted,
+      emitted: elideTypeOnlyImports(
+        packageJson,
+        [...own.imports, ...hoisted.imports, ...tsconfigImports(files.tsconfigs)],
+        files.found,
+      ),
+    })),
+    Effect.map(({ packageJson, files, own, hoisted, emitted }) => ({
+      packageJson,
+      // The walk, the hoisting credit and the elision re-read can each read the same file.
+      skippedInputs: Array.dedupe([...files.skipped, ...hoisted.skipped, ...emitted.skipped]),
       packagesLeftOut: Array.map(files.packages, (leftOut) => leftOut.dir),
       sources: {
-        imports: [...own.imports, ...hoisted.imports, ...tsconfigImports(files.tsconfigs)],
+        imports: emitted.imports,
         unreadable: [...own.unreadable, ...hoisted.unreadable],
       },
     })),

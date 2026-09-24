@@ -7,7 +7,7 @@ import type {
   TSImportEqualsDeclaration,
   TSModuleDeclaration,
 } from '@oxc-project/types';
-import { Array, Match, Option, Order, Record, Result, String, pipe } from 'effect';
+import { Array, Data, Match, Option, Order, Record, Result, String, pipe } from 'effect';
 import {
   type Comment,
   type DynamicImport,
@@ -16,6 +16,7 @@ import {
   type StaticExport,
   type StaticImport,
   Visitor,
+  type VisitorObject,
   parseSync,
 } from 'oxc-parser';
 import {
@@ -155,7 +156,7 @@ const erasesAllTypeSpecifiers =
   (content: string, elision: ImportElision) =>
   (statement: Span): boolean =>
     Match.value(elision).pipe(
-      Match.when('unused-bindings', () => true),
+      Match.whenOr('unused-bindings', 'decorator-metadata', () => true),
       Match.when('verbatim', () =>
         DECLARED_TYPE_ONLY.test(content.slice(statement.start, statement.end)),
       ),
@@ -249,18 +250,47 @@ type AstReferences = {
 
 const NO_AST_REFERENCES: AstReferences = { references: [], augmentations: [] };
 
-// ESM comes from oxc's module record without materialising the AST. The other forms need the AST;
-// oxc's Visitor walks 15.7k lines in 31ms where a pure recursive fold took 139ms.
+// The one place that collects by mutation: oxc's Visitor walks 15.7k lines in 31ms where a pure
+// recursive fold took 139ms.
+export const collectVisiting = <A>(
+  program: Program,
+  visitor: (collect: (found: ReadonlyArray<A>) => void) => VisitorObject,
+): ReadonlyArray<A> => {
+  const found: A[] = [];
+  new Visitor(visitor((items) => found.push(...items))).visit(program);
+  return found;
+};
+
+type AstReference = Data.TaggedEnum<{
+  Reference: { readonly reference: ModuleReference };
+  Augmentation: { readonly reference: ModuleReference };
+}>;
+
+const AstReference = Data.taggedEnum<AstReference>();
+
+const references = (found: ReadonlyArray<ModuleReference>): ReadonlyArray<AstReference> =>
+  Array.map(found, (reference) => AstReference.Reference({ reference }));
+
+// ESM comes from oxc's module record without materialising the AST. The other forms need the AST.
 const astReferences = (program: Program): AstReferences => {
-  const references: ModuleReference[] = [];
-  const augmentations: ModuleReference[] = [];
-  new Visitor({
-    CallExpression: (node) => references.push(...requireReference(node)),
-    TSImportEqualsDeclaration: (node) => references.push(...importEqualsReference(node)),
-    TSImportType: (node) => references.push(referenceAt(node.source.value, true, node)),
-    TSModuleDeclaration: (node) => augmentations.push(...augmentationReference(node)),
-  }).visit(program);
-  return { references, augmentations };
+  const [found, augmentations] = Array.partition(
+    collectVisiting<AstReference>(program, (collect) => ({
+      CallExpression: (node) => collect(references(requireReference(node))),
+      TSImportEqualsDeclaration: (node) => collect(references(importEqualsReference(node))),
+      TSImportType: (node) => collect(references([referenceAt(node.source.value, true, node)])),
+      TSModuleDeclaration: (node) =>
+        collect(
+          Array.map(augmentationReference(node), (reference) =>
+            AstReference.Augmentation({ reference }),
+          ),
+        ),
+    })),
+    AstReference.$match({
+      Reference: ({ reference }) => Result.fail(reference),
+      Augmentation: ({ reference }) => Result.succeed(reference),
+    }),
+  );
+  return { references: found, augmentations };
 };
 
 const AST_MARKER = /require|declare\s+module/;
@@ -333,7 +363,7 @@ const OPTIONS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
   '.cjs': JSX_LANG,
 };
 
-const parse = (content: string, filePath: string): ParseResult =>
+export const parse = (content: string, filePath: string): ParseResult =>
   parseSync(
     filePath,
     content,

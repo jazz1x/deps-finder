@@ -680,7 +680,9 @@ describe('extractImports JSX runtime', () => {
 
   test('no runtime import without JSX or under the classic runtime', () => {
     expect(uses('export const lt = (a: number) => a < 2;\nexport const id = <T,>(v: T) => v;', 'src/a.tsx')).toEqual([]);
-    expect(uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: JsxRuntime.Classic() })).toEqual([]);
+    expect(
+      uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: JsxRuntime.Classic({ factory: 'React' }) }),
+    ).toEqual([]);
   });
 });
 

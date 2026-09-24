@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { Array, Match, Option, Order, Record, pipe } from 'effect';
-import { type EmitSettings, JsxRuntime } from '../domain/types.js';
+import { Array, Match, Option, Order, Record, String, pipe } from 'effect';
+import { type EmitSettings, type ImportElision, JsxRuntime } from '../domain/types.js';
 import { lineage } from '../utils/project-walk.js';
 import type { TsConfig, TsConfigChain } from '../utils/tsconfig-reader.js';
 
@@ -25,12 +25,31 @@ const firstSet = <A>(
   pick: (config: TsConfig) => A | null | undefined,
 ): Option.Option<A> => Array.findFirst(chains, setIn(pick));
 
-// react-jsxdev imports <source>/jsx-dev-runtime instead of /jsx-runtime: the same package.
-const jsxRuntimeOf = (mode: JsxMode, importSource: string): JsxRuntime =>
-  Match.value(mode).pipe(
-    Match.when('react', () => JsxRuntime.Classic()),
+// Without a jsx setting, today's bundlers compile JSX with the automatic runtime. react-jsxdev
+// imports <source>/jsx-dev-runtime instead of /jsx-runtime: the same package.
+const jsxRuntimeOf = (chains: ReadonlyArray<TsConfigChain>): JsxRuntime =>
+  Match.value(
+    Option.getOrElse(
+      firstSet(chains, (config) => config.compilerOptions?.jsx),
+      (): JsxMode => 'react-jsx',
+    ),
+  ).pipe(
+    Match.when('react', () =>
+      JsxRuntime.Classic({
+        factory: pipe(
+          firstSet(chains, (config) => config.compilerOptions?.jsxFactory),
+          Option.map((factory) => Array.headNonEmpty(String.split(factory, '.'))),
+          Option.getOrElse(() => 'React'),
+        ),
+      }),
+    ),
     Match.whenOr('react-jsx', 'react-jsxdev', 'preserve', 'react-native', () =>
-      JsxRuntime.Automatic({ importSource }),
+      JsxRuntime.Automatic({
+        importSource: Option.getOrElse(
+          firstSet(chains, (config) => config.compilerOptions?.jsxImportSource),
+          () => 'react',
+        ),
+      }),
     ),
     Match.exhaustive,
   );
@@ -48,19 +67,22 @@ const keepsValueImports = (chains: ReadonlyArray<TsConfigChain>): boolean =>
     Option.contains(true),
   );
 
-// Without a jsx setting, today's bundlers compile JSX with the automatic runtime.
+const elisionOf = (chains: ReadonlyArray<TsConfigChain>): ImportElision =>
+  Match.value({
+    keepsValueImports: keepsValueImports(chains),
+    emitsMetadata: Option.contains(
+      firstSet(chains, (config) => config.compilerOptions?.emitDecoratorMetadata),
+      true,
+    ),
+  }).pipe(
+    Match.when({ keepsValueImports: true }, (): ImportElision => 'verbatim'),
+    Match.when({ emitsMetadata: true }, (): ImportElision => 'decorator-metadata'),
+    Match.orElse((): ImportElision => 'unused-bindings'),
+  );
+
 const settingsOf = (chains: ReadonlyArray<TsConfigChain>): EmitSettings => ({
-  jsx: jsxRuntimeOf(
-    Option.getOrElse(
-      firstSet(chains, (config) => config.compilerOptions?.jsx),
-      (): JsxMode => 'react-jsx',
-    ),
-    Option.getOrElse(
-      firstSet(chains, (config) => config.compilerOptions?.jsxImportSource),
-      () => 'react',
-    ),
-  ),
-  elision: keepsValueImports(chains) ? 'verbatim' : 'unused-bindings',
+  jsx: jsxRuntimeOf(chains),
+  elision: elisionOf(chains),
 });
 
 const headOf = (chain: TsConfigChain): string => Array.headNonEmpty(chain).path;

@@ -24,6 +24,8 @@ const TsConfig = Schema.Struct({
         ),
       ),
       jsxImportSource: option(Schema.NullOr(Schema.NonEmptyString)),
+      jsxFactory: option(Schema.NullOr(Schema.NonEmptyString)),
+      emitDecoratorMetadata: option(Schema.NullOr(Schema.Boolean)),
       verbatimModuleSyntax: option(Schema.NullOr(Schema.Boolean)),
       preserveValueImports: option(Schema.NullOr(Schema.Boolean)),
       importsNotUsedAsValues: option(
