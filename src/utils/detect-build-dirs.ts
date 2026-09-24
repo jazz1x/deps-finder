@@ -82,7 +82,6 @@ export const detectBuildDirectories = (
       [...scripts.found, ...Array.flatMap(tsconfigs, outDirsOf)],
       Array.map(insideRoot(projectRoot)),
       Array.getSomes,
-      Array.dedupe,
     ),
     skipped: scripts.skipped,
   };
