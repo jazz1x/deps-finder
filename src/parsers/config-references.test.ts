@@ -99,6 +99,18 @@ describe('readToolConfigs', () => {
     expect(referenced().toSorted()).toEqual(['@company/oxlint-rules', 'typescript-operations']);
   });
 
+  test('a root YAML file with many aliases is read for its names', async () => {
+    const steps = Array.from({ length: 120 }, () => '    - step: *lint').join('\n');
+    await write(
+      'bitbucket-pipelines.yml',
+      `definitions:\n  steps:\n    - step: &lint\n        script: [prettier]\npipelines:\n  default:\n${steps}\n`,
+    );
+
+    const found = readToolConfigs([testDir], []);
+    expect(found.skipped).toEqual([]);
+    expect(found.references.map((use) => use.packageName)).toEqual(['prettier']);
+  });
+
   test('an rc file without an extension is JSON with comments, or else YAML', async () => {
     await write('.eslintrc', '// legacy\n{ "plugins": ["react"] }\n');
     await write('.babelrc', 'plugins:\n  - macros\n');

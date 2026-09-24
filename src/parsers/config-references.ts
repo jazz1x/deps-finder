@@ -5,7 +5,19 @@ import type {
   ObjectPropertyKind,
   Program,
 } from '@oxc-project/types';
-import { Array, Match, Option, Predicate, Record, Result, Schema, String, pipe } from 'effect';
+import {
+  Array,
+  Data,
+  Match,
+  Option,
+  Predicate,
+  Record,
+  Result,
+  Schema,
+  String,
+  pipe,
+} from 'effect';
+import YAML from 'yaml';
 import type { FileError } from '../domain/errors.js';
 import {
   type Gathered,
@@ -16,7 +28,7 @@ import {
 } from '../domain/types.js';
 import {
   decodeJsonc,
-  decodeYaml,
+  decodeYamlDocument,
   gatherAll,
   gatherOptional,
   readDirectory,
@@ -82,7 +94,45 @@ const PACKAGE_JSON_TOOLS: Readonly<Record<ToolKey, Tool>> = {
   'lint-staged': 'lint-staged',
 };
 
-type ConfigRecord = { readonly [key: string]: unknown };
+// A config value, narrowed once from JSON, YAML or a JS literal. Opaque: anything else.
+type Value = Data.TaggedEnum<{
+  Text: { readonly text: string };
+  List: { readonly items: ReadonlyArray<Value> };
+  Map: { readonly fields: ConfigRecord };
+  Opaque: {};
+}>;
+
+type ConfigRecord = Readonly<Record<string, Value>>;
+
+const Value = Data.taggedEnum<Value>();
+
+const fromJson = (json: unknown): Value =>
+  Match.value(json).pipe(
+    Match.when(Match.string, (text) => Value.Text({ text })),
+    Match.when(Array.isArray, (items) => Value.List({ items: Array.map(items, fromJson) })),
+    Match.when(Predicate.isObject, (record) => Value.Map({ fields: Record.map(record, fromJson) })),
+    Match.orElse(() => Value.Opaque()),
+  );
+
+// An alias repeats what its anchor holds, which is read where the anchor stands.
+const fromYaml = (node: unknown): Value =>
+  Match.value(node).pipe(
+    Match.when(YAML.isScalar, (scalar) => fromJson(scalar.value)),
+    Match.when(YAML.isSeq, (seq) => Value.List({ items: Array.map(seq.items, fromYaml) })),
+    Match.when(YAML.isMap, (map) =>
+      Value.Map({
+        fields: Record.fromEntries(
+          Array.flatMap(map.items, (pair) =>
+            Match.value(pair.key).pipe(
+              Match.when(YAML.isScalar, (key) => [[`${key.value}`, fromYaml(pair.value)] as const]),
+              Match.orElse(() => []),
+            ),
+          ),
+        ),
+      }),
+    ),
+    Match.orElse(() => Value.Opaque()),
+  );
 
 // whole: the config when it is a single string, such as a shared Prettier config's name.
 type Collected = {
@@ -91,62 +141,65 @@ type Collected = {
   readonly whole: Option.Option<string>;
 };
 
-const isList = (value: unknown): value is ReadonlyArray<unknown> => Array.isArray(value);
+const recordsWithin: (value: Value) => ReadonlyArray<ConfigRecord> = Value.$match({
+  Text: () => [],
+  List: ({ items }) => Array.flatMap(items, recordsWithin),
+  Map: ({ fields }) => [fields, ...Array.flatMap(Record.values(fields), recordsWithin)],
+  Opaque: () => [],
+});
 
-const recordsWithin = (value: unknown): ReadonlyArray<ConfigRecord> =>
-  Match.value(value).pipe(
-    Match.when(isList, (list) => Array.flatMap(list, recordsWithin)),
-    Match.when(Predicate.isObject, (record: ConfigRecord) => [
-      record,
-      ...Array.flatMap(Record.values(record), recordsWithin),
-    ]),
-    Match.orElse(() => []),
-  );
+const stringsWithin: (value: Value) => ReadonlyArray<string> = Value.$match({
+  Text: ({ text }) => [text],
+  List: ({ items }) => Array.flatMap(items, stringsWithin),
+  Map: ({ fields }) => Array.flatMap(Record.values(fields), stringsWithin),
+  Opaque: () => [],
+});
 
-const stringsWithin = (value: unknown): ReadonlyArray<string> =>
-  Match.value(value).pipe(
-    Match.when(Match.string, (text) => [text]),
-    Match.when(isList, (list) => Array.flatMap(list, stringsWithin)),
-    Match.when(Predicate.isObject, (record: ConfigRecord) =>
-      Array.flatMap(Record.values(record), stringsWithin),
-    ),
-    Match.orElse(() => []),
-  );
+const textOf: (value: Value) => ReadonlyArray<string> = Value.$match({
+  Text: ({ text }) => [text],
+  List: () => [],
+  Map: () => [],
+  Opaque: () => [],
+});
 
-const fromData = (root: unknown): Collected => ({
+const fromValue = (root: Value): Collected => ({
   records: recordsWithin(root),
   strings: stringsWithin(root),
-  whole: Option.filter(Option.some(root), Predicate.isString),
+  whole: Array.head(textOf(root)),
 });
 
 const staticRecord = (object: ObjectExpression): ConfigRecord =>
   Record.fromEntries(Array.getSomes(Array.map(object.properties, staticProperty)));
 
-// The value an expression spells out literally; anything computed is undefined.
-const staticValue = (node: ArrayExpressionElement): unknown =>
+// The value an expression spells out literally; anything computed is opaque.
+const staticValue = (node: ArrayExpressionElement): Value =>
   Match.value(node).pipe(
-    Match.when(Match.null, () => undefined),
-    Match.when({ type: 'Literal' }, (literal) => literal.value),
+    Match.when(Match.null, () => Value.Opaque()),
+    Match.when({ type: 'Literal' }, (literal) => fromJson(literal.value)),
     Match.when({ type: 'TemplateLiteral' }, (template) =>
       pipe(
         Option.liftPredicate(template, (quoted) => Array.isReadonlyArrayEmpty(quoted.expressions)),
         Option.flatMap((quoted) => Array.head(quoted.quasis)),
         Option.flatMap((quasi) => Option.fromNullOr(quasi.value.cooked)),
-        Option.getOrUndefined,
+        Option.match({ onNone: () => Value.Opaque(), onSome: (text) => Value.Text({ text }) }),
       ),
     ),
-    Match.when({ type: 'ArrayExpression' }, (list) => Array.map(list.elements, staticValue)),
-    Match.when({ type: 'ObjectExpression' }, staticRecord),
+    Match.when({ type: 'ArrayExpression' }, (list) =>
+      Value.List({ items: Array.map(list.elements, staticValue) }),
+    ),
+    Match.when({ type: 'ObjectExpression' }, (object) =>
+      Value.Map({ fields: staticRecord(object) }),
+    ),
     Match.whenOr(
       { type: 'TSAsExpression' },
       { type: 'TSSatisfiesExpression' },
       { type: 'ParenthesizedExpression' },
       (wrapped) => staticValue(wrapped.expression),
     ),
-    Match.orElse(() => undefined),
+    Match.orElse(() => Value.Opaque()),
   );
 
-const staticProperty = (property: ObjectPropertyKind): Option.Option<readonly [string, unknown]> =>
+const staticProperty = (property: ObjectPropertyKind): Option.Option<readonly [string, Value]> =>
   Match.value(property).pipe(
     Match.when({ type: 'Property', computed: false, key: { type: 'Identifier' } }, (named) =>
       Option.some([named.key.name, staticValue(named.value)] as const),
@@ -168,47 +221,42 @@ const fromProgram = (program: Program): Collected => ({
   whole: Option.none(),
 });
 
-type Reader = (value: unknown) => ReadonlyArray<PackageName>;
+type Reader = (value: Value) => ReadonlyArray<PackageName>;
 
 type Convention = (name: string) => ReadonlyArray<PackageName>;
 
-const isNamed = (value: unknown): value is { readonly name: string } =>
-  Predicate.hasProperty(value, 'name') && Predicate.isString(value.name);
-
-const entryName = (entry: unknown): ReadonlyArray<string> =>
-  Match.value(entry).pipe(
-    Match.when(Match.string, (name) => [name]),
-    Match.when(isList, (pair) =>
-      Option.toArray(Option.filter(Array.head(pair), Predicate.isString)),
-    ),
-    Match.when(isNamed, (named) => [named.name]),
-    Match.orElse(() => []),
-  );
+const entryName: (entry: Value) => ReadonlyArray<string> = Value.$match({
+  Text: ({ text }) => [text],
+  List: ({ items }) => Array.flatMap(Array.take(items, 1), textOf),
+  Map: ({ fields }) =>
+    Option.match(Record.get(fields, 'name'), { onNone: () => [], onSome: textOf }),
+  Opaque: () => [],
+});
 
 // A name, a list of names, [name, options] pairs or { name } objects.
-const entries = (value: unknown): ReadonlyArray<string> =>
-  Match.value(value).pipe(
-    Match.when(isList, (list) => Array.flatMap(list, entryName)),
-    Match.orElse(entryName),
-  );
+const entries = (value: Value): ReadonlyArray<string> =>
+  Value.$match(value, {
+    Text: () => entryName(value),
+    List: ({ items }) => Array.flatMap(items, entryName),
+    Map: () => entryName(value),
+    Opaque: () => [],
+  });
 
-const keysOf = (value: unknown): ReadonlyArray<string> =>
-  Match.value(value).pipe(
-    Match.when(isList, (): ReadonlyArray<string> => []),
-    Match.when(Predicate.isObject, (record: ConfigRecord) => Record.keys(record)),
-    Match.orElse(() => []),
-  );
+const keysOf: (value: Value) => ReadonlyArray<string> = Value.$match({
+  Text: () => [],
+  List: () => [],
+  Map: ({ fields }) => Record.keys(fields),
+  Opaque: () => [],
+});
 
-const valuesOf = (value: unknown): ReadonlyArray<string> =>
-  Match.value(value).pipe(
-    Match.when(isList, (): ReadonlyArray<string> => []),
-    Match.when(Predicate.isObject, (record: ConfigRecord) =>
-      Array.flatMap(Record.values(record), entryName),
-    ),
-    Match.orElse(() => []),
-  );
+const valuesOf: (value: Value) => ReadonlyArray<string> = Value.$match({
+  Text: () => [],
+  List: () => [],
+  Map: ({ fields }) => Array.flatMap(Record.values(fields), entryName),
+  Opaque: () => [],
+});
 
-const entriesAndKeys = (value: unknown): ReadonlyArray<string> => [
+const entriesAndKeys = (value: Value): ReadonlyArray<string> => [
   ...entries(value),
   ...keysOf(value),
 ];
@@ -288,8 +336,8 @@ const executorPackage = (executor: string): ReadonlyArray<PackageName> =>
   exact(Array.headNonEmpty(String.split(executor, ':')));
 
 const reading =
-  (read: (value: unknown) => ReadonlyArray<string>, convention: Convention): Reader =>
-  (value: unknown): ReadonlyArray<PackageName> =>
+  (read: (value: Value) => ReadonlyArray<string>, convention: Convention): Reader =>
+  (value: Value): ReadonlyArray<PackageName> =>
     Array.flatMap(read(value), convention);
 
 const KEYS: Readonly<Record<KnownTool, Readonly<Record<string, Reader>>>> = {
@@ -341,12 +389,12 @@ const keyedNames =
 const isPackageName = (text: string): boolean =>
   Option.exists(extractPackageName(text), (name) => name === text);
 
-const commandsOf = (value: unknown): ReadonlyArray<string> =>
-  Match.value(value).pipe(
-    Match.when(Match.string, (command) => [command]),
-    Match.when(isList, (list) => Array.filter(list, Predicate.isString)),
-    Match.orElse(() => []),
-  );
+const commandsOf: (value: Value) => ReadonlyArray<string> = Value.$match({
+  Text: ({ text }) => [text],
+  List: ({ items }) => Array.flatMap(items, textOf),
+  Map: () => [],
+  Opaque: () => [],
+});
 
 type Uses = {
   readonly names: ReadonlyArray<PackageName>;
@@ -449,13 +497,14 @@ const formatOf = (file: string): Format =>
 const collectFrom =
   (file: string) =>
   (text: string): Result.Result<Collected, FileError> => {
-    const json = () => decodeJsonc(Schema.Unknown)(file)(text);
-    const yaml = () => decodeYaml(Schema.Unknown)(file)(text);
+    const json = () => Result.map(decodeJsonc(Schema.Unknown)(file)(text), fromJson);
+    const yaml = () =>
+      Result.map(decodeYamlDocument(file)(text), (document) => fromYaml(document.contents));
     return Match.value(formatOf(file)).pipe(
       Match.when('script', () => Result.succeed(fromProgram(parse(text, file).program))),
-      Match.when('json', () => Result.map(json(), fromData)),
-      Match.when('yaml', () => Result.map(yaml(), fromData)),
-      Match.when('rc', () => Result.map(Result.orElse(json(), yaml), fromData)),
+      Match.when('json', () => Result.map(json(), fromValue)),
+      Match.when('yaml', () => Result.map(yaml(), fromValue)),
+      Match.when('rc', () => Result.map(Result.orElse(json(), yaml), fromValue)),
       Match.exhaustive,
     );
   };
@@ -477,7 +526,7 @@ export const readToolConfigs = (
   );
   const sections = Array.flatMap(manifests, (manifest) =>
     Array.map(manifest.tools, ([key, value]) =>
-      foundIn(manifest.path, PACKAGE_JSON_TOOLS[key], fromData(value)),
+      foundIn(manifest.path, PACKAGE_JSON_TOOLS[key], fromValue(fromJson(value))),
     ),
   );
   const all = [...read.found, ...sections];
