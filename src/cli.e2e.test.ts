@@ -463,6 +463,7 @@ describe('CLI e2e (bin/cli.js)', () => {
               '@storybook/builder-vite',
               'serverless-offline',
               '@nx/jest',
+              '@nx/vite',
               'typescript-plugin-css-modules',
               'terser',
               'left-pad',
@@ -484,6 +485,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         '.storybook/main.ts': "export default { addons: ['@storybook/addon-a11y'], core: { builder: '@storybook/builder-vite' } };",
         'serverless.yml': 'service: s\nplugins:\n  - serverless-offline\n',
         'project.json': { name: 'app', targets: { test: { executor: '@nx/jest:jest' } } },
+        'libs/ui/project.json': { name: 'ui', targets: { build: { executor: '@nx/vite:build' } } },
         'tsconfig.json': { compilerOptions: { plugins: [{ name: 'typescript-plugin-css-modules' }] } },
         'vite.config.ts': "export default { build: { minify: 'terser' } };",
       });

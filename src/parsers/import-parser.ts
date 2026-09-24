@@ -815,13 +815,7 @@ export const findFiles = (
     withoutGitignore: EXCLUDED_WITHOUT_GITIGNORE,
     isSource: shouldAnalyzeFile,
   });
-  const layoutRoots = pipe(
-    walked.found,
-    Array.flatMap((source) => source.layoutRoots),
-    Array.prepend(''),
-    Array.dedupe,
-    (roots) => Array.sort(roots, Order.String),
-  );
+  const layoutRoots = Array.sort(Array.prepend(walked.layoutRoots, ''), Order.String);
   // The walk already reports a layout root's broken package.json.
   const manifests = gatherAll(
     Array.map(layoutRoots, (root) =>
