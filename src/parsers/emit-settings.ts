@@ -37,25 +37,28 @@ const setIn =
     Option.map(setWhere(pick)(chain), ({ value }) => value);
 
 // react-jsxdev imports <source>/jsx-dev-runtime instead of /jsx-runtime: the same package. A
-// jsxImportSource without jsx selects the automatic runtime, as in tsc.
+// jsxImportSource selects the automatic runtime, without jsx or under preserve, as in tsc.
 const jsxRuntimeOf = (chain: TsConfigChain): Option.Option<JsxRuntime> => {
   const importSource = setIn((config) => config.compilerOptions?.jsxImportSource)(chain);
+  const automatic = () =>
+    JsxRuntime.Automatic({ importSource: Option.getOrElse(importSource, () => 'react') });
+  const factory = pipe(
+    setIn((config) => config.compilerOptions?.jsxFactory)(chain),
+    Option.map((set) => Array.headNonEmpty(String.split(set, '.'))),
+    Option.getOrElse(() => 'React'),
+  );
   return pipe(
     setIn((config) => config.compilerOptions?.jsx)(chain),
     Option.orElse((): Option.Option<JsxMode> => Option.as(importSource, 'react-jsx')),
     Option.map((mode: JsxMode) =>
       Match.value(mode).pipe(
-        Match.when('react', () =>
-          JsxRuntime.Classic({
-            factory: pipe(
-              setIn((config) => config.compilerOptions?.jsxFactory)(chain),
-              Option.map((factory) => Array.headNonEmpty(String.split(factory, '.'))),
-              Option.getOrElse(() => 'React'),
-            ),
+        Match.when('react', () => JsxRuntime.Classic({ factory })),
+        Match.whenOr('react-jsx', 'react-jsxdev', automatic),
+        Match.whenOr('preserve', 'react-native', () =>
+          Option.match(importSource, {
+            onNone: () => JsxRuntime.Preserved({ factory }),
+            onSome: automatic,
           }),
-        ),
-        Match.whenOr('react-jsx', 'react-jsxdev', 'preserve', 'react-native', () =>
-          JsxRuntime.Automatic({ importSource: Option.getOrElse(importSource, () => 'react') }),
         ),
         Match.exhaustive,
       ),

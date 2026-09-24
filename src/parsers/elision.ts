@@ -96,7 +96,7 @@ const valueUses = (
   );
 };
 
-const classicFactories = (
+const keptFactories = (
   content: string,
   parsed: ParseResult,
   configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
@@ -106,6 +106,7 @@ const classicFactories = (
     JsxRuntime.$match({
       Automatic: (): ReadonlyArray<string> => [],
       Classic: ({ factory }) => [factory],
+      Preserved: ({ factory }) => [factory],
     }),
   );
 
@@ -126,7 +127,7 @@ const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<st
     Array.flatMap(withValues, (statement) =>
       Array.map(valueEntries(statement), (entry) => entry.localName.value),
     ),
-    classicFactories(content, parsed, source.emit.jsx),
+    keptFactories(content, parsed, source.emit.jsx),
   );
   const lineStarts = buildLineStarts(content);
   return pipe(

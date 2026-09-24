@@ -425,11 +425,13 @@ const pragmaIn =
 const toClassic = JsxRuntime.$match({
   Classic: (classic) => classic,
   Automatic: () => JsxRuntime.Classic({ factory: 'React' }),
+  Preserved: ({ factory }) => JsxRuntime.Classic({ factory }),
 });
 
 const toAutomatic = JsxRuntime.$match({
   Classic: () => JsxRuntime.Automatic({ importSource: 'react' }),
   Automatic: (automatic) => automatic,
+  Preserved: () => JsxRuntime.Automatic({ importSource: 'react' }),
 });
 
 const RUNTIME_PRAGMAS: Readonly<Record<string, (runtime: JsxRuntime) => JsxRuntime>> = {
@@ -460,6 +462,12 @@ export const fileJsxRuntimes = (
           JsxRuntime.Automatic({
             importSource: Option.getOrElse(importSource, () => automatic.importSource),
           }),
+        Preserved: (preserved) =>
+          Option.match(importSource, {
+            onNone: () =>
+              JsxRuntime.Preserved({ factory: Option.getOrElse(factory, () => preserved.factory) }),
+            onSome: (source) => JsxRuntime.Automatic({ importSource: source }),
+          }),
       }),
     ),
   );
@@ -481,6 +489,7 @@ const jsxRuntimeReferences = (
           Automatic: ({ importSource }) => [
             referenceAt(importSource, false, lineAround(content, at)),
           ],
+          Preserved: () => [referenceAt('react', false, lineAround(content, at))],
         }),
       ),
   });

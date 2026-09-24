@@ -20,9 +20,12 @@ export type ImportType = 'runtime' | 'type-only';
 
 export type FileContext = 'production' | 'development';
 
+// Preserved: tsc leaves JSX to the next compiler, counted as react/jsx-runtime, and keeps the
+// factory import as under the classic runtime.
 export type JsxRuntime = Data.TaggedEnum<{
   Classic: { readonly factory: string };
   Automatic: { readonly importSource: string };
+  Preserved: { readonly factory: string };
 }>;
 
 export const JsxRuntime = Data.taggedEnum<JsxRuntime>();

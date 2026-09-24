@@ -45,6 +45,13 @@ describe('emitSettingsOf', () => {
     expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual([JsxRuntime.Automatic({ importSource: '@emotion/react' })]);
   });
 
+  test('jsx preserve or react-native without a jsxImportSource leaves the factory import to the next compiler', async () => {
+    await write('tsconfig.json', { compilerOptions: { jsx: 'preserve', jsxFactory: 'h' } });
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual([JsxRuntime.Preserved({ factory: 'h' })]);
+    await write('tsconfig.json', { compilerOptions: { jsx: 'react-native' } });
+    expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual([JsxRuntime.Preserved({ factory: 'React' })]);
+  });
+
   const elisionOf = (file: string) => settingsOf(['tsconfig.json'], file).elision;
 
   test('verbatimModuleSyntax, preserveValueImports or importsNotUsedAsValues preserve or error keep value imports', async () => {

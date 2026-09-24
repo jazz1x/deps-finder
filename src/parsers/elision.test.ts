@@ -114,6 +114,15 @@ describe('elideTypeOnlyImports', () => {
     ]);
   });
 
+  test('under jsx preserve the factory is a value use, and JSX still loads react/jsx-runtime', async () => {
+    const files = { 'a.tsx': "import { h } from 'preact';\nexport const A = () => <div />;" };
+    const preserved: EmitSettings = { ...UNCONFIGURED, jsx: [JsxRuntime.Preserved({ factory: 'h' })] };
+    expect(await elided(files, pkg({ dependencies: ['preact'], devDependencies: ['react'] }), preserved)).toEqual([
+      'preact:runtime:a.tsx:1',
+      'react:runtime:a.tsx:2',
+    ]);
+  });
+
   test('a @jsxRuntime classic pragma makes its @jsx factory a value use under the automatic runtime', async () => {
     const content = "/** @jsxRuntime classic */\n/** @jsx jsx */\nimport { jsx } from '@emotion/react';\nexport const A = () => <div />;";
     expect(await elided({ 'a.tsx': content }, pkg({ dependencies: ['@emotion/react'] }))).toEqual(['@emotion/react:runtime:a.tsx:3']);
