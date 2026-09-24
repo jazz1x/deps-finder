@@ -683,6 +683,25 @@ describe('extractImports test globals', () => {
     ).toHaveLength(3);
     expect(typesOf('for (const it of [1]) { it(); }\nit("runs", () => {});')).toHaveLength(3);
     expect(typesOf('function f() { function test() {} test(); }\ntry {} catch (expect) { expect(); }')).toEqual([]);
+    const scoped = [
+      'function helper() { const it = 1; return it; }',
+      'class C { static { const it = 1; } }',
+      'for (let it = 0; it < 1; it++) {}',
+      'for (const it in {}) {}',
+      'switch (1) { case 1: const it = 1; }',
+    ];
+    expect(scoped.map((declared) => typesOf(`${declared}\nit("runs", () => {});`).length)).toEqual([3, 3, 3, 3, 3]);
+    const bound = [
+      'class expect {}\nexpect(1);',
+      'const run = function it() { it(); };',
+      'function f(expect) { expect(1); }',
+      'const f = ([expect]) => expect(1);',
+      'const f = (expect = 1) => expect(1);',
+      'const f = (...expect) => expect(1);',
+    ];
+    expect(bound.map((source) => typesOf(source).length)).toEqual([0, 0, 0, 0, 0, 0]);
+    const aliased = 'import expect = require("chai");\nexpect(1);';
+    expect(uses(aliased, 'src/a.test.ts', UNCONFIGURED, 'development').filter((found) => found.startsWith('@types/'))).toEqual([]);
   });
 });
 
