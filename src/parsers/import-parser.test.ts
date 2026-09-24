@@ -656,14 +656,44 @@ describe('extractImports JSX runtime', () => {
   });
 
   test('a @jsxImportSource pragma overrides the source the settings name', () => {
-    const emit = { jsx: JsxRuntime.Automatic({ importSource: '@emotion/react' }) };
+    const emit = { ...UNCONFIGURED, jsx: JsxRuntime.Automatic({ importSource: '@emotion/react' }) };
     expect(uses('/** @jsxImportSource preact */\nexport const A = () => <></>;', 'src/A.jsx', emit)).toEqual(['preact:runtime:2']);
     expect(uses('export const A = () => <b />;', 'src/A.js', emit)).toEqual(['@emotion/react:runtime:1']);
   });
 
   test('no runtime import without JSX or under the classic runtime', () => {
     expect(uses('export const lt = (a: number) => a < 2;\nexport const id = <T,>(v: T) => v;', 'src/a.tsx')).toEqual([]);
-    expect(uses('export const A = () => <div />;', 'src/A.tsx', { jsx: JsxRuntime.Classic() })).toEqual([]);
+    expect(uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: JsxRuntime.Classic() })).toEqual([]);
+  });
+});
+
+describe('extractImports under verbatimModuleSyntax', () => {
+  const content = [
+    'import { type Meta } from "reflect-x";',
+    'import type { B } from "b";',
+    'export { type C } from "c";',
+    'export type { D } from "d";',
+    'import type E from "e";',
+  ].join('\n');
+
+  test('only `import type` and `export type` are erased', () => {
+    expect(uses(content, 'src/a.ts', { ...UNCONFIGURED, elision: 'verbatim' })).toEqual([
+      'reflect-x:runtime:1',
+      'b:type-only:2',
+      'e:type-only:5',
+      'c:runtime:3',
+      'd:type-only:4',
+    ]);
+  });
+
+  test('without it, inline type specifiers are erased too', () => {
+    expect(uses(content, 'src/a.ts')).toEqual([
+      'reflect-x:type-only:1',
+      'b:type-only:2',
+      'e:type-only:5',
+      'c:type-only:3',
+      'd:type-only:4',
+    ]);
   });
 });
 

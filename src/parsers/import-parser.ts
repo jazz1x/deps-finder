@@ -38,6 +38,7 @@ import {
   type FileContext,
   type Gathered,
   type ImportDetails,
+  type ImportElision,
   type ImportType,
   JsxRuntime,
   type PackageJson,
@@ -148,28 +149,47 @@ const referenceAt = (specifier: string, isTypeOnly: boolean, span: Span): Module
   end: span.end,
 });
 
-const staticImportReference = (statement: StaticImport): ModuleReference =>
-  referenceAt(
-    statement.moduleRequest.value,
-    Array.isReadonlyArrayNonEmpty(statement.entries) &&
-      Array.every(statement.entries, (entry) => entry.isType),
-    statement,
-  );
+const DECLARED_TYPE_ONLY = /^(?:import|export)\s+type\s*(?:[{*]|[\w$]+\s+from\b)/;
 
-const reExportReference = (statement: StaticExport): Option.Option<ModuleReference> =>
-  pipe(
-    statement.entries,
-    Array.map((entry) => Option.fromNullishOr(entry.moduleRequest)),
-    Array.getSomes,
-    Array.head,
-    Option.map((request) =>
-      referenceAt(
-        request.value,
-        Array.every(statement.entries, (entry) => entry.isType),
-        statement,
+// Under verbatim, `import { type A } from "x"` still emits `import {} from "x"`.
+const erasesAllTypeSpecifiers =
+  (content: string, elision: ImportElision) =>
+  (statement: Span): boolean =>
+    Match.value(elision).pipe(
+      Match.when('unused-bindings', () => true),
+      Match.when('verbatim', () =>
+        DECLARED_TYPE_ONLY.test(content.slice(statement.start, statement.end)),
       ),
-    ),
-  );
+      Match.exhaustive,
+    );
+
+const staticImportReference =
+  (erased: (statement: Span) => boolean) =>
+  (statement: StaticImport): ModuleReference =>
+    referenceAt(
+      statement.moduleRequest.value,
+      Array.isReadonlyArrayNonEmpty(statement.entries) &&
+        Array.every(statement.entries, (entry) => entry.isType) &&
+        erased(statement),
+      statement,
+    );
+
+const reExportReference =
+  (erased: (statement: Span) => boolean) =>
+  (statement: StaticExport): Option.Option<ModuleReference> =>
+    pipe(
+      statement.entries,
+      Array.map((entry) => Option.fromNullishOr(entry.moduleRequest)),
+      Array.getSomes,
+      Array.head,
+      Option.map((request) =>
+        referenceAt(
+          request.value,
+          Array.every(statement.entries, (entry) => entry.isType) && erased(statement),
+          statement,
+        ),
+      ),
+    );
 
 const QUOTED = /^(['"])(.*)\1$/s;
 
@@ -394,9 +414,10 @@ const moduleReferences = (
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
       ? astReferences(parsed.program)
       : NO_AST_REFERENCES;
+  const erased = erasesAllTypeSpecifiers(content, emit.elision);
   return [
-    ...Array.map(parsed.module.staticImports, staticImportReference),
-    ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference)),
+    ...Array.map(parsed.module.staticImports, staticImportReference(erased)),
+    ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference(erased))),
     ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
     ...ast.references,
     ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),

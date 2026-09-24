@@ -24,6 +24,11 @@ const TsConfig = Schema.Struct({
         ),
       ),
       jsxImportSource: option(Schema.NullOr(Schema.NonEmptyString)),
+      verbatimModuleSyntax: option(Schema.NullOr(Schema.Boolean)),
+      preserveValueImports: option(Schema.NullOr(Schema.Boolean)),
+      importsNotUsedAsValues: option(
+        Schema.NullOr(Schema.Literals(['remove', 'preserve', 'error'])),
+      ),
     }),
   ),
 });

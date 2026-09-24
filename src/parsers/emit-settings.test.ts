@@ -39,6 +39,20 @@ describe('emitSettingsOf', () => {
     expect(jsxOf(['tsconfig.json'], 'src/App.tsx')).toEqual(JsxRuntime.Automatic({ importSource: '@emotion/react' }));
   });
 
+  const elisionOf = (file: string) =>
+    emitSettingsOf(readTsConfigChains([path.join(testDir, 'tsconfig.json')]).found)(path.join(testDir, file)).elision;
+
+  test('verbatimModuleSyntax, preserveValueImports or importsNotUsedAsValues preserve keep value imports', async () => {
+    await write('tsconfig.json', { compilerOptions: {} });
+    expect(elisionOf('src/a.ts')).toBe('unused-bindings');
+    for (const options of [{ verbatimModuleSyntax: true }, { preserveValueImports: true }, { importsNotUsedAsValues: 'preserve' }]) {
+      await write('tsconfig.json', { compilerOptions: options });
+      expect(elisionOf('src/a.ts')).toBe('verbatim');
+    }
+    await write('tsconfig.json', { compilerOptions: { verbatimModuleSyntax: false, importsNotUsedAsValues: 'remove' } });
+    expect(elisionOf('src/a.ts')).toBe('unused-bindings');
+  });
+
   test('a file follows the tsconfig of the nearest directory that has one', async () => {
     await write('tsconfig.json', { compilerOptions: { jsx: 'react' } });
     await write('apps/web/tsconfig.app.json', { compilerOptions: { jsx: 'preserve', jsxImportSource: 'preact' } });

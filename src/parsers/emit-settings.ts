@@ -8,6 +8,7 @@ type JsxMode = NonNullable<NonNullable<TsConfig['compilerOptions']>['jsx']>;
 
 export const UNCONFIGURED: EmitSettings = {
   jsx: JsxRuntime.Automatic({ importSource: 'react' }),
+  elision: 'unused-bindings',
 };
 
 // The nearest file that sets the option decides; its null clears what it inherits.
@@ -34,6 +35,19 @@ const jsxRuntimeOf = (mode: JsxMode, importSource: string): JsxRuntime =>
     Match.exhaustive,
   );
 
+const keepsValueImports = (chains: ReadonlyArray<TsConfigChain>): boolean =>
+  Array.some(
+    [
+      firstSet(chains, (config) => config.compilerOptions?.verbatimModuleSyntax),
+      firstSet(chains, (config) => config.compilerOptions?.preserveValueImports),
+      Option.map(
+        firstSet(chains, (config) => config.compilerOptions?.importsNotUsedAsValues),
+        (mode) => mode !== 'remove',
+      ),
+    ],
+    Option.contains(true),
+  );
+
 // Without a jsx setting, today's bundlers compile JSX with the automatic runtime.
 const settingsOf = (chains: ReadonlyArray<TsConfigChain>): EmitSettings => ({
   jsx: jsxRuntimeOf(
@@ -46,6 +60,7 @@ const settingsOf = (chains: ReadonlyArray<TsConfigChain>): EmitSettings => ({
       () => 'react',
     ),
   ),
+  elision: keepsValueImports(chains) ? 'verbatim' : 'unused-bindings',
 });
 
 const headOf = (chain: TsConfigChain): string => Array.headNonEmpty(chain).path;

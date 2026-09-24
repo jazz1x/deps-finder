@@ -24,8 +24,11 @@ export type JsxRuntime = Data.TaggedEnum<{
 
 export const JsxRuntime = Data.taggedEnum<JsxRuntime>();
 
+// verbatim: an import is erased only when written `import type`.
+export type ImportElision = 'unused-bindings' | 'verbatim';
+
 // How the compiler emits a file, from the tsconfig that governs it.
-export type EmitSettings = { readonly jsx: JsxRuntime };
+export type EmitSettings = { readonly jsx: JsxRuntime; readonly elision: ImportElision };
 
 export type SourceFile = {
   readonly path: string;
