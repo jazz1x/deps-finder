@@ -67,6 +67,22 @@ describe('readToolConfigs', () => {
     ]);
   });
 
+  test('a Babel name with a path inside its package takes no prefix', async () => {
+    await write('.babelrc', {
+      presets: ['next/babel', '@nx/react/babel', '@vue/cli-plugin-babel/preset', 'env'],
+      plugins: ['styled-jsx/babel', '@babel/runtime/helpers'],
+    });
+
+    expect(referenced().toSorted()).toEqual([
+      '@babel/runtime',
+      '@nx/react',
+      '@vue/cli-plugin-babel',
+      'babel-preset-env',
+      'next',
+      'styled-jsx',
+    ]);
+  });
+
   test('a shared Prettier config named by package.json, and lint-staged commands', () => {
     const manifest: LayoutManifest = {
       path: path.join(testDir, 'package.json'),

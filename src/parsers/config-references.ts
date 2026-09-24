@@ -334,11 +334,15 @@ const ruleOwner = (rule: string): ReadonlyArray<PackageName> =>
     Match.orElse(() => []),
   );
 
+// Babel prefixes only a bare package name; a path into a package (next/babel) is taken as it is.
+const isPathIntoPackage = (name: string): boolean => /^(@[^/]+\/)?[^@/][^/]*\//.test(name);
+
 const babelName =
   (kind: 'plugin' | 'preset') =>
   (name: string): ReadonlyArray<PackageName> =>
     Match.value(name).pipe(
       Match.when(String.startsWith('module:'), (module) => exact(module.slice(7))),
+      Match.when(isPathIntoPackage, exact),
       Match.when(String.startsWith('@babel/'), (official) =>
         Array.map(exact(official), (pkg) => `@babel/${withPrefix(kind)(pkg.slice(7))}`),
       ),
