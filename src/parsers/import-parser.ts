@@ -395,8 +395,13 @@ const firstJsxAt = (
     Record.get(WITHOUT_JSX, path.extname(filePath)),
     Option.filter(() => content.includes('<') && Array.isReadonlyArrayEmpty(parsed.errors)),
     Option.flatMap((options) => Array.head(parseSync(filePath, content, options).errors)),
+    // An error without a label still means JSX, which starts at the first '<' or after it.
     Option.map((error) =>
-      Option.match(Array.head(error.labels), { onNone: () => 0, onSome: (label) => label.start }),
+      pipe(
+        Array.head(error.labels),
+        Option.map((label) => label.start),
+        Option.getOrElse(() => content.indexOf('<')),
+      ),
     ),
   );
 

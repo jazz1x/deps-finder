@@ -53,8 +53,8 @@ const readTsConfigFile = (file: string): Result.Result<TsConfigFile, FileError> 
     Result.map(decodeJsonc(TsConfig)(file)(text), (config) => ({ path: file, text, config })),
   );
 
-// The build-directory detection and the usage reader each read these; equal paths let their
-// errors dedupe.
+// Build-directory detection reads these before the walk finds the governing tsconfig files, so
+// findFiles dedupes their errors.
 const readRootFiles = (projectRoot: string): Gathered<TsConfigFile> =>
   gatherAll(
     Array.map(ROOT_TSCONFIGS, (name) =>

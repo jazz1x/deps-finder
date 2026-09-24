@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Option, Result } from 'effect';
 import { FileError } from '@/domain/errors';
 import { type EmitSettings, type FileContext, JsxRuntime } from '@/domain/types';
-import { UNCONFIGURED } from '@/parsers/emit-settings';
+import { UNCONFIGURED } from './emit-settings';
 import {
   extractImports,
   extractPackageName,

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { type EmitSettings, JsxRuntime, type PackageJson, type SourceFile } from '@/domain/types';
-import { UNCONFIGURED } from '@/parsers/emit-settings';
-import { parseMultipleFiles } from '@/parsers/import-parser';
+import { UNCONFIGURED } from './emit-settings';
+import { parseMultipleFiles } from './import-parser';
 import { elideTypeOnlyImports } from './elision';
 
 const pkg = (sections: Partial<PackageJson>): PackageJson => ({
