@@ -328,11 +328,12 @@ describe('walkProject', () => {
     await chmod(path.join(testDir, 'src/.gitignore'), 0o000);
     await chmod(path.join(testDir, 'locked'), 0o000);
 
-    const { found, skipped } = walkProject(testDir, RULES);
+    const { found, skipped, unreadable } = walkProject(testDir, RULES);
     await chmod(path.join(testDir, 'locked'), 0o755);
 
     expect(found.map((source) => source.path)).toEqual(['src/index.ts']);
-    expect(skipped.every(FileError.$is('ReadFailed'))).toBe(true);
-    expect(skipped.map((e) => path.relative(testDir, e.path)).toSorted()).toEqual(['locked', 'src/.gitignore']);
+    expect([...skipped, ...unreadable].every(FileError.$is('ReadFailed'))).toBe(true);
+    expect(skipped.map((e) => path.relative(testDir, e.path))).toEqual(['src/.gitignore']);
+    expect(unreadable.map((e) => path.relative(testDir, e.path))).toEqual(['locked']);
   });
 });

@@ -47,10 +47,12 @@ type Source = {
 
 export type LeftOut = { readonly dir: string; readonly files: ReadonlyArray<string> };
 
+// Unreadable: a directory whose sources went uncounted.
 type Walked = Data.TaggedEnum<{
   Source: Source & { readonly package: Option.Option<string> };
   Package: { readonly path: string };
   LayoutRoot: { readonly path: string };
+  Unreadable: { readonly error: FileError };
 }>;
 
 const Walked = Data.taggedEnum<Walked>();
@@ -321,7 +323,10 @@ const walkSubdirectory = (
   inherited: ReadonlyArray<Gitignore>,
 ): Gathered<Walked> =>
   Result.match(readDirectory(path.join(walk.rootDir, dir)), {
-    onFailure: (error) => skippedOnly([error]),
+    onFailure: (error): Gathered<Walked> => ({
+      found: [Walked.Unreadable({ error })],
+      skipped: [],
+    }),
     onSuccess: (entries) => {
       const manifests = readPresent(
         path.join(walk.rootDir, dir),
@@ -460,25 +465,52 @@ const walkRoot = (rootDir: string, rules: WalkRules): Gathered<Walked> => {
   });
 };
 
+const none = (): ReadonlyArray<never> => [];
+
 export const walkProject = (
   rootDir: string,
   rules: WalkRules,
 ): Gathered<Source> & {
+  readonly unreadable: ReadonlyArray<FileError>;
   readonly packages: ReadonlyArray<LeftOut>;
   readonly layoutRoots: ReadonlyArray<string>;
 } => {
   const { found, skipped } = walkRoot(rootDir, rules);
   const sources = Array.flatMap(
     found,
-    Walked.$match({ Source: (source) => [source], Package: () => [], LayoutRoot: () => [] }),
+    Walked.$match({
+      Source: (source) => [source],
+      Package: none,
+      LayoutRoot: none,
+      Unreadable: none,
+    }),
   );
   const dirs = Array.flatMap(
     found,
-    Walked.$match({ Source: () => [], Package: (nested) => [nested.path], LayoutRoot: () => [] }),
+    Walked.$match({
+      Source: none,
+      Package: (nested) => [nested.path],
+      LayoutRoot: none,
+      Unreadable: none,
+    }),
   );
   const layoutRoots = Array.flatMap(
     found,
-    Walked.$match({ Source: () => [], Package: () => [], LayoutRoot: (root) => [root.path] }),
+    Walked.$match({
+      Source: none,
+      Package: none,
+      LayoutRoot: (root) => [root.path],
+      Unreadable: none,
+    }),
+  );
+  const unreadable = Array.flatMap(
+    found,
+    Walked.$match({
+      Source: none,
+      Package: none,
+      LayoutRoot: none,
+      Unreadable: ({ error }) => [error],
+    }),
   );
   const [packaged, own] = Array.partition(sources, (source) =>
     Option.match(source.package, {
@@ -489,6 +521,7 @@ export const walkProject = (
   return {
     found: own,
     skipped,
+    unreadable,
     layoutRoots,
     packages: Array.map(dirs, (dir) => ({
       dir,

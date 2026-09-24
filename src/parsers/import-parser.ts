@@ -799,6 +799,7 @@ export const findFiles = (
     readonly noAutoDetect?: boolean;
   } = {},
 ): Gathered<SourceFile> & {
+  readonly unreadable: ReadonlyArray<FileError>;
   readonly packages: ReadonlyArray<LeftOut>;
   readonly tsconfigs: ReadonlyArray<TsConfigChain>;
   readonly layoutRoots: ReadonlyArray<string>;
@@ -836,6 +837,7 @@ export const findFiles = (
     ),
     // Build-directory detection reads the root tsconfig files too.
     skipped: Array.dedupe([...detected.skipped, ...walked.skipped, ...tsconfigs.skipped]),
+    unreadable: walked.unreadable,
     packages: Array.map(walked.packages, ({ dir, files }) => ({
       dir: path.join(rootDir, dir),
       files: Array.map(files, (file) => path.resolve(rootDir, file)),

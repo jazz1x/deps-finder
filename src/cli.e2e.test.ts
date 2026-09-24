@@ -115,6 +115,17 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
   });
 
+  test('warns about a source directory it cannot read as about a source file', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await mkdir(path.join(tmpDir, 'src/locked'), { recursive: true });
+    await writeFile(path.join(tmpDir, 'src/locked/a.ts'), "import _ from 'lodash';");
+    await chmod(path.join(tmpDir, 'src/locked'), 0o000);
+    const r = runCli(['--json'], tmpDir);
+    await chmod(path.join(tmpDir, 'src/locked'), 0o755);
+    expect(r.stderr).toContain('warning: skipped src/locked (');
+    expect(r.stderr).toContain('its imports are not counted');
+  });
+
   test('warns about project inputs it cannot use and goes on', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'weird'));
