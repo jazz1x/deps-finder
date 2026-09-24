@@ -393,9 +393,11 @@ describe('CLI e2e (bin/cli.js)', () => {
             'lint-staged': '15',
             '@biomejs/biome': '1',
             fmt: '1',
+            vitest: '3',
             'left-pad': '1',
           },
         },
+        'packages/web/package.json': { name: 'web', scripts: { test: 'vitest run' } },
         '.husky/pre-commit': 'npx lint-staged\n',
         'node_modules/@biomejs/biome/package.json': { name: '@biomejs/biome', bin: { biome: 'bin/biome' } },
         'src/a.ts': 'export const a = 1;',
@@ -467,6 +469,9 @@ describe('CLI e2e (bin/cli.js)', () => {
               '@nx/vite',
               'typescript-plugin-css-modules',
               'terser',
+              'jest-junit',
+              'stylelint-config-standard',
+              '@storybook/react-vite',
               'left-pad',
             ].map((name) => [name, '1']),
           ),
@@ -481,9 +486,12 @@ describe('CLI e2e (bin/cli.js)', () => {
         }),
         '.babelrc': { presets: ['@babel/preset-env'], plugins: ['macros'] },
         'postcss.config.js': 'module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } };',
-        'jest.config.ts': "export default { preset: 'ts-jest', testEnvironment: 'jsdom', transform: { '^.+\\\\.vue$': 'vue-jest' } };",
+        'jest.config.ts':
+          "export default { preset: 'ts-jest', testEnvironment: 'jsdom', transform: { '^.+\\\\.vue$': 'vue-jest' }, reporters: ['default', 'jest-junit'] };",
+        '.stylelintrc.json': { extends: ['stylelint-config-standard'] },
         '.prettierrc.yaml': 'plugins:\n  - prettier-plugin-tailwindcss\n',
-        '.storybook/main.ts': "export default { addons: ['@storybook/addon-a11y'], core: { builder: '@storybook/builder-vite' } };",
+        '.storybook/main.ts':
+          "export default { addons: ['@storybook/addon-a11y'], core: { builder: '@storybook/builder-vite' }, framework: { name: '@storybook/react-vite' } };",
         'serverless.yml': 'service: s\nplugins:\n  - serverless-offline\n',
         'project.json': { name: 'app', targets: { test: { executor: '@nx/jest:jest' } } },
         'libs/ui/project.json': { name: 'ui', targets: { build: { executor: '@nx/vite:build' } } },
@@ -501,14 +509,16 @@ describe('CLI e2e (bin/cli.js)', () => {
           name: 'tool',
           bin: { tool: 'scripts/cli.js' },
           dependencies: { commander: '12' },
-          devDependencies: { kleur: '4' },
+          devDependencies: { kleur: '4', chalk: '5' },
         },
         'scripts/cli.js': "const { program } = require('commander'); const k = require('kleur'); program.parse(k);",
+        'packages/web/package.json': { name: 'web', bin: 'scripts/run.js' },
+        'packages/web/scripts/run.js': "require('chalk');",
       });
 
       const parsed = JSON.parse(runCli(['--json'], tmpDir).stdout);
       expect(parsed.unused).toEqual([]);
-      expect(parsed.misplaced.map((d: { packageName: string }) => d.packageName)).toEqual(['kleur']);
+      expect(parsed.misplaced.map((d: { packageName: string }) => d.packageName)).toEqual(['kleur', 'chalk']);
     });
   });
 });
