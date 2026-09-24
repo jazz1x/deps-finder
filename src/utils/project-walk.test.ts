@@ -336,4 +336,17 @@ describe('walkProject', () => {
     expect(skipped.map((e) => path.relative(testDir, e.path))).toEqual(['src/.gitignore']);
     expect(unreadable.map((e) => path.relative(testDir, e.path))).toEqual(['locked']);
   });
+
+  test('never lists a gitignored directory', async () => {
+    await put('.gitignore', 'runs/');
+    await put('src/index.ts');
+    await put('runs/1/a.ts');
+    await chmod(path.join(testDir, 'runs'), 0o000);
+
+    const { found, unreadable } = walkProject(testDir, RULES);
+    await chmod(path.join(testDir, 'runs'), 0o755);
+
+    expect(found.map((source) => source.path)).toEqual(['src/index.ts']);
+    expect(unreadable).toEqual([]);
+  });
 });
