@@ -122,6 +122,14 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(await onTerminal(['--help'])).toContain('\x1b[1mUSAGE\x1b[0m');
   });
 
+  test('a reader that closes early ends the run with its code and no stack trace', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'clean' }));
+    const proc = Bun.spawn(['node', CLI_PATH, '--json'], { cwd: tmpDir, stdout: 'pipe', stderr: 'pipe' });
+    await proc.stdout.cancel();
+    expect(await proc.exited).toBe(0);
+    expect(await new Response(proc.stderr).text()).not.toContain('EPIPE');
+  });
+
   test('warns about source files it cannot read', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'src'));

@@ -10,6 +10,11 @@ const worker = new Worker(new URL('../dist/index.js', import.meta.url), {
   resourceLimits: { stackSizeMb: 256 },
 });
 
+// console drops a write to a closed pipe on the main thread; the worker's output is forwarded here instead.
+process.stdout.on('error', (error) => {
+  if (error.code !== 'EPIPE') throw error;
+});
+
 // A worker receives no signals and may be deep in a synchronous parse, so a signal ends it.
 process.exitCode = await new Promise((resolve) => {
   worker.on('exit', resolve);
