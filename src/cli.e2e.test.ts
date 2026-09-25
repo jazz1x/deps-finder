@@ -507,11 +507,11 @@ describe('CLI e2e (bin/cli.js)', () => {
       },
     ],
     [
-      'a baseUrl file under node_modules',
+      'a baseUrl file under a node_modules no import reaches',
       {
-        'tsconfig.json': { compilerOptions: { baseUrl: 'node_modules' } },
-        'node_modules/utils/package.json': { name: 'utils' },
-        'node_modules/utils/format.js': 'export const f = 1;',
+        'tsconfig.json': { compilerOptions: { baseUrl: 'vendor/node_modules' } },
+        'vendor/node_modules/utils/package.json': { name: 'utils' },
+        'vendor/node_modules/utils/format.js': 'export const f = 1;',
         'src/a.ts': 'import { f } from "utils/format";\nconsole.log(f);',
       },
     ],
