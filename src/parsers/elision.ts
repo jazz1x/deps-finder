@@ -8,8 +8,8 @@ import {
   type ImportDetails,
   JsxRuntime,
   type PackageJson,
-  type PackageName,
   type SourceFile,
+  installedOnlyForDevelopment,
 } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
@@ -186,13 +186,6 @@ const erasedStatements = (content: string, source: SourceFile): ReadonlySet<stri
 // Only would-be misplaced imports are re-read. A dependency whose value import is used only as a
 // type is often a runtime peer of another package (graphql for @apollo/client), so elision must
 // not move it to typeOnly: on real projects that turned into "move to devDependencies" advice.
-const couldBeMisplaced =
-  (packageJson: PackageJson) =>
-  (name: PackageName): boolean =>
-    Array.contains(packageJson.devDependencies, name) &&
-    !Array.contains(packageJson.dependencies, name) &&
-    !Array.contains(packageJson.peerDependencies, name);
-
 type Candidate = {
   readonly detail: ImportDetails;
   readonly source: SourceFile;
@@ -217,7 +210,7 @@ const candidatesByFile = (
       (source) => [source.path, source] as const,
     ),
   );
-  const misplacedCandidate = couldBeMisplaced(packageJson);
+  const misplacedCandidate = installedOnlyForDevelopment(packageJson);
   return pipe(
     imports,
     Array.filter(

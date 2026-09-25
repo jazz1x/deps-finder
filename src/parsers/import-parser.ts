@@ -52,6 +52,7 @@ import {
   type ImportElision,
   type ImportType,
   JsxRuntime,
+  PRODUCTION_SECTIONS,
   type PackageJson,
   type PackageName,
   type SourceFile,
@@ -1137,7 +1138,7 @@ export const findFiles = (
 
 // A peer declaration installs nothing in the package itself.
 const INSTALLED_SECTIONS = [
-  'dependencies',
+  ...PRODUCTION_SECTIONS,
   'devDependencies',
 ] as const satisfies ReadonlyArray<DependencyType>;
 

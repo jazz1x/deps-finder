@@ -9,6 +9,7 @@ import { elideTypeOnlyImports } from './elision';
 const pkg = (sections: Partial<PackageJson>): PackageJson => ({
   dependencies: [],
   devDependencies: [],
+  optionalDependencies: [],
   peerDependencies: [],
   declarations: 'none',
   ...sections,

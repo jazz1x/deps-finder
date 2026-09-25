@@ -1,14 +1,17 @@
 import { builtinModules } from 'node:module';
 import { Array, Match, Option, Order, Record, String, pipe } from 'effect';
-import type {
-  AnalysisResult,
-  DependencyType,
-  DependencyUsage,
-  ImportDetails,
-  ImportLocation,
-  ImportType,
-  PackageJson,
-  PackageName,
+import {
+  type AnalysisResult,
+  type DependencyType,
+  type DependencyUsage,
+  type ImportDetails,
+  type ImportLocation,
+  type ImportType,
+  PRODUCTION_SECTIONS,
+  type PackageJson,
+  type PackageName,
+  installedOnlyForDevelopment,
+  shipsWith,
 } from '../domain/types.js';
 import { deduplicateLocations } from '../utils/deduplicate.js';
 
@@ -67,11 +70,7 @@ const findMisplaced = (
 ): ReadonlyArray<DependencyUsage> =>
   pipe(
     packageJson.devDependencies,
-    Array.filter(
-      (dep) =>
-        !Array.contains(packageJson.dependencies, dep) &&
-        !Array.contains(packageJson.peerDependencies, dep),
-    ),
+    Array.filter(installedOnlyForDevelopment(packageJson)),
     Array.map((dep) =>
       pipe(
         Record.get(productionRuntime, dep),
@@ -112,13 +111,15 @@ export const analyzeDependencies = (
   const notIgnored = (name: PackageName): boolean => !Array.contains(options.ignoredPackages, name);
   const declared = declaredIn(packageJson, options.sections);
 
+  const ships = shipsWith(packageJson);
+
   const peers = pipe(
     declared('peerDependencies'),
-    Array.filter((dep) => !Array.contains(packageJson.dependencies, dep)),
+    Array.filter((dep) => !ships(dep)),
   );
 
   const unused = pipe(
-    declared('dependencies', 'devDependencies'),
+    declared(...PRODUCTION_SECTIONS, 'devDependencies'),
     Array.filter((dep) => !Array.contains(peers, dep)),
     Array.filter(isUnused(used)),
     Array.filter(notIgnored),
@@ -131,7 +132,9 @@ export const analyzeDependencies = (
     Match.when('published', (): ReadonlyArray<PackageName> => []),
     Match.when('none', () =>
       pipe(
-        packageJson.dependencies,
+        PRODUCTION_SECTIONS,
+        Array.flatMap((section) => packageJson[section]),
+        Array.dedupe,
         Array.filter(
           (dep) =>
             Record.has(productionTypeOnly, dep) &&

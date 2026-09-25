@@ -68,6 +68,7 @@ type ParsedFlags = Command.Command.Config.Infer<typeof config>;
 const SECTION_SWITCHES: ReadonlyArray<readonly [DependencyType, (flags: ParsedFlags) => boolean]> =
   [
     ['dependencies', () => true],
+    ['optionalDependencies', () => true],
     ['devDependencies', (flags) => flags.all],
     ['peerDependencies', (flags) => flags.all || flags.checkPeer],
   ];

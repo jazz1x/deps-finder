@@ -64,6 +64,7 @@ const randomPackageJsonShape = (rng: () => number): PackageJson => {
     dependencies: maybeDeps(),
     devDependencies: maybeDeps(),
     peerDependencies: maybeDeps(),
+    optionalDependencies: maybeDeps(),
     declarations: 'none',
   };
 };

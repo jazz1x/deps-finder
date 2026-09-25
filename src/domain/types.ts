@@ -1,4 +1,4 @@
-import { type Array, Data } from 'effect';
+import { Array, Data } from 'effect';
 import type { FileError } from './errors.js';
 
 export type PackageName = string;
@@ -8,13 +8,37 @@ export type Gathered<A> = {
   readonly skipped: ReadonlyArray<FileError>;
 };
 
-export const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+export const DEPENDENCY_TYPES = [
+  'dependencies',
+  'optionalDependencies',
+  'devDependencies',
+  'peerDependencies',
+] as const;
 export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
 
 // A package that publishes declarations exposes its dependencies' types to its consumers.
 export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> } & {
   readonly declarations: 'published' | 'none';
 };
+
+// The sections a consumer's install brings in.
+export const PRODUCTION_SECTIONS = [
+  'dependencies',
+  'optionalDependencies',
+] as const satisfies ReadonlyArray<DependencyType>;
+
+export const shipsWith =
+  (packageJson: PackageJson) =>
+  (name: PackageName): boolean =>
+    Array.some(PRODUCTION_SECTIONS, (section) => Array.contains(packageJson[section], name));
+
+// Production use of such a package is misplaced: nothing installs it for a consumer.
+export const installedOnlyForDevelopment =
+  (packageJson: PackageJson) =>
+  (name: PackageName): boolean =>
+    Array.contains(packageJson.devDependencies, name) &&
+    !shipsWith(packageJson)(name) &&
+    !Array.contains(packageJson.peerDependencies, name);
 
 // peer: installed for a used package that names it in peerDependencies.
 export type ImportType = 'runtime' | 'type-only' | 'peer';

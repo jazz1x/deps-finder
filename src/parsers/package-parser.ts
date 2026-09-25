@@ -27,6 +27,7 @@ const ExportsTarget: Schema.Codec<ExportsTarget> = Schema.Union([
 const PackageJsonFile = Schema.Struct({
   dependencies: DependencySection,
   devDependencies: DependencySection,
+  optionalDependencies: DependencySection,
   peerDependencies: DependencySection,
   types: lenientKey(Schema.NonEmptyString),
   typings: lenientKey(Schema.NonEmptyString),
@@ -131,6 +132,7 @@ export const readPackageJson = (manifest: string): Result.Result<PackageJson, Fi
     Result.map((file) => ({
       dependencies: namesOf(file.dependencies),
       devDependencies: namesOf(file.devDependencies),
+      optionalDependencies: namesOf(file.optionalDependencies),
       peerDependencies: namesOf(file.peerDependencies),
       declarations: declarationsOf(file),
     })),

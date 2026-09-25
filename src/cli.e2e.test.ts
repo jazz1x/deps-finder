@@ -152,17 +152,23 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('names each nested package it leaves out, and credits the root with what it does not declare', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),
-      JSON.stringify({ workspaces: ['packages/*'], devDependencies: { '@happy-dom/global-registrator': '^20.0.0', dayjs: '^1.0.0' } }),
+      JSON.stringify({
+        workspaces: ['packages/*'],
+        devDependencies: { '@happy-dom/global-registrator': '^20.0.0', dayjs: '^1.0.0', zod: '^3.0.0' },
+      }),
     );
     await mkdir(path.join(tmpDir, 'packages/shared-ui/src'), { recursive: true });
-    await writeFile(path.join(tmpDir, 'packages/shared-ui/package.json'), '{"name":"shared-ui","dependencies":{"dayjs":"1"}}');
+    await writeFile(
+      path.join(tmpDir, 'packages/shared-ui/package.json'),
+      '{"name":"shared-ui","dependencies":{"dayjs":"1"},"optionalDependencies":{"zod":"3"}}',
+    );
     await writeFile(
       path.join(tmpDir, 'packages/shared-ui/src/happydom-setup.ts'),
-      "import '@happy-dom/global-registrator';\nimport 'dayjs';",
+      "import '@happy-dom/global-registrator';\nimport 'dayjs';\nimport 'zod';",
     );
     const r = runCli(['--json', '-a'], tmpDir);
     expect(r.stderr).toContain('note: left out packages/shared-ui');
-    expect(JSON.parse(r.stdout).unused).toEqual(['dayjs']);
+    expect(JSON.parse(r.stdout).unused).toEqual(['dayjs', 'zod']);
   });
 
   test('warns once about a left-out package whose package.json is broken', async () => {
@@ -344,6 +350,23 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.misplaced.some((d: { packageName: string }) => d.packageName === 'lodash')).toBe(true);
+  });
+
+  test('optionalDependencies ship like dependencies: never misplaced, unused by default', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': {
+        optionalDependencies: { bufferutil: '4', fsevents: '2' },
+        devDependencies: { bufferutil: '4', 'utf-8-validate': '6' },
+      },
+      'src/index.ts': 'export const b = require("bufferutil");\nexport const u = await import("utf-8-validate");',
+    });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      unused: ['fsevents'],
+      misplaced: [{ packageName: 'utf-8-validate' }],
+      totalIssues: 2,
+    });
   });
 
   test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {
