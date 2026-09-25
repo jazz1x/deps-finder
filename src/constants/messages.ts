@@ -29,6 +29,7 @@ export const MESSAGES = {
     `warning: could not use ${path} (${reason}); the scan went on without it.`,
   PACKAGE_LEFT_OUT: (path: string) =>
     `note: left out ${path}, a workspace member or a package with its own install; run deps-finder there to check it.`,
+  REPORT_NOT_WRITTEN: (reason: string) => `error: the report could not be written (${reason}).`,
   NOT_INSTALLED: (path: string) =>
     `note: no declared package is installed in a node_modules at or above ${path}; script commands were matched to packages by name, and peer dependencies were not checked.`,
 } as const;

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -127,6 +128,15 @@ describe('CLI e2e (bin/cli.js)', () => {
     await proc.stdout.cancel();
     expect(await proc.exited).toBe(0);
     expect(await new Response(proc.stderr).text()).not.toContain('EPIPE');
+  });
+
+  test.skipIf(!existsSync('/dev/full'))('a report that cannot be written fails the run (exit 2) without a stack trace', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'clean' }));
+    const proc = Bun.spawn(['node', CLI_PATH, '--json'], { cwd: tmpDir, stdout: Bun.file('/dev/full'), stderr: 'pipe' });
+    const stderr = await new Response(proc.stderr).text();
+    expect(await proc.exited).toBe(2);
+    expect(stderr).toContain('error: the report could not be written (ENOSPC');
+    expect(stderr).not.toContain('    at ');
   });
 
   // Opening a FIFO's write end waits for the worker to open its read end, and the worker then
