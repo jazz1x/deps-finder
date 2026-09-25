@@ -89,6 +89,18 @@ describe('elideTypeOnlyImports', () => {
     expect(await elided({ 'a.ts': content }, pkg({ devDependencies: ['d'] }))).toEqual(['d:type-only:a.ts:1']);
   });
 
+  test('a name covered only by an enclosing type, after a nested one ends, is in a type', async () => {
+    const content = [
+      "import { Base } from 'base';",
+      "import { Inner } from 'inner';",
+      'export interface I<T = Inner, U = Inner> extends Base {}',
+    ].join('\n');
+    expect(await elided({ 'a.ts': content }, pkg({ devDependencies: ['base', 'inner'] }))).toEqual([
+      'base:type-only:a.ts:1',
+      'inner:type-only:a.ts:2',
+    ]);
+  });
+
   test('a binding in any value position keeps the import', async () => {
     const content = [
       "import { Tag } from 'jsx-lib';",
