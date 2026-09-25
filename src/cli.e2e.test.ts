@@ -9,18 +9,17 @@ const REPO_ROOT = path.resolve(import.meta.dir, '..');
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'cli.js');
 const STRIP_ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
-const runCli = (args: ReadonlyArray<string>, cwd: string) => {
-  const result = spawnSync('node', [CLI_PATH, ...args], {
+// Bun 1.4.2's spawnSync on Linux can miss a child's exit and wait on a zombie until the test
+// times out (seen in CI for 2 of 12 validate runs); Bun.spawn's exited never did.
+const runCli = async (args: ReadonlyArray<string>, cwd: string) => {
+  const proc = Bun.spawn(['node', CLI_PATH, ...args], {
     cwd,
-    encoding: 'utf-8',
-    maxBuffer: 16 * 1024 * 1024,
+    stdout: 'pipe',
+    stderr: 'pipe',
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
   });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: (result.stderr ?? '').replace(STRIP_ANSI, ''),
-    status: result.status,
-  };
+  const [stdout, stderr, status] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { stdout, stderr: stderr.replace(STRIP_ANSI, ''), status };
 };
 
 const writeFiles = async (root: string, files: Readonly<Record<string, unknown>>) => {
@@ -55,15 +54,15 @@ describe('CLI e2e (bin/cli.js)', () => {
     if (baseTmpDir) await rm(baseTmpDir, { recursive: true, force: true });
   });
 
-  test('--help prints usage and exits 0', () => {
-    const r = runCli(['--help'], tmpDir);
+  test('--help prints usage and exits 0', async () => {
+    const r = await runCli(['--help'], tmpDir);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('USAGE');
     expect(r.stdout).toContain('--ignore');
   });
 
-  test('--version prints the package version and exits 0', () => {
-    const r = runCli(['--version'], tmpDir);
+  test('--version prints the package version and exits 0', async () => {
+    const r = await runCli(['--version'], tmpDir);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain(pkg.version);
   });
@@ -71,14 +70,14 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('analyzes the project directory given as an argument', async () => {
     await mkdir(path.join(tmpDir, 'app'));
     await writeFile(path.join(tmpDir, 'app/package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
-    const r = runCli(['--json', 'app'], tmpDir);
+    const r = await runCli(['--json', 'app'], tmpDir);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
   });
 
   test('accepts --flag=value', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
-    const r = runCli(['--json', '--ignore=lodash'], tmpDir);
+    const r = await runCli(['--json', '--ignore=lodash'], tmpDir);
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).ignored).toEqual(['lodash']);
   });
@@ -91,14 +90,14 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.ts'), `import _ from 'lodash'; console.log(_);`);
 
-    const r = runCli([], tmpDir);
+    const r = await runCli([], tmpDir);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('No issues found');
   });
 
   test('exits 1 and reports unused deps', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }));
-    const r = runCli([], tmpDir);
+    const r = await runCli([], tmpDir);
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('Unused Dependencies');
     expect(r.stdout).toContain('lodash');
@@ -147,7 +146,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src'));
     await writeFile(path.join(tmpDir, 'src/broken.ts'), "import _ from 'lodash';");
     await chmod(path.join(tmpDir, 'src/broken.ts'), 0o000);
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.stderr).toContain('src/broken.ts');
     expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
   });
@@ -160,7 +159,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src'));
     await writeFile(path.join(tmpDir, 'src/global.css'), "@import 'slick-carousel/slick/slick.css';");
     await writeFile(path.join(tmpDir, 'src/broken.css'), '@import "tailwindcss";\n.a { color: red');
-    const r = runCli(['--json', '-a'], tmpDir);
+    const r = await runCli(['--json', '-a'], tmpDir);
     expect(r.stderr).toMatch(/warning: skipped \S*src\/broken\.css \(/);
     expect(JSON.parse(r.stdout).unused).toEqual(['tailwindcss']);
   });
@@ -173,7 +172,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       'src/d.js': 'const d = require("d");\nreturn d;\nfunction (',
       'src/e.ts': 'declare const x: number = 1;\nrequire("e");',
     });
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.stderr).toMatch(
       /warning: the parser stopped at an error in \S*src\/a\.ts \(Unexpected token at line 3\); only the import and export statements, import\(\) calls and type imports in comments before the error count, and nothing else in the file does, require\(\) and import x = require\(\) included\./,
     );
@@ -189,7 +188,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       'login.js': 'const _ = require("lodash");\nif (!_) return;\nrequire("zod");',
       'src/a.js': 'import { z } from "zod";\nreturn;',
     });
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.stderr).not.toContain('login.js');
     expect(r.stderr).not.toContain('a.js');
     expect(JSON.parse(r.stdout).unused).toEqual([]);
@@ -200,7 +199,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src/locked'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/locked/a.ts'), "import _ from 'lodash';");
     await chmod(path.join(tmpDir, 'src/locked'), 0o000);
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     await chmod(path.join(tmpDir, 'src/locked'), 0o755);
     expect(r.stderr).toMatch(/warning: skipped \/\S*\/src\/locked \(/);
     expect(r.stderr).toContain('its imports are not counted');
@@ -211,7 +210,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'weird'));
     await writeFile(path.join(tmpDir, 'weird/package.json'), '{"name":');
     await writeFile(path.join(tmpDir, 'weird/index.ts'), "import _ from 'lodash';\nexport default _;");
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.stderr).toContain('warning: could not use weird/package.json');
     expect(r.status).toBe(0);
   });
@@ -233,7 +232,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       path.join(tmpDir, 'packages/shared-ui/src/happydom-setup.ts'),
       "import '@happy-dom/global-registrator';\nimport 'dayjs';\nimport 'zod';",
     );
-    const r = runCli(['--json', '-a'], tmpDir);
+    const r = await runCli(['--json', '-a'], tmpDir);
     expect(r.stderr).toContain('note: left out packages/shared-ui');
     expect(JSON.parse(r.stdout).unused).toEqual(['dayjs', 'zod']);
   });
@@ -242,21 +241,21 @@ describe('CLI e2e (bin/cli.js)', () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }));
     await mkdir(path.join(tmpDir, 'packages/a'), { recursive: true });
     await writeFile(path.join(tmpDir, 'packages/a/package.json'), '{"name":');
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.stderr.split('could not use packages/a/package.json').length).toBe(2);
   });
 
   test('--json emits parseable JSON with totalIssues and exits 1 when issues exist', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }));
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unused).toContain('lodash');
     expect(parsed.totalIssues).toBeGreaterThan(0);
   });
 
-  test('a missing package.json is a run failure (exit 2), not a finding', () => {
-    const r = runCli([], tmpDir);
+  test('a missing package.json is a run failure (exit 2), not a finding', async () => {
+    const r = await runCli([], tmpDir);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('package.json not found');
     expect(r.stderr).not.toContain('FileNotFound');
@@ -265,7 +264,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('formats malformed package.json error without leaking stack trace', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), 'not json {{');
-    const r = runCli([], tmpDir);
+    const r = await runCli([], tmpDir);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('Failed to parse');
     expect(r.stderr).not.toContain('at JSON.parse');
@@ -274,33 +273,33 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('malformed package.json error points at the broken position', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), '{ "dependencies": { "a": "1", } }');
-    const r = runCli([], tmpDir);
+    const r = await runCli([], tmpDir);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('position');
   });
 
   test('read failure message carries no "Error:" prefix', async () => {
     await mkdir(path.join(tmpDir, 'package.json'));
-    const r = runCli([], tmpDir);
+    const r = await runCli([], tmpDir);
     expect(r.stderr).toContain('EISDIR');
     expect(r.stderr).not.toContain('Error: EISDIR');
   });
 
   test('an unknown flag fails the run (exit 2) instead of being ignored', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0' }));
-    const r = runCli(['--bogus'], tmpDir);
+    const r = await runCli(['--bogus'], tmpDir);
     expect(r.stderr).toContain('--bogus');
     expect(r.status).toBe(2);
   });
 
   test('interactive built-ins such as --wizard are not exposed (they hang or pass vacuously in CI)', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
-    expect(runCli(['--wizard'], tmpDir).status).toBe(2);
+    expect((await runCli(['--wizard'], tmpDir)).status).toBe(2);
   });
 
   test('--ignore without a value fails the run (exit 2)', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0' }));
-    const r = runCli(['--ignore'], tmpDir);
+    const r = await runCli(['--ignore'], tmpDir);
     expect(r.stderr).toContain('--ignore');
     expect(r.status).toBe(2);
   });
@@ -314,7 +313,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         dependencies: { 'unused-a': '^1.0.0', 'unused-b': '^1.0.0' },
       }),
     );
-    const r = runCli(['--json', '--ignore', 'unused-a'], tmpDir);
+    const r = await runCli(['--json', '--ignore', 'unused-a'], tmpDir);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unused).not.toContain('unused-a');
     expect(parsed.unused).toContain('unused-b');
@@ -333,7 +332,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.ts'), 'export const x = 1;');
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.status).toBe(0);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unused).not.toContain('typescript');
@@ -352,7 +351,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.js'), 'export const x = 1;');
 
-    const r = runCli(['--json', '--check-peer'], tmpDir);
+    const r = await runCli(['--json', '--check-peer'], tmpDir);
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unusedPeer).toContain('typescript');
@@ -368,7 +367,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         peerDependencies: { typescript: '^5.0.0' },
       }),
     );
-    const r = runCli(['-p'], tmpDir);
+    const r = await runCli(['-p'], tmpDir);
     expect(r.stdout).toContain('Unused peerDependencies');
     expect(r.stdout).toContain('typescript');
   });
@@ -378,7 +377,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'vendor'), { recursive: true });
     await writeFile(path.join(tmpDir, 'vendor/use.ts'), `import _ from 'lodash'; export {};`);
 
-    const r = runCli(['--json', '--exclude', 'vendor/**'], tmpDir);
+    const r = await runCli(['--json', '--exclude', 'vendor/**'], tmpDir);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unused).toContain('lodash');
   });
@@ -395,7 +394,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.ts'), 'export const x = 1;');
 
-    const r = runCli(['--json', '--all'], tmpDir);
+    const r = await runCli(['--json', '--all'], tmpDir);
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unused).toContain('unused-dev');
@@ -413,7 +412,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.ts'), `import _ from 'lodash'; export default _;`);
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.misplaced.some((d: { packageName: string }) => d.packageName === 'lodash')).toBe(true);
@@ -428,7 +427,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       'src/index.ts': 'export const b = require("bufferutil");\nexport const u = await import("utf-8-validate");',
     });
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(JSON.parse(r.stdout)).toMatchObject({
       unused: ['fsevents'],
       misplaced: [{ packageName: 'utf-8-validate' }],
@@ -453,7 +452,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       'src/index.js': 'import "#dep";\nimport "#x";\nimport "#lib/a.js";\nimport "#lib/own/b.js";\nimport "#tool";',
     });
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(JSON.parse(r.stdout)).toMatchObject({
       unused: ['delta'],
       misplaced: [{ packageName: 'zeta', locations: [{ line: 5, importStatement: 'import "#tool";' }] }],
@@ -497,7 +496,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       ].join('\n'),
     });
 
-    const r = runCli(['--json', '-a'], tmpDir);
+    const r = await runCli(['--json', '-a'], tmpDir);
     expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['utils', 'components', 'lodash', 'react', '@app/core'], misplaced: [] });
   });
 
@@ -539,7 +538,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   ])('%s still loads the package', async (_, files) => {
     await writeFiles(tmpDir, { 'package.json': { dependencies: { utils: '1' } }, ...files });
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(JSON.parse(r.stdout).unused).toEqual([]);
   });
 
@@ -602,7 +601,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     ],
   ])('%s resolves as tsc does', async (_, unused, files) => {
     await writeFiles(tmpDir, files);
-    const r = runCli(['--json', '-a'], tmpDir);
+    const r = await runCli(['--json', '-a'], tmpDir);
     expect(JSON.parse(r.stdout)).toMatchObject({ unused, misplaced: [] });
   });
 
@@ -613,7 +612,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       'node_modules/proj/src/b.ts': 'export const b = 1;',
       'node_modules/proj/src/a.ts': 'import { b } from "~/b";\nimport "react";\nimport "zod";\nconsole.log(b);',
     });
-    const r = runCli(['--json', 'node_modules/proj'], tmpDir);
+    const r = await runCli(['--json', 'node_modules/proj'], tmpDir);
     expect(JSON.parse(r.stdout).unused).toEqual(['proj']);
   });
 
@@ -632,7 +631,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     });
     await mkdir(path.join(tmpDir, 'apps/admin/node_modules/@ws'), { recursive: true });
     await symlink('../../../../packages/ui', path.join(tmpDir, 'apps/admin/node_modules/@ws/ui'));
-    const r = runCli(['--json', 'apps/admin'], tmpDir);
+    const r = await runCli(['--json', 'apps/admin'], tmpDir);
     expect(JSON.parse(r.stdout).unused).toEqual(['utils']);
   });
 
@@ -646,7 +645,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       JSON.stringify({ extends: './missing.json', compilerOptions: { types: ['node'], importHelpers: true } }),
     );
 
-    const r = runCli(['--json', '-a'], tmpDir);
+    const r = await runCli(['--json', '-a'], tmpDir);
     expect(JSON.parse(r.stdout).unused).toEqual(['@types/uuid']);
     expect(r.stderr).toContain('missing.json');
   });
@@ -668,7 +667,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       ].join('\n'),
     );
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(JSON.parse(r.stdout)).toMatchObject({ misplaced: [], typeOnly: [], totalIssues: 0 });
   });
 
@@ -676,7 +675,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ devDependencies: { typescript: '1' } }));
     await writeFile(path.join(tmpDir, 'tsconfig.json'), '{ "compilerOptions": { ');
 
-    const r = runCli(['--json', '-a'], tmpDir);
+    const r = await runCli(['--json', '-a'], tmpDir);
     expect(r.stderr.match(/tsconfig\.json/g)).toHaveLength(1);
   });
 
@@ -684,7 +683,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     const dependencies = Object.fromEntries(Array.from({ length: 50000 }, (_, i) => [`unused-package-${i}`, '^1.0.0']));
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies }));
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout).unused.length).toBe(50000);
   });
@@ -699,7 +698,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       'src/deep.ts': `import "zod";\n${deep}\n`,
     });
 
-    const r = runCli(['--json'], tmpDir);
+    const r = await runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout).unused).toEqual(['unused']);
   });
@@ -732,7 +731,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         'src/a.ts': 'export const a = 1;',
       });
 
-      const r = runCli(['--json', '-a'], tmpDir);
+      const r = await runCli(['--json', '-a'], tmpDir);
       expect(JSON.parse(r.stdout).unused).toEqual(['fmt', 'left-pad']);
     });
 
@@ -754,7 +753,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         'src/b.ts': "import type { ApexOptions } from 'apexcharts'; export type Options = ApexOptions;",
       });
 
-      const r = runCli(['--json', '-a'], tmpDir);
+      const r = await runCli(['--json', '-a'], tmpDir);
       expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['left-pad'], misplaced: [], typeOnly: [] });
     });
 
@@ -766,7 +765,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         },
       });
 
-      const r = runCli(['--json', '-a'], tmpDir);
+      const r = await runCli(['--json', '-a'], tmpDir);
       expect(JSON.parse(r.stdout).unused).toEqual(['@vitejs/plugin-react']);
       expect(r.stderr.match(/node_modules/g)).toHaveLength(1);
     });
@@ -779,7 +778,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         },
       });
 
-      expect(JSON.parse(runCli(['--json', '-a'], tmpDir).stdout).unused).toEqual(['left-pad']);
+      expect(JSON.parse((await runCli(['--json', '-a'], tmpDir)).stdout).unused).toEqual(['left-pad']);
     });
 
     test('tool configs that name a package by string use it', async () => {
@@ -839,7 +838,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         'vite.config.ts': "export default { build: { minify: 'terser' } };",
       });
 
-      const r = runCli(['--json', '-a'], tmpDir);
+      const r = await runCli(['--json', '-a'], tmpDir);
       expect(JSON.parse(r.stdout).unused).toEqual(['left-pad']);
     });
 
@@ -856,7 +855,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         'packages/web/scripts/run.js': "require('chalk');",
       });
 
-      const parsed = JSON.parse(runCli(['--json'], tmpDir).stdout);
+      const parsed = JSON.parse((await runCli(['--json'], tmpDir)).stdout);
       expect(parsed.unused).toEqual([]);
       expect(parsed.misplaced.map((d: { packageName: string }) => d.packageName)).toEqual(['kleur', 'chalk']);
     });
