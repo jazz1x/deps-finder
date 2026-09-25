@@ -129,6 +129,28 @@ const resolvesToFile =
 const firstSegment = (specifier: string): string =>
   Array.headNonEmpty(String.split(specifier, '/'));
 
+const THROUGH_NODE_MODULES = /^.*node_modules\//;
+
+const isInstalled = (file: string): boolean => THROUGH_NODE_MODULES.test(file);
+
+const installedPackage = (file: string): ReadonlyArray<PackageName> =>
+  Option.toArray(extractPackageName(file.replace(THROUGH_NODE_MODULES, '')));
+
+const baseUrlPackages = (
+  baseUrl: BaseUrl,
+  specifier: string,
+  name: PackageName,
+  resolves: (base: string) => boolean,
+): ReadonlyArray<PackageName> =>
+  Match.value(path.join(baseUrl.dir, specifier)).pipe(
+    Match.when(isInstalled, installedPackage),
+    Match.when(
+      (file) => baseUrl.names.has(firstSegment(specifier)) && resolves(file),
+      (): ReadonlyArray<PackageName> => [],
+    ),
+    Match.orElse(() => [name]),
+  );
+
 // tsc tries a matched alias's targets in order; with none resolving it goes to node_modules.
 const compilerPackages =
   (specifier: string, name: PackageName, resolves: (base: string) => boolean) =>
@@ -152,11 +174,7 @@ const compilerPackages =
       onNone: () =>
         Option.match(compiler.baseUrl, {
           onNone: () => [name],
-          onSome: (baseUrl) =>
-            baseUrl.names.has(firstSegment(specifier)) &&
-            resolves(path.join(baseUrl.dir, specifier))
-              ? []
-              : [name],
+          onSome: (baseUrl) => baseUrlPackages(baseUrl, specifier, name, resolves),
         }),
     });
 
@@ -193,8 +211,6 @@ const topLevelNames = (dir: string): Gathered<string> =>
     ),
   );
 
-const THROUGH_NODE_MODULES = /^.*node_modules\//;
-
 const namesNothingIn =
   (names: ReadonlySet<string>) =>
   (target: string): boolean =>
@@ -203,20 +219,21 @@ const namesNothingIn =
     !firstSegment(target).includes('*') &&
     !names.has(firstSegment(target));
 
-// A target through node_modules, or a bare one whose first segment names nothing in its base
-// directory, is a package; any other resolves inside the project.
+// A target that resolves through node_modules, or a bare one whose first segment names nothing in
+// its base directory, is a package; any other resolves inside the project.
 const pathTargetOf =
   (base: string, names: ReadonlySet<string>) =>
-  (target: string): PathTarget =>
-    Match.value(target).pipe(
+  (target: string): PathTarget => {
+    const resolved = path.resolve(base, target);
+    return Match.value(target).pipe(
       Match.when(
-        (installed) => THROUGH_NODE_MODULES.test(installed),
-        (installed) =>
-          PathTarget.Installed({ template: installed.replace(THROUGH_NODE_MODULES, '') }),
+        () => isInstalled(resolved),
+        () => PathTarget.Installed({ template: resolved.replace(THROUGH_NODE_MODULES, '') }),
       ),
       Match.when(namesNothingIn(names), (bare) => PathTarget.Installed({ template: bare })),
-      Match.orElse((local) => PathTarget.Local({ template: path.resolve(base, local) })),
+      Match.orElse(() => PathTarget.Local({ template: resolved })),
     );
+  };
 
 type Compiled = {
   readonly resolution: CompilerResolution;

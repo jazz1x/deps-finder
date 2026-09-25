@@ -463,6 +463,24 @@ describe('CLI e2e (bin/cli.js)', () => {
         'server/index.js': 'import { f } from "utils/format";',
       },
     ],
+    [
+      'a baseUrl file under node_modules',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: 'node_modules' } },
+        'node_modules/utils/package.json': { name: 'utils' },
+        'node_modules/utils/format.js': 'export const f = 1;',
+        'src/a.ts': 'import { f } from "utils/format";\nconsole.log(f);',
+      },
+    ],
+    [
+      'a paths target resolved into node_modules',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: 'node_modules', paths: { 'u/*': ['utils/*'] } } },
+        'node_modules/utils/package.json': { name: 'utils' },
+        'node_modules/utils/format.js': 'export const f = 1;',
+        'src/a.ts': 'import { f } from "u/format";\nconsole.log(f);',
+      },
+    ],
   ])('%s still loads the package', async (_, files) => {
     await writeFiles(tmpDir, { 'package.json': { dependencies: { utils: '1' } }, ...files });
 
