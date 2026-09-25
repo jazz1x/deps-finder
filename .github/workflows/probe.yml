@@ -1,0 +1,37 @@
+name: probe-cli-hang
+on:
+  push:
+    branches: [probe/cli-hang]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: e2e x15 with a report on any run past 4s
+        env:
+          PROBE_REPORT_DIR: ${{ runner.temp }}/reports
+        run: |
+          mkdir -p "$PROBE_REPORT_DIR"
+          for i in $(seq 1 15); do
+            bun test src/cli.e2e.test.ts > "$RUNNER_TEMP/run-$i.log" 2>&1 || echo "run $i failed"
+            grep -hE '\(fail\)|timed out|dangling' "$RUNNER_TEMP/run-$i.log" || true
+          done
+          ls -la "$PROBE_REPORT_DIR"
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: reports-node${{ matrix.node }}
+          path: |
+            ${{ runner.temp }}/reports
+            ${{ runner.temp }}/run-*.log

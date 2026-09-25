@@ -10,11 +10,14 @@ const CLI_PATH = path.join(REPO_ROOT, 'bin', 'cli.js');
 const STRIP_ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
 const runCli = (args: ReadonlyArray<string>, cwd: string) => {
-  const result = spawnSync('node', [CLI_PATH, ...args], {
+  const reports = process.env['PROBE_REPORT_DIR'] ?? '/tmp/probe-reports';
+  const result = spawnSync('node', ['--report-on-signal', '--report-signal=SIGUSR2', `--report-directory=${reports}`, CLI_PATH, ...args], {
     cwd,
     encoding: 'utf-8',
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    timeout: 4000,
+    killSignal: 'SIGUSR2',
   });
   return {
     stdout: result.stdout ?? '',
