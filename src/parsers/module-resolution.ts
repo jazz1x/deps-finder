@@ -13,7 +13,7 @@ import {
 import { gatherOptional, isFile, readDirectory } from '../utils/file-reader.js';
 import { lineage } from '../utils/project-walk.js';
 import type { TsConfigChain } from '../utils/tsconfig-reader.js';
-import { governedBy, setWhere } from './emit-settings.js';
+import { compiledBy, setWhere } from './emit-settings.js';
 import type { LayoutManifest } from './package-parser.js';
 
 // A bundler's ?raw or #fragment suffix is not part of the name; a leading # is a subpath import.
@@ -266,7 +266,7 @@ export const resolutionOf = (
     Array.map(manifests, (manifest) => [path.resolve(path.dirname(manifest.path)), manifest]),
   );
   const compiled = Array.map(chains, (chain) => [chain, compilerResolutionOf(chain)] as const);
-  const compilersOf = governedBy(
+  const compilersOf = compiledBy(
     Array.map(compiled, ([chain, { resolution }]) => [chain, resolution] as const),
   );
   return {

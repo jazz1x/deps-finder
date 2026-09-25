@@ -446,6 +446,30 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['utils', 'components', 'lodash', 'react', '@app/core'], misplaced: [] });
   });
 
+  test.each([
+    [
+      'paths outside the tsconfig include',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { 'utils/*': ['src/utils/*'] } }, include: ['src'] },
+        'src/utils/format.ts': 'export const f = 1;',
+        'server/index.js': 'import { f } from "utils/format";',
+      },
+    ],
+    [
+      'baseUrl outside the tsconfig include',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: 'src' }, include: ['src'] },
+        'src/utils/format.ts': 'export const f = 1;',
+        'server/index.js': 'import { f } from "utils/format";',
+      },
+    ],
+  ])('%s still loads the package', async (_, files) => {
+    await writeFiles(tmpDir, { 'package.json': { dependencies: { utils: '1' } }, ...files });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(JSON.parse(r.stdout).unused).toEqual([]);
+  });
+
   test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),

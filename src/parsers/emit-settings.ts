@@ -188,10 +188,10 @@ const governingFor =
     );
   };
 
-// A file follows the tsconfig files of the nearest directory above it that has any.
-export const governedBy = <A>(
+// The tsconfig files of the nearest directory above a file that has any.
+const nearestTsConfigs = <A>(
   chains: ReadonlyArray<readonly [TsConfigChain, A]>,
-): ((file: string) => ReadonlyArray<A>) => {
+): ((file: string) => ReadonlyArray<Governing<A>>) => {
   const byDirectory = pipe(
     Array.sort(
       chains,
@@ -210,10 +210,32 @@ export const governedBy = <A>(
     pipe(
       lineage(path.dirname(file)),
       Array.findFirst((dir) => Record.get(byDirectory, dir)),
-      Option.match({
-        onNone: (): ReadonlyArray<A> => [],
-        onSome: (group) => Array.map(governingFor(file)(group), ({ settings }) => settings),
-      }),
+      Option.getOrElse((): ReadonlyArray<Governing<A>> => []),
+    );
+};
+
+const governedBy = <A>(
+  chains: ReadonlyArray<readonly [TsConfigChain, A]>,
+): ((file: string) => ReadonlyArray<A>) => {
+  const nearest = nearestTsConfigs(chains);
+  return (file) =>
+    pipe(
+      nearest(file),
+      Array.match({ onEmpty: () => [], onNonEmpty: governingFor(file) }),
+      Array.map(({ settings }) => settings),
+    );
+};
+
+// tsc reads a file's specifiers through only the tsconfig files that compile it.
+export const compiledBy = <A>(
+  chains: ReadonlyArray<readonly [TsConfigChain, A]>,
+): ((file: string) => ReadonlyArray<A>) => {
+  const nearest = nearestTsConfigs(chains);
+  return (file) =>
+    pipe(
+      nearest(file),
+      Array.filter((governing) => governing.covers(file)),
+      Array.map(({ settings }) => settings),
     );
 };
 
