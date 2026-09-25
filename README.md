@@ -251,7 +251,7 @@ A bare builtin name such as `buffer` or `events` is matched against a declared p
 
 Indented Sass (`.sass`, `<style lang="sass">`) and Stylus (`.styl`, `<style lang="stylus">`) are not read. A Sass or Less `@import "name"` that loads a local partial counts as use of a declared package called `name`. The `src` attribute of a component's `<script>` or `<style>` (`<style src="pkg/theme.css">`) is not read. An `outDir` that holds the analysed sources, such as `"outDir": "src"`, is excluded as build output, so the imports in it are not counted.
 
-A source nested deeper than oxc's native parser can recurse crashes the process with a segmentation fault (exit `139`, outside the codes above), and no report is printed. With the default 8 MB stack on macOS arm64 that is about 4,600 nested object literals or 5,500 nested arrays or parentheses; else-if chains and string concatenations go much further (20,000 and 50,000 parse). The crash happens inside the parser, where deps-finder cannot catch it. Raising the stack limit raises the depth: under `ulimit -s 65520` a 20,000-deep array parses. Such files are usually generated; `--exclude` them.
+deps-finder runs on a worker thread with a 256 MB stack, because oxc's native parser recurses once per nesting level. A source nested deeper than that stack holds still crashes the process (exit `132` or `139`, outside the codes above), and no report is printed: on macOS arm64 that is past about 140,000 nested object literals, 160,000 nested arrays or parentheses, or 180,000 nested type arguments. Such files are usually generated; `--exclude` them.
 
 ---
 

@@ -499,6 +499,21 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused.length).toBe(50000);
   });
 
+  test.each([
+    ['arrays', `const x = ${'['.repeat(10000)}${']'.repeat(10000)};`],
+    ['object literals', `const x = ${'{a:'.repeat(10000)}1${'}'.repeat(10000)};`],
+    ['type arguments', `type X = ${'Array<'.repeat(10000)}T${'>'.repeat(10000)};`],
+  ])('a source with %s nested 10,000 deep is scanned', async (_, deep) => {
+    await writeFiles(tmpDir, {
+      'package.json': { dependencies: { zod: '1', unused: '1' } },
+      'src/deep.ts': `import "zod";\n${deep}\n`,
+    });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout).unused).toEqual(['unused']);
+  });
+
   describe('packages used without an import', () => {
     test('a package whose binary a script or git hook runs is used', async () => {
       await writeFiles(tmpDir, {
