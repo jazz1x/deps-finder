@@ -1,0 +1,25 @@
+name: probe-async-verify
+on:
+  pull_request:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: bun install --frozen-lockfile
+      - name: validate x6
+        run: |
+          fails=0
+          for i in $(seq 1 6); do
+            bun run validate > "$RUNNER_TEMP/run-$i.log" 2>&1 || { fails=$((fails+1)); grep -hE '\(fail\)|timed out|dangling' "$RUNNER_TEMP/run-$i.log"; }
+          done
+          echo "failed runs: $fails"
