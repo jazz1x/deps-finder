@@ -386,6 +386,7 @@ describe('extractImports edge cases', () => {
     ['another node:module export', 'import * as m from "node:module";\nconst r = m.findPackageJSON(1);\nr("pkg");\nrequire("other");'],
     ['a template with an expression', 'const m = require(`pkg${suffix}`);\nimport(`pkg${suffix}`);'],
     ['two arguments', 'const m = require.resolve("pkg", {});'],
+    ['a call on what another call returns', 'export const v = i18n("x")("pkg");\nrequire("other");'],
   ])('does not find pkg through %s', (_, content) => {
     expect(extractImports(content, 'src/a.mjs').filter((f) => f.packageName === 'pkg')).toEqual([]);
   });
