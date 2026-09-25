@@ -569,6 +569,27 @@ describe('CLI e2e (bin/cli.js)', () => {
         'src/a.ts': 'import { x } from "pkg";\nimport { useState } from "react";\nx();\nuseState();',
       },
     ],
+    [
+      'a paths target that finds only a declaration file',
+      [],
+      {
+        'package.json': { dependencies: { react: '1', 'untyped-lib': '1' } },
+        'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { '*': ['types/*'], react: ['./types/react'] } } },
+        'types/untyped-lib.d.ts': 'declare const x: any;\nexport default x;',
+        'types/react.d.ts': 'export {};',
+        'src/a.ts': 'import u from "untyped-lib";\nimport React from "react";\nconsole.log(u, React);',
+      },
+    ],
+    [
+      'a baseUrl directory whose index is a declaration file',
+      [],
+      {
+        'package.json': { dependencies: { 'untyped-lib': '1' } },
+        'tsconfig.json': { compilerOptions: { baseUrl: 'src' } },
+        'src/untyped-lib/index.d.ts': 'declare const x: any;\nexport default x;',
+        'src/a.ts': 'import u from "untyped-lib";\nconsole.log(u);',
+      },
+    ],
   ])('%s resolves as tsc does', async (_, unused, files) => {
     await writeFiles(tmpDir, files);
     const r = runCli(['--json', '-a'], tmpDir);

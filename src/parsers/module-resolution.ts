@@ -196,13 +196,14 @@ type Lookup = {
   readonly installed: (file: string) => boolean;
 };
 
+// A declaration file redirects only the types, so the runtime still loads the package it names.
 const localPackages =
   ({ name, installed }: Lookup) =>
   (file: string): ReadonlyArray<PackageName> =>
-    Option.match(Option.liftPredicate(file, installed), {
-      onNone: () => [],
-      onSome: () => [name],
-    });
+    Option.match(
+      Option.liftPredicate(file, (hit) => DECLARATION_FILE_PATTERN.test(hit) || installed(hit)),
+      { onNone: () => [], onSome: () => [name] },
+    );
 
 const firstSegment = (specifier: string): string =>
   Array.headNonEmpty(String.split(specifier, '/'));
