@@ -12,7 +12,6 @@
   "scripts": {
     "test": "bun test",
     "test:coverage": "bun test --coverage",
-    "bench": "bun bench/import-parser.bench.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src/",
     "format": "oxfmt src/",
