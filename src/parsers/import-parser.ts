@@ -234,22 +234,23 @@ const dynamicImportReference =
       Option.map((specifier) => referenceAt(specifier, false, expression)),
     );
 
-const staticStringValue = (argument: Argument | undefined): Option.Option<string> =>
-  Match.value(argument).pipe(
-    Match.when({ type: 'Literal', value: Match.string }, (literal) => Option.some(literal.value)),
-    Match.when({ type: 'TemplateLiteral' }, (template) =>
-      pipe(
-        Option.liftPredicate(template, (static_) =>
-          Array.isReadonlyArrayEmpty(static_.expressions),
-        ),
-        Option.flatMap((static_) => Option.fromNullishOr(static_.quasis[0]?.value.cooked)),
-      ),
+// The matchers below run on every call and declarator the walk meets, so each is built once with
+// Match.type rather than per node with Match.value.
+const staticStringValue: (argument: Argument | undefined) => Option.Option<string> = Match.type<
+  Argument | undefined
+>().pipe(
+  Match.when({ type: 'Literal', value: Match.string }, (literal) => Option.some(literal.value)),
+  Match.when({ type: 'TemplateLiteral' }, (template) =>
+    pipe(
+      Option.liftPredicate(template, (static_) => Array.isReadonlyArrayEmpty(static_.expressions)),
+      Option.flatMap((static_) => Option.fromNullishOr(static_.quasis[0]?.value.cooked)),
     ),
-    Match.when({ type: 'ParenthesizedExpression' }, (parenthesised) =>
-      staticStringValue(parenthesised.expression),
-    ),
-    Match.orElse(() => Option.none()),
-  );
+  ),
+  Match.when({ type: 'ParenthesizedExpression' }, (parenthesised) =>
+    staticStringValue(parenthesised.expression),
+  ),
+  Match.orElse(() => Option.none()),
+);
 
 const MODULE_BUILTIN = ['module', 'node:module'];
 
@@ -272,31 +273,32 @@ type Factory = Data.TaggedEnum<{
 
 const Factory = Data.taggedEnum<Factory>();
 
-const unchained = (node: Expression): Expression =>
-  Match.value(node).pipe(
-    Match.when({ type: 'ChainExpression' }, (chain) => chain.expression),
-    Match.orElse((plain) => plain),
-  );
+const unchained: (node: Expression) => Expression = Match.type<Expression>().pipe(
+  Match.when({ type: 'ChainExpression' }, (chain): Expression => chain.expression),
+  Match.orElse((plain) => plain),
+);
 
-const readsCreateRequire = (node: Expression): boolean =>
-  Match.value(unchained(node)).pipe(
-    Match.when(
-      { type: 'MemberExpression', computed: false, property: { name: 'createRequire' } },
-      () => true,
-    ),
-    Match.orElse(() => false),
-  );
+const isCreateRequireMember: (node: Expression) => boolean = Match.type<Expression>().pipe(
+  Match.when(
+    { type: 'MemberExpression', computed: false, property: { name: 'createRequire' } },
+    () => true,
+  ),
+  Match.orElse(() => false),
+);
 
-const factoryCalled = (node: Expression): Option.Option<Factory> =>
-  Match.value(unchained(node)).pipe(
-    Match.when({ type: 'CallExpression', callee: { type: 'Identifier' } }, (call) =>
-      Option.some(Factory.Named({ name: call.callee.name })),
-    ),
-    Match.when({ type: 'CallExpression' }, (call) =>
-      Option.liftPredicate(Factory.Member(), () => readsCreateRequire(call.callee)),
-    ),
-    Match.orElse(() => Option.none()),
-  );
+const readsCreateRequire = (node: Expression): boolean => isCreateRequireMember(unchained(node));
+
+const factoryOfCall: (node: Expression) => Option.Option<Factory> = Match.type<Expression>().pipe(
+  Match.when({ type: 'CallExpression', callee: { type: 'Identifier' } }, (call) =>
+    Option.some(Factory.Named({ name: call.callee.name })),
+  ),
+  Match.when({ type: 'CallExpression' }, (call) =>
+    Option.liftPredicate(Factory.Member(), () => readsCreateRequire(call.callee)),
+  ),
+  Match.orElse(() => Option.none()),
+);
+
+const factoryCalled = (node: Expression): Option.Option<Factory> => factoryOfCall(unchained(node));
 
 // Through: a call through a name that loads only if the file binds it to createRequire(...).
 // Made: a call on what a possible createRequire(...) returns.
@@ -309,45 +311,43 @@ type Loader = Data.TaggedEnum<{
 
 const Loader = Data.taggedEnum<Loader>();
 
-const requireFunction = (node: Expression): Loader =>
-  Match.value(node).pipe(
-    Match.when({ type: 'Identifier', name: 'require' }, () => Loader.Direct()),
-    Match.when({ type: 'Identifier' }, (identifier) => Loader.Through({ name: identifier.name })),
-    Match.orElse((other) =>
-      Option.match(factoryCalled(other), {
-        onNone: () => Loader.NotLoader(),
-        onSome: (factory) => Loader.Made({ factory }),
-      }),
-    ),
-  );
+const requireFunction: (node: Expression) => Loader = Match.type<Expression>().pipe(
+  Match.when({ type: 'Identifier', name: 'require' }, () => Loader.Direct()),
+  Match.when({ type: 'Identifier' }, (identifier) => Loader.Through({ name: identifier.name })),
+  Match.orElse((other) =>
+    Option.match(factoryCalled(other), {
+      onNone: () => Loader.NotLoader(),
+      onSome: (factory) => Loader.Made({ factory }),
+    }),
+  ),
+);
 
 // require.resolve, module.require and import.meta.resolve name a package as require does.
-const loaderOf = (callee: Expression): Loader =>
-  Match.value(callee).pipe(
-    Match.when(
-      {
-        type: 'MemberExpression',
-        computed: false,
-        object: { type: 'MetaProperty', meta: { name: 'import' }, property: { name: 'meta' } },
-        property: { name: 'resolve' },
-      },
-      () => Loader.Direct(),
-    ),
-    Match.when(
-      {
-        type: 'MemberExpression',
-        computed: false,
-        object: { type: 'Identifier', name: 'module' },
-        property: { name: 'require' },
-      },
-      () => Loader.Direct(),
-    ),
-    Match.when(
-      { type: 'MemberExpression', computed: false, property: { name: 'resolve' } },
-      (member) => requireFunction(member.object),
-    ),
-    Match.orElse(requireFunction),
-  );
+const loaderOf: (callee: Expression) => Loader = Match.type<Expression>().pipe(
+  Match.when(
+    {
+      type: 'MemberExpression',
+      computed: false,
+      object: { type: 'MetaProperty', meta: { name: 'import' }, property: { name: 'meta' } },
+      property: { name: 'resolve' },
+    },
+    () => Loader.Direct(),
+  ),
+  Match.when(
+    {
+      type: 'MemberExpression',
+      computed: false,
+      object: { type: 'Identifier', name: 'module' },
+      property: { name: 'require' },
+    },
+    () => Loader.Direct(),
+  ),
+  Match.when(
+    { type: 'MemberExpression', computed: false, property: { name: 'resolve' } },
+    (member) => requireFunction(member.object),
+  ),
+  Match.orElse(requireFunction),
+);
 
 const importEqualsReference = (decl: TSImportEqualsDeclaration): ReadonlyArray<ModuleReference> =>
   Match.value(decl.moduleReference).pipe(
@@ -443,26 +443,26 @@ const callReferences = (call: CallExpression): ReadonlyArray<AstReference> =>
     }),
   );
 
-const destructuredAlias = (property: BindingProperty | BindingRestElement) =>
-  Match.value(property).pipe(
-    Match.when(
-      { type: 'Property', key: { name: 'createRequire' }, value: { type: 'Identifier' } },
-      (read) => [AstReference.Alias({ name: read.value.name })],
-    ),
-    Match.orElse((): ReadonlyArray<AstReference> => []),
-  );
+const destructuredAlias: (
+  property: BindingProperty | BindingRestElement,
+) => ReadonlyArray<AstReference> = Match.type<BindingProperty | BindingRestElement>().pipe(
+  Match.when(
+    { type: 'Property', key: { name: 'createRequire' }, value: { type: 'Identifier' } },
+    (read) => [AstReference.Alias({ name: read.value.name })],
+  ),
+  Match.orElse(() => []),
+);
 
-const requireBinding = (declarator: VariableDeclarator): ReadonlyArray<AstReference> =>
-  Match.value(declarator).pipe(
+const requireBinding: (declarator: VariableDeclarator) => ReadonlyArray<AstReference> =
+  Match.type<VariableDeclarator>().pipe(
     Match.when({ id: { type: 'Identifier' }, init: Match.defined }, (bound) =>
-      Match.value(bound.init).pipe(
-        Match.when(readsCreateRequire, () => [AstReference.Alias({ name: bound.id.name })]),
-        Match.orElse((init) =>
-          Array.map(Option.toArray(factoryCalled(init)), (factory) =>
+      Option.match(Option.liftPredicate(bound.init, readsCreateRequire), {
+        onSome: () => [AstReference.Alias({ name: bound.id.name })],
+        onNone: () =>
+          Array.map(Option.toArray(factoryCalled(bound.init)), (factory) =>
             AstReference.Bound({ name: bound.id.name, factory }),
           ),
-        ),
-      ),
+      }),
     ),
     Match.when({ id: { type: 'ObjectPattern' } }, (pattern) =>
       Array.flatMap(pattern.id.properties, destructuredAlias),
@@ -1188,7 +1188,11 @@ export const findFiles = (
   const contextOf = fileContextOf(Array.flatMap(manifests.found, (manifest) => manifest.bins));
   const tsconfigs = governingTsConfigs(rootDir, walked.found);
   const emitOf = emitSettingsOf(tsconfigs.found);
-  const resolution = resolutionOf(manifests.found, tsconfigs.found);
+  const resolution = resolutionOf(
+    manifests.found,
+    tsconfigs.found,
+    new Set(Array.map(walked.found, (source) => path.resolve(rootDir, source.path))),
+  );
   return {
     found: pipe(
       walked.found,

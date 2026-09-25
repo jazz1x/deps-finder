@@ -160,6 +160,7 @@ describe('packagesOf', () => {
       { key: '#npm/*', targets: ['*'] },
     ],
     compilers: [],
+    sources: new Set<string>(),
   };
 
   test.each([

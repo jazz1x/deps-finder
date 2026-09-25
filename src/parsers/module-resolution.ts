@@ -22,7 +22,11 @@ const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/?#]+\/[^/?#]+|[^@/?#][^/?#]*)/
 export const extractPackageName = (specifier: string): Option.Option<string> =>
   Option.fromNullishOr(PACKAGE_NAME.exec(specifier)?.[1]);
 
-export const NO_RESOLUTION: ModuleResolution = { subpathImports: [], compilers: [] };
+export const NO_RESOLUTION: ModuleResolution = {
+  subpathImports: [],
+  compilers: [],
+  sources: new Set(),
+};
 
 type PatternMatch<A> = {
   readonly entry: A;
@@ -37,35 +41,32 @@ const byPrecedence = <A extends { readonly key: string }>() =>
     Order.mapInput(Order.Number, (match: PatternMatch<A>) => match.entry.key.length),
   );
 
+// Runs for every key on every import, so it splits the key without building a matcher.
 const patternMatchOf =
   (specifier: string) =>
   <A extends { readonly key: string }>(entry: A): Option.Option<PatternMatch<A>> =>
-    Match.value(String.split(entry.key, '*')).pipe(
-      Match.when(
-        (parts) => parts.length === 1,
-        () =>
-          Option.liftPredicate(
-            { entry, captured: '', prefixLength: Number.POSITIVE_INFINITY },
-            () => entry.key === specifier,
-          ),
-      ),
-      Match.when(
-        (parts) => parts.length === 2,
-        ([prefix = '', suffix = '']) =>
-          Option.liftPredicate(
-            {
-              entry,
-              captured: specifier.slice(prefix.length, specifier.length - suffix.length),
-              prefixLength: prefix.length,
-            },
-            () =>
-              specifier.startsWith(prefix) &&
-              specifier.endsWith(suffix) &&
-              specifier.length >= entry.key.length,
-          ),
-      ),
-      Match.orElse(() => Option.none()),
-    );
+    Array.match(Array.tailNonEmpty(String.split(entry.key, '*')), {
+      onEmpty: () =>
+        Option.liftPredicate(
+          { entry, captured: '', prefixLength: Number.POSITIVE_INFINITY },
+          () => entry.key === specifier,
+        ),
+      onNonEmpty: ([suffix, ...more]) => {
+        const prefixLength = entry.key.length - suffix.length - 1;
+        return Option.liftPredicate(
+          {
+            entry,
+            captured: specifier.slice(prefixLength, specifier.length - suffix.length),
+            prefixLength,
+          },
+          () =>
+            Array.isReadonlyArrayEmpty(more) &&
+            specifier.startsWith(entry.key.slice(0, prefixLength)) &&
+            specifier.endsWith(suffix) &&
+            specifier.length >= entry.key.length,
+        );
+      },
+    });
 
 const bestMatch = <A extends { readonly key: string }>(
   entries: ReadonlyArray<A>,
@@ -107,22 +108,30 @@ const RESOLVED_EXTENSIONS = [
   '.json',
 ];
 
-const resolvesToFile = (base: string): boolean =>
-  Array.some(
-    [
-      base,
-      ...Array.map(RESOLVED_EXTENSIONS, (extension) => `${base}${extension}`),
-      ...Array.map(RESOLVED_EXTENSIONS, (extension) => path.join(base, `index${extension}`)),
-    ],
-    isFile,
-  );
+// In tsc's order, built one at a time so a lookup stops at the first hit.
+const CANDIDATES: ReadonlyArray<(base: string) => string> = [
+  (base) => base,
+  ...Array.map(RESOLVED_EXTENSIONS, (extension) => (base: string) => `${base}${extension}`),
+  ...Array.map(
+    RESOLVED_EXTENSIONS,
+    (extension) => (base: string) => `${base}${path.sep}index${extension}`,
+  ),
+];
+
+// The walked sources answer most lookups without touching the disk: on macaron-front's 9,146
+// `~/` imports, stat'ing every candidate cost 137ms.
+const resolvesToFile =
+  (sources: ReadonlySet<string>) =>
+  (base: string): boolean =>
+    Array.some(CANDIDATES, (candidate) => sources.has(candidate(base))) ||
+    Array.some(CANDIDATES, (candidate) => isFile(candidate(base)));
 
 const firstSegment = (specifier: string): string =>
   Array.headNonEmpty(String.split(specifier, '/'));
 
 // tsc tries a matched alias's targets in order; with none resolving it goes to node_modules.
 const compilerPackages =
-  (specifier: string, name: PackageName) =>
+  (specifier: string, name: PackageName, resolves: (base: string) => boolean) =>
   (compiler: CompilerResolution): ReadonlyArray<PackageName> =>
     Option.match(bestMatch(compiler.paths, specifier), {
       onSome: ({ entry, captured }) =>
@@ -133,7 +142,7 @@ const compilerPackages =
                 Option.some(Option.toArray(extractPackageName(filled(template, captured)))),
               Local: ({ template }) =>
                 Option.as(
-                  Option.liftPredicate(filled(template, captured), resolvesToFile),
+                  Option.liftPredicate(filled(template, captured), resolves),
                   [] as ReadonlyArray<PackageName>,
                 ),
             }),
@@ -145,7 +154,7 @@ const compilerPackages =
           onNone: () => [name],
           onSome: (baseUrl) =>
             baseUrl.names.has(firstSegment(specifier)) &&
-            resolvesToFile(path.join(baseUrl.dir, specifier))
+            resolves(path.join(baseUrl.dir, specifier))
               ? []
               : [name],
         }),
@@ -153,25 +162,27 @@ const compilerPackages =
 
 // The packages a specifier loads: a # import through its package.json "imports", any other bare
 // specifier through the paths and baseUrl of each tsconfig that compiles the file, else by name.
-export const packagesOf =
-  (resolution: ModuleResolution) =>
-  (specifier: string): ReadonlyArray<PackageName> =>
-    Match.value(specifier).pipe(
-      Match.when(String.startsWith('#'), (subpath) =>
-        subpathPackages(resolution.subpathImports, subpath),
-      ),
-      Match.orElse((bare) =>
-        Option.match(extractPackageName(bare), {
-          onNone: (): ReadonlyArray<PackageName> => [],
-          onSome: (name) =>
-            Array.match(resolution.compilers, {
-              onEmpty: () => [name],
-              onNonEmpty: (compilers) =>
-                Array.dedupe(Array.flatMap(compilers, compilerPackages(bare, name))),
-            }),
-        }),
-      ),
-    );
+export const packagesOf = (
+  resolution: ModuleResolution,
+): ((specifier: string) => ReadonlyArray<PackageName>) => {
+  const resolves = resolvesToFile(resolution.sources);
+  return Match.type<string>().pipe(
+    Match.when(String.startsWith('#'), (subpath) =>
+      subpathPackages(resolution.subpathImports, subpath),
+    ),
+    Match.orElse((bare) =>
+      Option.match(extractPackageName(bare), {
+        onNone: (): ReadonlyArray<PackageName> => [],
+        onSome: (name) =>
+          Array.match(resolution.compilers, {
+            onEmpty: () => [name],
+            onNonEmpty: (compilers) =>
+              Array.dedupe(Array.flatMap(compilers, compilerPackages(bare, name, resolves))),
+          }),
+      }),
+    ),
+  );
+};
 
 const topLevelNames = (dir: string): Gathered<string> =>
   gatherOptional(
@@ -246,6 +257,7 @@ const compilerResolutionOf = (chain: TsConfigChain): Compiled => {
 export const resolutionOf = (
   manifests: ReadonlyArray<LayoutManifest>,
   chains: ReadonlyArray<TsConfigChain>,
+  sources: ReadonlySet<string>,
 ): {
   readonly resolve: (file: string) => ModuleResolution;
   readonly skipped: ReadonlyArray<FileError>;
@@ -265,6 +277,7 @@ export const resolutionOf = (
         Option.match({ onNone: () => [], onSome: (manifest) => manifest.subpathImports }),
       ),
       compilers: compilersOf(file),
+      sources,
     }),
     skipped: Array.flatMap(compiled, ([, { skipped }]) => skipped),
   };

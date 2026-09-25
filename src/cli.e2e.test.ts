@@ -426,17 +426,19 @@ describe('CLI e2e (bin/cli.js)', () => {
         },
       },
       'src/utils/format.ts': 'export const f = 1;',
+      'src/utils/data.json': '{}',
       'src/core.ts': 'export const c = 1;',
       'src/components/button.ts': 'export const b = 1;',
       'src/index.ts': [
         'import { f } from "utils/format";',
+        'import data from "utils/data.json";',
         'import { c } from "@app/core";',
         'import { b } from "components/button";',
         'import merge from "lodash";',
         'import { g } from "gone/x";',
         'import { s } from "stale/x";',
         'import { h } from "react";',
-        'console.log(f, c, b, merge, g, s, h);',
+        'console.log(f, data, c, b, merge, g, s, h);',
       ].join('\n'),
     });
 
