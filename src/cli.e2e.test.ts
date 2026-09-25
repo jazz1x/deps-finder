@@ -12,16 +12,17 @@ const STRIP_ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 const runCli = (args: ReadonlyArray<string>, cwd: string) => {
   const reports = process.env['PROBE_REPORT_DIR'] ?? '/tmp/probe-reports';
   const watch = [
-    'node "$@" & pid=$!',
-    `( sleep 4; kill -0 $pid 2>/dev/null && { d=${reports}/hang-$pid; mkdir -p $d; ps -L -o pid,tid,stat,wchan:32,etime,comm -p $pid > $d/ps.txt; for t in /proc/$pid/task/*; do echo "$t $(cat $t/comm) $(cat $t/wchan) $(cat $t/syscall 2>&1)"; done > $d/tasks.txt; ps -ef --forest > $d/tree.txt; } ) </dev/null >/dev/null 2>&1 & w=$!`,
-    'wait $pid; s=$?; kill $w 2>/dev/null; exit $s',
+    'sleep 4',
+    `for p in $(pgrep -P ${process.pid} -x node); do d=${reports}/hang-$p; mkdir -p $d; ps -L -o pid,tid,stat,wchan:32,etime,comm -p $p > $d/ps.txt; grep State /proc/$p/status > $d/state.txt; for t in /proc/$p/task/*; do echo "$t $(cat $t/comm) $(cat $t/wchan) $(cat $t/stat | cut -d' ' -f3)"; done > $d/tasks.txt; ps -ef --forest > $d/tree.txt; done`,
   ].join('\n');
-  const result = spawnSync('sh', ['-c', watch, 'probe', CLI_PATH, ...args], {
+  const watcher = Bun.spawn(['sh', '-c', watch], { stdio: ['ignore', 'ignore', 'ignore'] });
+  const result = spawnSync('node', [CLI_PATH, ...args], {
     cwd,
     encoding: 'utf-8',
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
   });
+  watcher.kill();
   return {
     stdout: result.stdout ?? '',
     stderr: (result.stderr ?? '').replace(STRIP_ANSI, ''),
