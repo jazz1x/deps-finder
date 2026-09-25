@@ -21,8 +21,9 @@ import { readInstallation } from '../parsers/installed-packages.js';
 import { type LayoutManifest, readPackageJson } from '../parsers/package-parser.js';
 import { readHookCommands } from '../parsers/script-parser.js';
 import { tsconfigImports } from '../parsers/tsconfig-parser.js';
-import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
+import { ansi, hasIssues, plain, report } from '../reporters/console-reporter.js';
 import { formatSkippedInput, formatSkippedSource } from '../reporters/error-reporter.js';
+import { stdoutColours } from './terminal.js';
 
 const toggle = (name: string, alias: string, description: string) =>
   Flag.Boolean(name).pipe(
@@ -86,9 +87,7 @@ const toCliOptions = (flags: ParsedFlags): CliOptions => ({
   rootDir: flags.root,
 });
 
-const paintForStdout = Effect.sync(() =>
-  paintFor(process.stdout.isTTY === true, process.env['NO_COLOR']),
-);
+const paintForStdout = Effect.sync(() => (stdoutColours() ? ansi : plain));
 
 const scriptCommands = (manifest: LayoutManifest): ReadonlyArray<ScriptCommand> =>
   Array.map(Record.values(manifest.scripts), (script) => ({

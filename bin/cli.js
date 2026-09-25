@@ -6,6 +6,7 @@ import { Worker } from 'node:worker_threads';
 // `ulimit -s` (8 MB: a segfault past 5,500 nested arrays). A worker's stack is sized here.
 const worker = new Worker(new URL('../dist/index.js', import.meta.url), {
   argv: process.argv.slice(2),
+  workerData: { stdoutIsTerminal: process.stdout.isTTY === true },
   resourceLimits: { stackSizeMb: 256 },
 });
 

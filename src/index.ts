@@ -1,9 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Console, Effect, Exit, Layer, Match, Schema, pipe } from 'effect';
-import { CliConfig, type CliError, Command, GlobalFlag } from 'effect/unstable/cli';
+import { CliConfig, type CliError, CliOutput, Command, GlobalFlag } from 'effect/unstable/cli';
 import { depsFinder } from './cli/command.js';
 import { exitCodeOf } from './cli/exit-code.js';
+import { stdoutColours } from './cli/terminal.js';
 import type { FileError, RunOutcome } from './domain/errors.js';
 import { formatFileError } from './reporters/error-reporter.js';
 import { readJsonFile } from './utils/file-reader.js';
@@ -21,6 +22,7 @@ const reportFailure = (error: FileError | RunOutcome | CliError.CliError): Effec
 const CliLayer = Layer.mergeAll(
   NodeServices.layer,
   CliConfig.layer({ builtIns: [GlobalFlag.Help, GlobalFlag.Version] }),
+  CliOutput.layer(CliOutput.defaultFormatter({ colors: stdoutColours() })),
 );
 
 pipe(

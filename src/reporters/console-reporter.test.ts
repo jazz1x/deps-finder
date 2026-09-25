@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AnalysisResult } from '@/domain/types';
-import { ansi, hasIssues, paintFor, plain, report } from '@/reporters/console-reporter';
+import { ansi, hasIssues, plain, report } from '@/reporters/console-reporter';
 
 describe('console-reporter', () => {
   describe('hasIssues', () => {
@@ -149,15 +149,6 @@ describe('console-reporter', () => {
       const output = report(result, 'json', [], ansi);
       const parsed = JSON.parse(output);
       expect(parsed.typeOnly).toEqual(['hotscript', 'type-fest']);
-    });
-
-    test.each([
-      [true, undefined, ansi],
-      [true, '', ansi],
-      [true, '1', plain],
-      [false, undefined, plain],
-    ] as const)('paintFor(isTerminal=%p, NO_COLOR=%p)', (isTerminal, noColor, expected) => {
-      expect(paintFor(isTerminal, noColor)).toBe(expected);
     });
 
     test('counts files, not import lines, in "used in N files"', () => {

@@ -105,6 +105,23 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.stdout).not.toContain(String.fromCharCode(27));
   });
 
+  test('colours the report and --help on a terminal', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    const onTerminal = async (args: ReadonlyArray<string>) => {
+      let output = '';
+      const env: Record<string, string | undefined> = { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined };
+      const proc = Bun.spawn(['node', CLI_PATH, ...args], {
+        cwd: tmpDir,
+        env,
+        terminal: { cols: 200, rows: 50, data: (_terminal, data) => (output += new TextDecoder().decode(data)) },
+      });
+      await proc.exited;
+      return output;
+    };
+    expect(await onTerminal([])).toContain('\x1b[33mUnused Dependencies:\x1b[0m');
+    expect(await onTerminal(['--help'])).toContain('\x1b[1mUSAGE\x1b[0m');
+  });
+
   test('warns about source files it cannot read', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'src'));
