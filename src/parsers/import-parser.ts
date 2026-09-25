@@ -68,7 +68,8 @@ import {
   readTsConfigChains,
 } from '../utils/tsconfig-reader.js';
 
-const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
+// A bundler's ?raw or #fragment suffix is not part of the name; a leading # is a subpath import.
+const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/?#]+\/[^/?#]+|[^@/?#][^/?#]*)/;
 
 export const extractPackageName = (specifier: string): Option.Option<string> =>
   Option.fromNullishOr(PACKAGE_NAME.exec(specifier)?.[1]);

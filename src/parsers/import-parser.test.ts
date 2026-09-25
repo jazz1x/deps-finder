@@ -414,6 +414,17 @@ describe('extractPackageName edge cases', () => {
     expect(extractPackageName('@/')).toEqual(Option.none());
     expect(extractPackageName('@/components/Button')).toEqual(Option.none());
   });
+
+  test('drops a query or fragment suffix', () => {
+    expect(extractPackageName('alpha?url')).toEqual(Option.some('alpha'));
+    expect(extractPackageName('@s/beta?raw')).toEqual(Option.some('@s/beta'));
+    expect(extractPackageName('gamma#frag')).toEqual(Option.some('gamma'));
+  });
+
+  test('a # specifier is a subpath import, not a package', () => {
+    expect(extractPackageName('#dep')).toEqual(Option.none());
+    expect(extractPackageName('#internal/a')).toEqual(Option.none());
+  });
 });
 
 describe('extractImports edge cases', () => {
