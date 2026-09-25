@@ -181,7 +181,7 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
       installation: unimported.installation,
       sources: {
         imports: unimported.imports,
-        unreadable: [...own.unreadable, ...hoisted.unreadable],
+        unreadable: [...files.unreadable, ...own.unreadable, ...hoisted.unreadable],
       },
     })),
     Effect.tap(({ skippedInputs }) =>

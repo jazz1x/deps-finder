@@ -25,6 +25,17 @@ describe('file-reader', () => {
       expect(Result.getOrThrow(result)).toBe('hello world');
     });
 
+    const source = 'import "zod";\n';
+
+    test.each([
+      ['UTF-16LE', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(source, 'utf16le')])],
+      ['UTF-16BE', Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(source, 'utf16le').swap16()])],
+      ['UTF-8 with a byte order mark', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(source)])],
+    ])('decodes %s by its byte order mark', async (_, bytes) => {
+      await writeFile(`${testDir}/a.ts`, bytes);
+      expect(Result.getOrThrow(readFile(`${testDir}/a.ts`))).toBe(source);
+    });
+
     test('returns FileNotFound for non-existent file', () => {
       const result = readFile(`${testDir}/non-existent.txt`);
       expect(Result.isFailure(result)).toBe(true);

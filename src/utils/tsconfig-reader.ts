@@ -1,12 +1,13 @@
 import path from 'node:path';
-import { Array, Match, Option, Result, Schema, pipe } from 'effect';
+import { Array, Match, Option, Order, Result, Schema, String, pipe } from 'effect';
+import { TSCONFIG_FILE_PATTERN } from '../constants/patterns.js';
 import { FileError } from '../domain/errors.js';
 import type { Gathered } from '../domain/types.js';
 import {
   decodeJsonc,
-  gatherAll,
   gatherOptional,
   lenientKey,
+  readDirectory,
   readFile,
   readStats,
 } from './file-reader.js';
@@ -51,33 +52,9 @@ export type TsConfigFile = {
   readonly config: TsConfig;
 };
 
-const ROOT_TSCONFIGS = ['tsconfig.json', 'tsconfig.base.json'];
-
 const readTsConfigFile = (file: string): Result.Result<TsConfigFile, FileError> =>
   Result.flatMap(readFile(file), (text) =>
     Result.map(decodeJsonc(TsConfig)(file)(text), (config) => ({ path: file, text, config })),
-  );
-
-// Build-directory detection reads these before the walk finds the governing tsconfig files, so
-// findFiles dedupes their errors.
-const readRootFiles = (projectRoot: string): Gathered<TsConfigFile> =>
-  gatherAll(
-    Array.map(ROOT_TSCONFIGS, (name) =>
-      gatherOptional(Result.map(readTsConfigFile(path.resolve(projectRoot, name)), Array.of)),
-    ),
-  );
-
-export const readRootTsConfigs = (projectRoot: string): Gathered<TsConfig> => {
-  const roots = readRootFiles(projectRoot);
-  return { found: Array.map(roots.found, (file) => file.config), skipped: roots.skipped };
-};
-
-export const outDirsOf = (configs: ReadonlyArray<TsConfig>): ReadonlyArray<string> =>
-  Array.flatMap(configs, (config) =>
-    Array.getSomes([
-      Option.fromNullishOr(config.compilerOptions?.outDir),
-      Option.fromNullishOr(config.compilerOptions?.declarationDir),
-    ]),
   );
 
 export const extendsOf = (config: TsConfig): ReadonlyArray<string> =>
@@ -255,3 +232,41 @@ export const readTsConfigChains = (roots: ReadonlyArray<string>): Gathered<TsCon
     skipped: Array.dedupe(loaded.skipped),
   };
 };
+
+// Build-directory detection reads these before the walk finds the governing tsconfig files, so
+// findFiles dedupes their errors.
+export const readRootTsConfigs = (projectRoot: string): Gathered<TsConfigChain> => {
+  const roots = gatherOptional(
+    Result.map(readDirectory(projectRoot), (entries) =>
+      pipe(
+        entries,
+        Array.filter((entry) => !entry.isDirectory() && TSCONFIG_FILE_PATTERN.test(entry.name)),
+        Array.map((entry) => path.resolve(projectRoot, entry.name)),
+        (files) => Array.sort(files, Order.String),
+      ),
+    ),
+  );
+  const chains = readTsConfigChains(roots.found);
+  return { found: chains.found, skipped: [...roots.skipped, ...chains.skipped] };
+};
+
+const OUTPUT_OPTIONS = ['outDir', 'declarationDir'] as const;
+
+// A relative option resolves from the file that declares it; ${configDir} is the extending file's.
+export const outDirsOf = (chain: TsConfigChain): ReadonlyArray<string> =>
+  Array.getSomes(
+    Array.map(OUTPUT_OPTIONS, (option) =>
+      Array.findFirst(chain, (file) =>
+        Option.map(Option.fromNullishOr(file.config.compilerOptions?.[option]), (dir) =>
+          path.resolve(
+            path.dirname(file.path),
+            pipe(
+              dir,
+              String.replaceAll('${configDir}', path.dirname(Array.headNonEmpty(chain).path)),
+              String.replaceAll('\\', '/'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );

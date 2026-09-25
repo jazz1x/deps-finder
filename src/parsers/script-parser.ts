@@ -77,7 +77,8 @@ const tokenOf = (text: string): ReadonlyArray<Token> =>
     Match.orElse((word) => [Token.Word({ text: String.replace(QUOTES, '$1$2')(word) })]),
   );
 
-const segmentsOf = (script: string): ReadonlyArray<ReadonlyArray<string>> =>
+// The words of each command, their quotes removed.
+export const segmentsOf = (script: string): ReadonlyArray<ReadonlyArray<string>> =>
   Array.reduce(
     Array.flatMap(Array.fromIterable(script.matchAll(TOKEN)), ([text]) => tokenOf(text)),
     Array.of<ReadonlyArray<string>>([]),

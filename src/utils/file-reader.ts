@@ -1,4 +1,11 @@
-import { type Dirent, type Stats, readFileSync, readdirSync, statSync } from 'node:fs';
+import {
+  type Dirent,
+  type Stats,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { Array, Effect, Match, Option, Result, Schema, pipe } from 'effect';
 import jsonc from 'jsonc-parser';
 import YAML from 'yaml';
@@ -17,11 +24,30 @@ const readFailure = (path: string) => (cause: unknown) =>
     Match.orElse(() => FileError.ReadFailed({ path, reason: messageOf(cause) })),
   );
 
+const BYTE_ORDER_MARKS = [
+  { mark: [0xff, 0xfe], encoding: 'utf-16le' },
+  { mark: [0xfe, 0xff], encoding: 'utf-16be' },
+] as const;
+
+// As tsc reads a source. TextDecoder drops the byte order mark it decodes by, UTF-8's included.
+const decode = (bytes: Uint8Array): string =>
+  new TextDecoder(
+    pipe(
+      Array.findFirst(BYTE_ORDER_MARKS, ({ mark }) =>
+        Array.every(mark, (byte, index) => bytes[index] === byte),
+      ),
+      Option.match({ onNone: () => 'utf-8', onSome: ({ encoding }) => encoding }),
+    ),
+  ).decode(bytes);
+
 export const readFile = (path: string): Result.Result<string, FileError> =>
-  Result.try({ try: () => readFileSync(path, 'utf-8'), catch: readFailure(path) });
+  Result.try({ try: () => decode(readFileSync(path)), catch: readFailure(path) });
 
 export const readStats = (path: string): Result.Result<Stats, FileError> =>
   Result.try({ try: () => statSync(path), catch: readFailure(path) });
+
+export const readRealPath = (path: string): Result.Result<string, FileError> =>
+  Result.try({ try: () => realpathSync(path), catch: readFailure(path) });
 
 export const readDirectory = (path: string): Result.Result<ReadonlyArray<Dirent>, FileError> =>
   Result.try({ try: () => readdirSync(path, { withFileTypes: true }), catch: readFailure(path) });
@@ -81,16 +107,11 @@ const yaml: TextParser = (text) =>
     Result.try({ try: (): unknown => document.toJS(), catch: messageOf }),
   );
 
-const stripByteOrderMark = (text: string): string =>
-  text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-
 // The document before toJS, whose alias limit guards against expanding aliases.
 export const decodeYamlDocument =
   (path: string) =>
   (text: string): Result.Result<YAML.Document.Parsed, FileError> =>
-    Result.mapError(yamlDocument(stripByteOrderMark(text)), (reason) =>
-      FileError.ParseFailed({ path, reason }),
-    );
+    Result.mapError(yamlDocument(text), (reason) => FileError.ParseFailed({ path, reason }));
 
 const decodeStructured =
   (parse: TextParser) =>
@@ -98,9 +119,7 @@ const decodeStructured =
   (path: string) =>
   (text: string): Result.Result<S['Type'], FileError> =>
     pipe(
-      Result.mapError(parse(stripByteOrderMark(text)), (reason) =>
-        FileError.ParseFailed({ path, reason }),
-      ),
+      Result.mapError(parse(text), (reason) => FileError.ParseFailed({ path, reason })),
       Result.flatMap((json) =>
         pipe(
           Schema.decodeUnknownResult(schema)(json),
