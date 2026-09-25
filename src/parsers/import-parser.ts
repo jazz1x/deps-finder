@@ -586,12 +586,32 @@ const OPTIONS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
   '.cjs': JSX_LANG,
 };
 
-export const parse = (content: string, filePath: string): ParseResult =>
-  parseSync(
+const COMMONJS: ParserOptions = { ...JSX_LANG, sourceType: 'commonjs' };
+
+const COMMONJS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
+  '.js': COMMONJS,
+  '.cjs': COMMONJS,
+};
+
+// oxc reads every file as a module. Node runs a .js or .cjs file without import or export as
+// CommonJS, where a top-level return is legal, so such a file that fails is read again as one.
+export const parse = (content: string, filePath: string): ParseResult => {
+  const parsed = parseSync(
     filePath,
     content,
     Option.getOrElse(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath)), () => UNWRAPPED),
   );
+  return pipe(
+    Record.get(COMMONJS_BY_EXTENSION, path.extname(filePath)),
+    Option.filter(
+      () => !parsed.module.hasModuleSyntax && Array.isReadonlyArrayNonEmpty(parsed.errors),
+    ),
+    Option.match({
+      onNone: () => parsed,
+      onSome: (commonjs) => parseSync(filePath, content, commonjs),
+    }),
+  );
+};
 
 const WITHOUT_JSX: Readonly<Record<string, ParserOptions>> = {
   '.tsx': { lang: 'ts' },

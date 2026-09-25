@@ -135,8 +135,22 @@ describe('CLI e2e (bin/cli.js)', () => {
       'src/b.vue': '<script>\nimport { z } from "zod";\nconst y = {;\n</script>',
     });
     const r = runCli(['--json'], tmpDir);
-    expect(r.stderr).toMatch(/warning: could not fully parse \S*src\/a\.ts \(Unexpected token at line 2\)/);
-    expect(r.stderr).toMatch(/warning: could not fully parse \S*src\/b\.vue \(\S.* at line 3\)/);
+    expect(r.stderr).toMatch(
+      /warning: the parser reported an error in \S*src\/a\.ts \(Unexpected token at line 2\); the imports it read still count\./,
+    );
+    expect(r.stderr).toMatch(/warning: the parser reported an error in \S*src\/b\.vue \(\S.* at line 3\)/);
+    expect(JSON.parse(r.stdout).unused).toEqual([]);
+  });
+
+  test('a script without import or export parses as CommonJS, where a top-level return is legal', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': { dependencies: { lodash: '4', zod: '3' } },
+      'login.js': 'const _ = require("lodash");\nif (!_) return;\nrequire("zod");',
+      'src/a.js': 'import { z } from "zod";\nreturn;',
+    });
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr).not.toContain('login.js');
+    expect(r.stderr).toMatch(/warning: the parser reported an error in \S*src\/a\.js/);
     expect(JSON.parse(r.stdout).unused).toEqual([]);
   });
 
