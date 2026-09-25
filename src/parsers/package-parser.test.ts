@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { Result } from 'effect';
 import { FileError } from '@/domain/errors';
-import { readPackageJson } from '@/parsers/package-parser';
+import { readLayoutManifest, readPackageJson } from '@/parsers/package-parser';
 
 describe('package-parser', () => {
   describe('readPackageJson', () => {
@@ -224,6 +224,26 @@ describe('package-parser', () => {
       await writeFile(testFile, '{"name":"x"}garbage');
       const result = readPackageJson(testFile);
       expect(Result.isFailure(result)).toBe(true);
+    });
+  });
+
+  describe('readLayoutManifest', () => {
+    const testDir = './test-layout-manifest';
+
+    beforeEach(async () => {
+      await mkdir(testDir, { recursive: true });
+    });
+
+    afterEach(async () => {
+      await rm(testDir, { recursive: true, force: true });
+    });
+
+    test('drops a malformed "imports" entry alone', async () => {
+      await writeFile(`${testDir}/package.json`, '{"imports":{"#q":5,"#r":"q1","#s":{"node":["q2"]}}}');
+      expect(Result.getOrThrow(readLayoutManifest(testDir)('.')).subpathImports).toEqual([
+        { key: '#r', targets: ['q1'] },
+        { key: '#s', targets: ['q2'] },
+      ]);
     });
   });
 });
