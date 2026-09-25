@@ -183,6 +183,7 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
       sources: {
         imports: unimported.imports,
         unreadable: [...files.unreadable, ...own.unreadable, ...hoisted.unreadable],
+        partlyParsed: [...own.partlyParsed, ...hoisted.partlyParsed],
       },
     })),
     Effect.tap(({ skippedInputs }) =>
@@ -199,6 +200,11 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     ),
     Effect.tap(({ sources }) =>
       Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),
+    ),
+    Effect.tap(({ sources }) =>
+      Effect.forEach(sources.partlyParsed, ({ path, reason }) =>
+        Console.error(MESSAGES.SOURCE_PARTLY_PARSED(path, reason)),
+      ),
     ),
     Effect.map(({ packageJson, sources }) =>
       analyzeDependencies(packageJson, sources.imports, {

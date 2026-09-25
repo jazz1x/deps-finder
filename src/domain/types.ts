@@ -105,6 +105,9 @@ export type SourceFile = {
   readonly resolution: ModuleResolution;
 };
 
+// A source the parser recovered from errors in: what it read still counts.
+export type PartlyParsed = { readonly path: string; readonly reason: string };
+
 export type ImportLocation = {
   readonly file: string;
   readonly line: number;

@@ -23,6 +23,8 @@ export const MESSAGES = {
   PARSE_FAILED_AT: (reason: string, line: number) => `${reason} at line ${line}`,
   SOURCE_SKIPPED: (path: string, reason: string) =>
     `warning: skipped ${path} (${reason}); its imports are not counted.`,
+  SOURCE_PARTLY_PARSED: (path: string, reason: string) =>
+    `warning: could not fully parse ${path} (${reason}); imports the parser could not recover are not counted.`,
   INPUT_SKIPPED: (path: string, reason: string) =>
     `warning: could not use ${path} (${reason}); the scan went on without it.`,
   PACKAGE_LEFT_OUT: (path: string) =>

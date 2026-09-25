@@ -128,6 +128,18 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual(['tailwindcss']);
   });
 
+  test('warns about a source with a syntax error and counts the imports the parser recovered', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': { dependencies: { lodash: '4', zod: '3' } },
+      'src/a.ts': 'import lodash from "lodash";\nconst x = {;\nimport { z } from "zod";',
+      'src/b.vue': '<script>\nimport { z } from "zod";\nconst y = {;\n</script>',
+    });
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr).toMatch(/warning: could not fully parse \S*src\/a\.ts \(Unexpected token at line 2\)/);
+    expect(r.stderr).toMatch(/warning: could not fully parse \S*src\/b\.vue \(\S.* at line 3\)/);
+    expect(JSON.parse(r.stdout).unused).toEqual([]);
+  });
+
   test('warns about a source directory it cannot read as about a source file', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'src/locked'), { recursive: true });

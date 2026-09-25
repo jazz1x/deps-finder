@@ -54,6 +54,7 @@ import {
   PRODUCTION_SECTIONS,
   type PackageJson,
   type PackageName,
+  type PartlyParsed,
   type SourceFile,
 } from '../domain/types.js';
 import { componentBlocks, componentFramework } from './component-blocks.js';
@@ -835,61 +836,83 @@ const testGlobalReferences = (
 
 type Scope = Pick<SourceFile, 'context' | 'emit' | 'resolution'>;
 
+type OxcError = ParseResult['errors'][number];
+
+// firstError: oxc recovers from syntax errors, so the references are what it could read.
 const moduleReferences = (
   content: string,
   filePath: string,
   { context, emit }: Scope,
-): ReadonlyArray<ModuleReference> => {
+): {
+  readonly references: ReadonlyArray<ModuleReference>;
+  readonly firstError: Option.Option<OxcError>;
+} => {
   const parsed = parse(content, filePath);
   const ast =
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
       ? astReferences(parsed)
       : NO_AST_REFERENCES;
   const erased = erasesAllTypeSpecifiers(content, emit.elision);
-  return [
-    ...Array.map(parsed.module.staticImports, staticImportReference(erased)),
-    ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference(erased))),
-    ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
-    ...ast.references,
-    ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
-    ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
-    ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
-    ...Match.value(context).pipe(
-      Match.when('development', () => testGlobalReferences(content, parsed)),
-      Match.when('production', () => []),
-      Match.exhaustive,
-    ),
-  ];
+  return {
+    references: [
+      ...Array.map(parsed.module.staticImports, staticImportReference(erased)),
+      ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference(erased))),
+      ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
+      ...ast.references,
+      ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
+      ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
+      ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
+      ...Match.value(context).pipe(
+        Match.when('development', () => testGlobalReferences(content, parsed)),
+        Match.when('production', () => []),
+        Match.exhaustive,
+      ),
+    ],
+    firstError: Array.head(parsed.errors),
+  };
 };
 
 type FileImport = Omit<ImportDetails, 'context'>;
 
+type Scanned = {
+  readonly imports: ReadonlyArray<FileImport>;
+  readonly partlyParsed: ReadonlyArray<PartlyParsed>;
+};
+
+const errorReason = (error: OxcError, lineStarts: ReadonlyArray<number>): string =>
+  Option.match(Array.head(error.labels), {
+    onNone: () => error.message,
+    onSome: (label) =>
+      MESSAGES.PARSE_FAILED_AT(error.message, lineNumberAt(lineStarts, label.start)),
+  });
+
 // parsedAs: the name whose extension picks the parser, a component block's lang for one.
-const importsIn = (
-  content: string,
-  filePath: string,
-  parsedAs: string,
-  scope: Scope,
-): ReadonlyArray<FileImport> => {
+const importsIn = (content: string, filePath: string, parsedAs: string, scope: Scope): Scanned => {
   const lineStarts = buildLineStarts(content);
   const packagesFor = packagesOf(scope.resolution);
-
-  return Array.flatMap(moduleReferences(content, parsedAs, scope), (ref) =>
-    Array.map(packagesFor(ref.specifier), (packageName): FileImport => ({
-      packageName,
-      importType: ref.importType,
-      file: filePath,
-      line: lineNumberAt(lineStarts, ref.start),
-      importStatement: content.slice(ref.start, ref.end).trim(),
+  const scanned = moduleReferences(content, parsedAs, scope);
+  return {
+    imports: Array.flatMap(scanned.references, (ref) =>
+      Array.map(packagesFor(ref.specifier), (packageName): FileImport => ({
+        packageName,
+        importType: ref.importType,
+        file: filePath,
+        line: lineNumberAt(lineStarts, ref.start),
+        importStatement: content.slice(ref.start, ref.end).trim(),
+      })),
+    ),
+    partlyParsed: Array.map(Option.toArray(scanned.firstError), (error) => ({
+      path: filePath,
+      reason: errorReason(error, lineStarts),
     })),
-  );
+  };
 };
 
 export const extractImports = (
   content: string,
   filePath: string,
   scope: Scope,
-): ReadonlyArray<FileImport> => importsIn(content, filePath, filePath, scope);
+): ReadonlyArray<FileImport> => importsIn(content, filePath, filePath, scope).imports;
 
 const inContext =
   (context: FileContext) =>
@@ -931,22 +954,39 @@ const styleImports = (
 type ParsedSources = {
   readonly imports: ReadonlyArray<ImportDetails>;
   readonly unreadable: ReadonlyArray<FileError>;
+  readonly partlyParsed: ReadonlyArray<PartlyParsed>;
 };
 
-type Extract = (content: string, source: SourceFile) => Gathered<ImportDetails>;
+const NOTHING_PARSED: ParsedSources = { imports: [], unreadable: [], partlyParsed: [] };
+
+const combined = (parts: ReadonlyArray<ParsedSources>): ParsedSources => ({
+  imports: Array.flatMap(parts, (part) => part.imports),
+  unreadable: Array.flatMap(parts, (part) => part.unreadable),
+  partlyParsed: Array.flatMap(parts, (part) => part.partlyParsed),
+});
+
+const fromScanned = (scanned: Scanned, context: FileContext): ParsedSources => ({
+  imports: Array.map(scanned.imports, inContext(context)),
+  unreadable: [],
+  partlyParsed: scanned.partlyParsed,
+});
+
+const fromGathered = (gathered: Gathered<ImportDetails>): ParsedSources => ({
+  imports: gathered.found,
+  unreadable: gathered.skipped,
+  partlyParsed: [],
+});
+
+type Extract = (content: string, source: SourceFile) => ParsedSources;
 
 const readWith =
   (extract: Extract) =>
   (source: SourceFile): Result.Result<ParsedSources, FileError> =>
-    Result.map(readFile(source.path), (content) => {
-      const { found, skipped } = extract(content, source);
-      return { imports: found, unreadable: skipped };
-    });
+    Result.map(readFile(source.path), (content) => extract(content, source));
 
-const readImports = readWith((content, source) => ({
-  found: Array.map(extractImports(content, source.path, source), inContext(source.context)),
-  skipped: [],
-}));
+const readImports = readWith((content, source) =>
+  fromScanned(importsIn(content, source.path, source.path, source), source.context),
+);
 
 const STYLE_SYNTAX_BY_EXTENSION: Readonly<Record<string, StyleSyntax>> = {
   '.scss': 'scss',
@@ -954,16 +994,18 @@ const STYLE_SYNTAX_BY_EXTENSION: Readonly<Record<string, StyleSyntax>> = {
 };
 
 const readStylesheetImports = readWith((content, source) =>
-  styleImports(
-    {
-      text: content,
-      syntax: Option.getOrElse(
-        Record.get(STYLE_SYNTAX_BY_EXTENSION, path.extname(source.path)),
-        (): StyleSyntax => 'css',
-      ),
-    },
-    source,
-    source.path,
+  fromGathered(
+    styleImports(
+      {
+        text: content,
+        syntax: Option.getOrElse(
+          Record.get(STYLE_SYNTAX_BY_EXTENSION, path.extname(source.path)),
+          (): StyleSyntax => 'css',
+        ),
+      },
+      source,
+      source.path,
+    ),
   ),
 );
 
@@ -978,23 +1020,24 @@ const frameworkUse = (file: string, framework: string): FileImport => ({
 // A style block that does not parse is skipped on its own.
 const readComponentImports = readWith((content, source) => {
   const { scripts, styles } = componentBlocks(source.path, content);
-  return gatherAll([
-    {
-      found: Array.map(
-        [
-          ...Array.flatMap(scripts, (script) =>
-            importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
-          ),
-          ...Array.map(Option.toArray(componentFramework(source.path)), (framework) =>
-            frameworkUse(source.path, framework),
-          ),
-        ],
-        inContext(source.context),
+  return combined([
+    ...Array.map(scripts, (script) =>
+      fromScanned(
+        importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
+        source.context,
       ),
-      skipped: [],
-    },
+    ),
+    fromScanned(
+      {
+        imports: Array.map(Option.toArray(componentFramework(source.path)), (framework) =>
+          frameworkUse(source.path, framework),
+        ),
+        partlyParsed: [],
+      },
+      source.context,
+    ),
     ...Array.map(styles, (style) =>
-      styleImports(style, source, MESSAGES.STYLE_BLOCK_OF(source.path)),
+      fromGathered(styleImports(style, source, MESSAGES.STYLE_BLOCK_OF(source.path))),
     ),
   ]);
 });
@@ -1020,7 +1063,7 @@ const mapImports =
 const readSource = (source: SourceFile): Result.Result<ParsedSources, FileError> =>
   Match.value(sourceKindOf(source.path)).pipe(
     Match.when('tsconfig', () =>
-      Result.succeed<ParsedSources>({ imports: [typescriptUse(source.path)], unreadable: [] }),
+      Result.succeed<ParsedSources>({ ...NOTHING_PARSED, imports: [typescriptUse(source.path)] }),
     ),
     Match.when('declaration', () =>
       Result.map(
@@ -1039,17 +1082,12 @@ const readSource = (source: SourceFile): Result.Result<ParsedSources, FileError>
 
 export const parseFile = (source: SourceFile): ParsedSources =>
   Result.match(readSource(source), {
-    onFailure: (error) => ({ imports: [], unreadable: [error] }),
+    onFailure: (error) => ({ ...NOTHING_PARSED, unreadable: [error] }),
     onSuccess: (parsed) => parsed,
   });
 
-export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSources => {
-  const parsed = Array.map(sources, parseFile);
-  return {
-    imports: Array.flatMap(parsed, (file) => file.imports),
-    unreadable: Array.flatMap(parsed, (file) => file.unreadable),
-  };
-};
+export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSources =>
+  combined(Array.map(sources, parseFile));
 
 const detectedBuildDirectories = (rootDir: string): Gathered<string> => {
   const tsconfigs = readRootTsConfigs(rootDir);
@@ -1195,9 +1233,5 @@ export const parseHoistedImports = (
   packages: ReadonlyArray<LeftOut>,
 ): ParsedSources & { readonly skipped: ReadonlyArray<FileError> } => {
   const [skipped, parsed] = Array.partition(packages, hoistedImportsOf);
-  return {
-    imports: Array.flatMap(parsed, (sources) => sources.imports),
-    unreadable: Array.flatMap(parsed, (sources) => sources.unreadable),
-    skipped,
-  };
+  return { ...combined(parsed), skipped };
 };
