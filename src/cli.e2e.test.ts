@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pkg from '../package.json';
@@ -584,6 +584,25 @@ describe('CLI e2e (bin/cli.js)', () => {
     });
     const r = runCli(['--json', 'node_modules/proj'], tmpDir);
     expect(JSON.parse(r.stdout).unused).toEqual(['proj']);
+  });
+
+  test('a paths alias to the source of an installed workspace package is that package', async () => {
+    await writeFiles(tmpDir, {
+      'packages/ui/package.json': { name: '@ws/ui', peerDependencies: { clsx: '1' } },
+      'packages/ui/src/index.ts': 'export const Button = 1;',
+      'apps/admin/package.json': { dependencies: { '@ws/ui': 'workspace:*', clsx: '1', utils: '1' } },
+      'apps/admin/tsconfig.json': {
+        compilerOptions: { paths: { '@ws/ui': ['../../packages/ui/src/index.ts'], utils: ['./src/utils.ts'] } },
+      },
+      'apps/admin/node_modules/utils/package.json': { name: 'utils' },
+      'apps/admin/node_modules/utils/index.js': 'module.exports = 1;',
+      'apps/admin/src/utils.ts': 'export const u = 1;',
+      'apps/admin/src/a.ts': 'import { Button } from "@ws/ui";\nimport { u } from "utils";\nconsole.log(Button, u);',
+    });
+    await mkdir(path.join(tmpDir, 'apps/admin/node_modules/@ws'), { recursive: true });
+    await symlink('../../../../packages/ui', path.join(tmpDir, 'apps/admin/node_modules/@ws/ui'));
+    const r = runCli(['--json', 'apps/admin'], tmpDir);
+    expect(JSON.parse(r.stdout).unused).toEqual(['utils']);
   });
 
   test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {

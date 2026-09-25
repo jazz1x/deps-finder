@@ -161,6 +161,7 @@ describe('packagesOf', () => {
     ],
     compilers: [],
     sources: new Set<string>(),
+    nodeModules: [],
   };
 
   test.each([

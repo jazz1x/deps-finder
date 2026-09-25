@@ -7,11 +7,18 @@ import {
   type CompilerResolution,
   type Gathered,
   type ModuleResolution,
+  type NodeModules,
   type PackageName,
   PathTarget,
   type SubpathImport,
 } from '../domain/types.js';
-import { gatherOptional, isDirectory, isFile, readDirectory } from '../utils/file-reader.js';
+import {
+  gatherOptional,
+  isDirectory,
+  isFile,
+  readDirectory,
+  readRealPath,
+} from '../utils/file-reader.js';
 import { lineage } from '../utils/project-walk.js';
 import type { TsConfigChain } from '../utils/tsconfig-reader.js';
 import { compiledBy, setWhere } from './emit-settings.js';
@@ -29,6 +36,7 @@ export const NO_RESOLUTION: ModuleResolution = {
   subpathImports: [],
   compilers: [],
   sources: new Set(),
+  nodeModules: [],
 };
 
 type PatternMatch<A> = {
@@ -138,18 +146,63 @@ const sourceCandidates = (base: string): ReadonlyArray<string> =>
     Option.getOrElse((): ReadonlyArray<string> => []),
   );
 
+const firstOf = (base: string, exists: (file: string) => boolean): Option.Option<string> =>
+  pipe(
+    Array.findFirst(CANDIDATES, (candidate) => Option.liftPredicate(candidate(base), exists)),
+    Option.orElse(() => Array.findFirst(sourceCandidates(base), exists)),
+  );
+
 // The walked sources answer most lookups without touching the disk: on macaron-front's 9,146
 // `~/` imports, stat'ing every candidate cost 137ms. Every candidate sits in the base's directory
 // or below it, so one stat of that directory spares the rest when a catch-all "*" alias misses:
 // 30,000 package imports through `"*": ["src/*", ...]` took 3.2s, and 0.7s with it.
-const resolvesToFile =
+const resolvedFile =
   (sources: ReadonlySet<string>) =>
-  (base: string): boolean =>
-    Array.some(CANDIDATES, (candidate) => sources.has(candidate(base))) ||
-    Array.some(sourceCandidates(base), (candidate) => sources.has(candidate)) ||
-    (isDirectory(path.dirname(base)) &&
-      (Array.some(CANDIDATES, (candidate) => isFile(candidate(base))) ||
-        Array.some(sourceCandidates(base), isFile)));
+  (base: string): Option.Option<string> =>
+    pipe(
+      firstOf(base, (file) => sources.has(file)),
+      Option.orElse(() =>
+        pipe(
+          Option.liftPredicate(path.dirname(base), isDirectory),
+          Option.flatMap(() => firstOf(base, isFile)),
+        ),
+      ),
+    );
+
+const realPathOf = (file: string): Option.Option<string> => Result.getSuccess(readRealPath(file));
+
+// A workspace package linked into node_modules loads its own files, which an alias to its source
+// reaches too: foodspring's apps/admin maps @foodspring/shared-ui to that package's src/index.ts.
+// The listed names spare a realpath per aliased import: on macaron-front's 9,146 `~/` imports
+// those cost 0.9s.
+const installedAs =
+  (nodeModules: ReadonlyArray<NodeModules>, name: PackageName) =>
+  (file: string): boolean =>
+    pipe(
+      Array.findFirst(nodeModules, ({ dir, names }) =>
+        pipe(
+          Option.liftPredicate(path.join(dir, name), () => names.has(firstSegment(name))),
+          Option.flatMap(realPathOf),
+        ),
+      ),
+      Option.exists((installed) =>
+        Option.exists(realPathOf(file), String.startsWith(`${installed}${path.sep}`)),
+      ),
+    );
+
+type Lookup = {
+  readonly name: PackageName;
+  readonly resolved: (base: string) => Option.Option<string>;
+  readonly installed: (file: string) => boolean;
+};
+
+const localPackages =
+  ({ name, installed }: Lookup) =>
+  (file: string): ReadonlyArray<PackageName> =>
+    Option.match(Option.liftPredicate(file, installed), {
+      onNone: () => [],
+      onSome: () => [name],
+    });
 
 const firstSegment = (specifier: string): string =>
   Array.headNonEmpty(String.split(specifier, '/'));
@@ -165,23 +218,24 @@ const installedPackage = (relative: string): ReadonlyArray<PackageName> =>
 const baseUrlPackages = (
   baseUrl: BaseUrl,
   specifier: string,
-  name: PackageName,
-  resolves: (base: string) => boolean,
+  lookup: Lookup,
 ): ReadonlyArray<PackageName> => {
   const file = path.join(baseUrl.dir, specifier);
   return Match.value(path.relative(baseUrl.root, file)).pipe(
     Match.when(isInstalled, installedPackage),
-    Match.when(
-      () => baseUrl.names.has(firstSegment(specifier)) && resolves(file),
-      (): ReadonlyArray<PackageName> => [],
+    Match.orElse(() =>
+      pipe(
+        Option.liftPredicate(file, () => baseUrl.names.has(firstSegment(specifier))),
+        Option.flatMap(lookup.resolved),
+        Option.match({ onNone: () => [lookup.name], onSome: localPackages(lookup) }),
+      ),
     ),
-    Match.orElse(() => [name]),
   );
 };
 
 // tsc tries a matched alias's targets in order; with none resolving it goes to node_modules.
 const compilerPackages =
-  (specifier: string, name: PackageName, resolves: (base: string) => boolean) =>
+  (specifier: string, lookup: Lookup) =>
   (compiler: CompilerResolution): ReadonlyArray<PackageName> =>
     Option.match(bestMatch(compiler.paths, specifier), {
       onSome: ({ entry, captured }) =>
@@ -191,20 +245,17 @@ const compilerPackages =
               Installed: ({ template }) =>
                 Option.some(Option.toArray(extractPackageName(filled(template, captured)))),
               Local: ({ template }) =>
-                Option.as(
-                  Option.liftPredicate(filled(template, captured), resolves),
-                  [] as ReadonlyArray<PackageName>,
-                ),
+                Option.map(lookup.resolved(filled(template, captured)), localPackages(lookup)),
               Declaration: ({ template }) =>
-                Option.as(Option.liftPredicate(filled(template, captured), resolves), [name]),
+                Option.as(lookup.resolved(filled(template, captured)), [lookup.name]),
             }),
           ),
-          Option.getOrElse(() => [name]),
+          Option.getOrElse(() => [lookup.name]),
         ),
       onNone: () =>
         Option.match(compiler.baseUrl, {
-          onNone: () => [name],
-          onSome: (baseUrl) => baseUrlPackages(baseUrl, specifier, name, resolves),
+          onNone: () => [lookup.name],
+          onSome: (baseUrl) => baseUrlPackages(baseUrl, specifier, lookup),
         }),
     });
 
@@ -213,7 +264,7 @@ const compilerPackages =
 export const packagesOf = (
   resolution: ModuleResolution,
 ): ((specifier: string) => ReadonlyArray<PackageName>) => {
-  const resolves = resolvesToFile(resolution.sources);
+  const resolved = resolvedFile(resolution.sources);
   return Match.type<string>().pipe(
     Match.when(String.startsWith('#'), (subpath) =>
       subpathPackages(resolution.subpathImports, subpath),
@@ -226,7 +277,16 @@ export const packagesOf = (
           Array.match(resolution.compilers, {
             onEmpty: () => [name],
             onNonEmpty: (compilers) =>
-              Array.dedupe(Array.flatMap(compilers, compilerPackages(bare, name, resolves))),
+              Array.dedupe(
+                Array.flatMap(
+                  compilers,
+                  compilerPackages(bare, {
+                    name,
+                    resolved,
+                    installed: installedAs(resolution.nodeModules, name),
+                  }),
+                ),
+              ),
           }),
       });
     }),
@@ -239,6 +299,14 @@ const topLevelNames = (dir: string): Gathered<string> =>
       Array.flatMap(entries, (entry) =>
         entry.isDirectory() ? [entry.name] : [entry.name, path.parse(entry.name).name],
       ),
+    ),
+  );
+
+const entryNames = (dir: string): Gathered<string> =>
+  gatherOptional(
+    Result.map(
+      readDirectory(dir),
+      Array.map((entry) => entry.name),
     ),
   );
 
@@ -325,6 +393,17 @@ export const resolutionOf = (
   const compilersOf = compiledBy(
     Array.map(compiled, ([chain, { resolution }]) => [chain, resolution] as const),
   );
+  const listed = Array.map(
+    [...new Set(Array.flatMap([...sources], (file) => lineage(path.dirname(file))))],
+    (dir) => [dir, entryNames(path.join(dir, 'node_modules'))] as const,
+  );
+  const nodeModulesAt = Record.fromEntries(
+    Array.map(
+      listed,
+      ([dir, { found }]) =>
+        [dir, { dir: path.join(dir, 'node_modules'), names: new Set(found) }] as const,
+    ),
+  );
   return {
     resolve: (file) => ({
       subpathImports: pipe(
@@ -334,7 +413,13 @@ export const resolutionOf = (
       ),
       compilers: compilersOf(file),
       sources,
+      nodeModules: Array.flatMap(lineage(path.dirname(file)), (dir) =>
+        Option.toArray(Record.get(nodeModulesAt, dir)),
+      ),
     }),
-    skipped: Array.flatMap(compiled, ([, { skipped }]) => skipped),
+    skipped: [
+      ...Array.flatMap(compiled, ([, { skipped }]) => skipped),
+      ...Array.flatMap(listed, ([, { skipped }]) => skipped),
+    ],
   };
 };

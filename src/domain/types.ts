@@ -100,10 +100,18 @@ export type CompilerResolution = {
 
 // What a file's specifiers resolve through before node_modules: its package.json "imports" and
 // the paths and baseUrl of each tsconfig that compiles it. sources: the walked files, absolute.
+// nodeModules: the node_modules directories its imports search, nearest first.
 export type ModuleResolution = {
   readonly subpathImports: ReadonlyArray<SubpathImport>;
   readonly compilers: ReadonlyArray<CompilerResolution>;
   readonly sources: ReadonlySet<string>;
+  readonly nodeModules: ReadonlyArray<NodeModules>;
+};
+
+// names: the entries at its top level, so a scope such as @types without its packages.
+export type NodeModules = {
+  readonly dir: string;
+  readonly names: ReadonlySet<string>;
 };
 
 export type SourceFile = {
