@@ -364,6 +364,11 @@ describe('extractImports edge cases', () => {
     ['a renamed createRequire', 'import { createRequire as cr } from "module";\nconst r = cr(import.meta.url);\nr("pkg");'],
     ['module.createRequire', 'import module from "node:module";\nconst r = module.createRequire(import.meta.url);\nr("pkg");'],
     ['a namespace createRequire', 'import * as m from "node:module";\nconst r = m.createRequire(import.meta.url);\nr.resolve("pkg");'],
+    [
+      'a createRequire read off a module object',
+      'const m = process.getBuiltinModule?.("module");\nconst createRequire = m?.createRequire;\nconst r = createRequire(x);\nr("pkg");',
+    ],
+    ['a destructured createRequire', 'const { createRequire: make } = require("node:module");\nconst r = make(x);\nr("pkg");'],
     ['an inline createRequire', 'import { createRequire } from "node:module";\ncreateRequire(import.meta.url)("pkg");'],
     ['a static template require', 'const m = require(`pkg`);'],
     ['a static template import()', 'export const f = () => import(`pkg`);'],
