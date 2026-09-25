@@ -52,28 +52,23 @@ const jsxRoot = (
 const factoryUse = (factories: ReadonlyArray<string>, at: number): ReadonlyArray<AstEvent> =>
   Array.map(factories, (name) => AstEvent.Name({ name, at }));
 
-// Type spans come from a tree walk, so they nest or are disjoint. Merged into sorted disjoint
-// intervals they answer "inside a type?" by binary search: a 34k-line codegen file took 1.9s
-// when every name was checked against every span.
-const coveredBy = (spans: ReadonlyArray<Spanned>): ((at: number) => boolean) => {
-  const starts: number[] = [];
-  const ends: number[] = [];
-  for (const span of Array.sort(spans, bySpanStart)) {
-    const last = ends.length - 1;
-    if (last >= 0 && span.start < (ends[last] as number)) {
-      ends[last] = Math.max(ends[last] as number, span.end);
-    } else {
-      starts.push(span.start);
-      ends.push(span.end);
-    }
-  }
-  return (at) => {
-    const index = lineNumberAt(starts, at) - 1;
-    return index >= 0 && at < (ends[index] as number);
-  };
-};
+const byStart = Order.mapInput(Order.Number, (span: Spanned) => span.start);
 
-const bySpanStart = Order.mapInput(Order.Number, (span: Spanned) => span.start);
+// Type spans come from a tree walk, so they nest or are disjoint, and no two start together
+// (0 in 34k spans across 1975 real files): the outermost ones are disjoint and answer "inside a
+// type?" by binary search. A 34k-line codegen file took 1.9s when every name was checked
+// against every span.
+const coveredBy = (spans: ReadonlyArray<Spanned>): ((at: number) => boolean) => {
+  const sorted = Array.sort(spans, byStart);
+  const reachBefore = Array.scan(sorted, -1, (reach, span) => Math.max(reach, span.end));
+  const outermost = Array.filter(sorted, (span, i) => span.start >= (reachBefore[i] as number));
+  const starts = Array.map(outermost, (span) => span.start);
+  return (at) =>
+    pipe(
+      Array.get(outermost, lineNumberAt(starts, at) - 1),
+      Option.exists((span) => at < span.end),
+    );
+};
 
 // The bound names used anywhere outside a type position, an import or export of types, a
 // property, member or enum key, or a label. Scopes are not tracked: a parameter or local that
