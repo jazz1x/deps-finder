@@ -81,7 +81,7 @@ export type PathTarget = Data.TaggedEnum<{
 
 export const PathTarget = Data.taggedEnum<PathTarget>();
 
-export type PathAlias = { readonly key: string; readonly targets: ReadonlyArray<PathTarget> };
+type PathAlias = { readonly key: string; readonly targets: ReadonlyArray<PathTarget> };
 
 // names: the entries at its top level, files also without their extension.
 export type BaseUrl = { readonly dir: string; readonly names: ReadonlySet<string> };
