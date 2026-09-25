@@ -61,6 +61,7 @@ describe('Integration Tests', () => {
     const packageJson: PackageJson = {
       dependencies: ['react', 'lodash', 'styled-components', 'date-fns', 'unused-dep'],
       devDependencies: ['type-fest', 'jest', 'typescript', 'compression'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -103,6 +104,7 @@ describe('Integration Tests', () => {
     const packageJson: PackageJson = {
       dependencies: ['dep-a'],
       devDependencies: [],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -125,6 +127,7 @@ describe('Integration Tests', () => {
     const packageJson: PackageJson = {
       dependencies: ['pkg-x'],
       devDependencies: [],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -145,6 +148,7 @@ describe('Integration Tests', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['tailwindcss'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -166,6 +170,7 @@ describe('Integration Tests', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['autoprefixer'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -186,6 +191,7 @@ describe('Integration Tests', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['happy-dom'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -237,6 +243,7 @@ const ALL = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 const pkg = (sections: Partial<PackageJson>): PackageJson => ({
   dependencies: [],
   devDependencies: [],
+  optionalDependencies: [],
   peerDependencies: [],
   declarations: 'none',
   ...sections,

@@ -21,8 +21,9 @@ import { readInstallation } from '../parsers/installed-packages.js';
 import { type LayoutManifest, readPackageJson } from '../parsers/package-parser.js';
 import { readHookCommands } from '../parsers/script-parser.js';
 import { tsconfigImports } from '../parsers/tsconfig-parser.js';
-import { hasIssues, paintFor, report } from '../reporters/console-reporter.js';
+import { ansi, hasIssues, plain, report } from '../reporters/console-reporter.js';
 import { formatSkippedInput, formatSkippedSource } from '../reporters/error-reporter.js';
+import { stdoutColours } from './terminal.js';
 
 const toggle = (name: string, alias: string, description: string) =>
   Flag.Boolean(name).pipe(
@@ -68,6 +69,7 @@ type ParsedFlags = Command.Command.Config.Infer<typeof config>;
 const SECTION_SWITCHES: ReadonlyArray<readonly [DependencyType, (flags: ParsedFlags) => boolean]> =
   [
     ['dependencies', () => true],
+    ['optionalDependencies', () => true],
     ['devDependencies', (flags) => flags.all],
     ['peerDependencies', (flags) => flags.all || flags.checkPeer],
   ];
@@ -85,9 +87,7 @@ const toCliOptions = (flags: ParsedFlags): CliOptions => ({
   rootDir: flags.root,
 });
 
-const paintForStdout = Effect.sync(() =>
-  paintFor(process.stdout.isTTY === true, process.env['NO_COLOR']),
-);
+const paintForStdout = Effect.sync(() => (stdoutColours() ? ansi : plain));
 
 const scriptCommands = (manifest: LayoutManifest): ReadonlyArray<ScriptCommand> =>
   Array.map(Record.values(manifest.scripts), (script) => ({
@@ -182,6 +182,7 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
       sources: {
         imports: unimported.imports,
         unreadable: [...files.unreadable, ...own.unreadable, ...hoisted.unreadable],
+        partlyParsed: [...own.partlyParsed, ...hoisted.partlyParsed],
       },
     })),
     Effect.tap(({ skippedInputs }) =>
@@ -198,6 +199,11 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     ),
     Effect.tap(({ sources }) =>
       Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),
+    ),
+    Effect.tap(({ sources }) =>
+      Effect.forEach(sources.partlyParsed, ({ path, reason }) =>
+        Console.error(MESSAGES.SOURCE_PARSE_STOPPED(path, reason)),
+      ),
     ),
     Effect.map(({ packageJson, sources }) =>
       analyzeDependencies(packageJson, sources.imports, {

@@ -88,6 +88,7 @@ describe('readToolConfigs', () => {
       path: path.join(testDir, 'package.json'),
       scripts: {},
       bins: [],
+      subpathImports: [],
       tools: [
         ['prettier', '@company/prettier-config'],
         ['lint-staged', { '*.ts': ['eslint --fix', 'prettier -w'], '*.css': 'stylelint' }],

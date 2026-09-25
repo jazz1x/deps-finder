@@ -1,4 +1,4 @@
-import { type Array, Data } from 'effect';
+import { Array, Data, type Option } from 'effect';
 import type { FileError } from './errors.js';
 
 export type PackageName = string;
@@ -8,13 +8,37 @@ export type Gathered<A> = {
   readonly skipped: ReadonlyArray<FileError>;
 };
 
-export const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+export const DEPENDENCY_TYPES = [
+  'dependencies',
+  'optionalDependencies',
+  'devDependencies',
+  'peerDependencies',
+] as const;
 export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
 
 // A package that publishes declarations exposes its dependencies' types to its consumers.
 export type PackageJson = { readonly [K in DependencyType]: ReadonlyArray<PackageName> } & {
   readonly declarations: 'published' | 'none';
 };
+
+// The sections a consumer's install brings in.
+export const PRODUCTION_SECTIONS = [
+  'dependencies',
+  'optionalDependencies',
+] as const satisfies ReadonlyArray<DependencyType>;
+
+export const shipsWith =
+  (packageJson: PackageJson) =>
+  (name: PackageName): boolean =>
+    Array.some(PRODUCTION_SECTIONS, (section) => Array.contains(packageJson[section], name));
+
+// Production use of such a package is misplaced: nothing installs it for a consumer.
+export const installedOnlyForDevelopment =
+  (packageJson: PackageJson) =>
+  (name: PackageName): boolean =>
+    Array.contains(packageJson.devDependencies, name) &&
+    !shipsWith(packageJson)(name) &&
+    !Array.contains(packageJson.peerDependencies, name);
 
 // peer: installed for a used package that names it in peerDependencies.
 export type ImportType = 'runtime' | 'type-only' | 'peer';
@@ -42,11 +66,64 @@ export type EmitSettings = {
   readonly elision: ImportElision;
 };
 
+// A package.json "imports" key and the targets of all its conditions.
+export type SubpathImport = {
+  readonly key: string;
+  readonly targets: ReadonlyArray<string>;
+};
+
+// A tsconfig paths target: a project file, as an absolute path, or a package specifier. All keep
+// the pattern's "*". A Declaration target redirects types only, so the runtime still loads the
+// package the specifier names.
+export type PathTarget = Data.TaggedEnum<{
+  Local: { readonly template: string };
+  Installed: { readonly template: string };
+  Declaration: { readonly template: string };
+}>;
+
+export const PathTarget = Data.taggedEnum<PathTarget>();
+
+type PathAlias = { readonly key: string; readonly targets: ReadonlyArray<PathTarget> };
+
+// names: the entries at its top level, files also without their extension. root: the directory
+// of the tsconfig that sets it.
+export type BaseUrl = {
+  readonly dir: string;
+  readonly names: ReadonlySet<string>;
+  readonly root: string;
+};
+
+export type CompilerResolution = {
+  readonly paths: ReadonlyArray<PathAlias>;
+  readonly baseUrl: Option.Option<BaseUrl>;
+};
+
+// What a file's specifiers resolve through before node_modules: its package.json "imports" and
+// the paths and baseUrl of each tsconfig that compiles it. sources: the walked files, absolute.
+// nodeModules: the node_modules directories its imports search, nearest first.
+export type ModuleResolution = {
+  readonly subpathImports: ReadonlyArray<SubpathImport>;
+  readonly compilers: ReadonlyArray<CompilerResolution>;
+  readonly sources: ReadonlySet<string>;
+  readonly nodeModules: ReadonlyArray<NodeModules>;
+};
+
+// names: the entries at its top level, so a scope such as @types without its packages.
+export type NodeModules = {
+  readonly dir: string;
+  readonly names: ReadonlySet<string>;
+};
+
 export type SourceFile = {
   readonly path: string;
   readonly context: FileContext;
   readonly emit: EmitSettings;
+  readonly resolution: ModuleResolution;
 };
+
+// A source oxc stopped in at a syntax error: it keeps the module record and comments before the
+// error, and no program.
+export type PartlyParsed = { readonly path: string; readonly reason: string };
 
 export type ImportLocation = {
   readonly file: string;

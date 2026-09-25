@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pkg from '../package.json';
@@ -105,6 +105,43 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(r.stdout).not.toContain(String.fromCharCode(27));
   });
 
+  test('colours the report and --help on a terminal', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    const onTerminal = async (args: ReadonlyArray<string>) => {
+      let output = '';
+      const env: Record<string, string | undefined> = { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined };
+      const proc = Bun.spawn(['node', CLI_PATH, ...args], {
+        cwd: tmpDir,
+        env,
+        terminal: { cols: 200, rows: 50, data: (_terminal, data) => (output += new TextDecoder().decode(data)) },
+      });
+      await proc.exited;
+      return output;
+    };
+    expect(await onTerminal([])).toContain('\x1b[33mUnused Dependencies:\x1b[0m');
+    expect(await onTerminal(['--help'])).toContain('\x1b[1mUSAGE\x1b[0m');
+  });
+
+  test('a reader that closes early ends the run with its code and no stack trace', async () => {
+    await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'clean' }));
+    const proc = Bun.spawn(['node', CLI_PATH, '--json'], { cwd: tmpDir, stdout: 'pipe', stderr: 'pipe' });
+    await proc.stdout.cancel();
+    expect(await proc.exited).toBe(0);
+    expect(await new Response(proc.stderr).text()).not.toContain('EPIPE');
+  });
+
+  // Opening a FIFO's write end waits for the worker to open its read end, and the worker then
+  // blocks until the write end closes, so the interrupt lands while it is busy.
+  test('an interrupt ends a busy run with 130', async () => {
+    const manifest = path.join(tmpDir, 'package.json');
+    spawnSync('mkfifo', [manifest]);
+    const proc = Bun.spawn(['node', CLI_PATH, '--json'], { cwd: tmpDir, stdout: 'ignore', stderr: 'ignore' });
+    const writer = await open(manifest, 'w');
+    proc.kill('SIGINT');
+    await writer.close();
+    expect(await proc.exited).toBe(130);
+  });
+
   test('warns about source files it cannot read', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'src'));
@@ -126,6 +163,36 @@ describe('CLI e2e (bin/cli.js)', () => {
     const r = runCli(['--json', '-a'], tmpDir);
     expect(r.stderr).toMatch(/warning: skipped \S*src\/broken\.css \(/);
     expect(JSON.parse(r.stdout).unused).toEqual(['tailwindcss']);
+  });
+
+  test('warns about a source the parser stopped in and counts what it kept', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': { dependencies: { lodash: '4', zod: '3', d: '1', e: '1', f: '1' } },
+      'src/a.ts': 'import lodash from "lodash";\nconst f = import("f");\nconst x = {;\nimport { z } from "zod";',
+      'src/b.vue': '<script>\nimport { z } from "zod";\nconst y = {;\n</script>',
+      'src/d.js': 'const d = require("d");\nreturn d;\nfunction (',
+      'src/e.ts': 'declare const x: number = 1;\nrequire("e");',
+    });
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr).toMatch(
+      /warning: the parser stopped at an error in \S*src\/a\.ts \(Unexpected token at line 3\); only the import and export statements, import\(\) calls and type imports in comments before the error count, and nothing else in the file does, require\(\) and import x = require\(\) included\./,
+    );
+    expect(r.stderr).toMatch(/warning: the parser stopped at an error in \S*src\/b\.vue \(\S.* at line 3\)/);
+    expect(r.stderr).toMatch(/warning: the parser stopped at an error in \S*src\/d\.js \(Expected function name at line 3\)/);
+    expect(r.stderr).not.toContain('e.ts');
+    expect(JSON.parse(r.stdout).unused).toEqual(['d']);
+  });
+
+  test('a script without import or export parses as CommonJS, where a top-level return is legal', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': { dependencies: { lodash: '4', zod: '3' } },
+      'login.js': 'const _ = require("lodash");\nif (!_) return;\nrequire("zod");',
+      'src/a.js': 'import { z } from "zod";\nreturn;',
+    });
+    const r = runCli(['--json'], tmpDir);
+    expect(r.stderr).not.toContain('login.js');
+    expect(r.stderr).not.toContain('a.js');
+    expect(JSON.parse(r.stdout).unused).toEqual([]);
   });
 
   test('warns about a source directory it cannot read as about a source file', async () => {
@@ -152,17 +219,23 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('names each nested package it leaves out, and credits the root with what it does not declare', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),
-      JSON.stringify({ workspaces: ['packages/*'], devDependencies: { '@happy-dom/global-registrator': '^20.0.0', dayjs: '^1.0.0' } }),
+      JSON.stringify({
+        workspaces: ['packages/*'],
+        devDependencies: { '@happy-dom/global-registrator': '^20.0.0', dayjs: '^1.0.0', zod: '^3.0.0' },
+      }),
     );
     await mkdir(path.join(tmpDir, 'packages/shared-ui/src'), { recursive: true });
-    await writeFile(path.join(tmpDir, 'packages/shared-ui/package.json'), '{"name":"shared-ui","dependencies":{"dayjs":"1"}}');
+    await writeFile(
+      path.join(tmpDir, 'packages/shared-ui/package.json'),
+      '{"name":"shared-ui","dependencies":{"dayjs":"1"},"optionalDependencies":{"zod":"3"}}',
+    );
     await writeFile(
       path.join(tmpDir, 'packages/shared-ui/src/happydom-setup.ts'),
-      "import '@happy-dom/global-registrator';\nimport 'dayjs';",
+      "import '@happy-dom/global-registrator';\nimport 'dayjs';\nimport 'zod';",
     );
     const r = runCli(['--json', '-a'], tmpDir);
     expect(r.stderr).toContain('note: left out packages/shared-ui');
-    expect(JSON.parse(r.stdout).unused).toEqual(['dayjs']);
+    expect(JSON.parse(r.stdout).unused).toEqual(['dayjs', 'zod']);
   });
 
   test('warns once about a left-out package whose package.json is broken', async () => {
@@ -346,6 +419,223 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(parsed.misplaced.some((d: { packageName: string }) => d.packageName === 'lodash')).toBe(true);
   });
 
+  test('optionalDependencies ship like dependencies: never misplaced, unused by default', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': {
+        optionalDependencies: { bufferutil: '4', fsevents: '2' },
+        devDependencies: { bufferutil: '4', 'utf-8-validate': '6' },
+      },
+      'src/index.ts': 'export const b = require("bufferutil");\nexport const u = await import("utf-8-validate");',
+    });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      unused: ['fsevents'],
+      misplaced: [{ packageName: 'utf-8-validate' }],
+      totalIssues: 2,
+    });
+  });
+
+  test('a # import uses the packages its package.json "imports" maps it to', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': {
+        type: 'module',
+        imports: {
+          '#dep': 'alpha',
+          '#x': { node: { import: 'beta' }, default: './src/x.js' },
+          '#lib/*': ['gamma/*'],
+          '#lib/own/*': './src/own/*',
+          '#tool': 'zeta',
+        },
+        dependencies: { alpha: '1', beta: '1', gamma: '1', delta: '1' },
+        devDependencies: { zeta: '1' },
+      },
+      'src/index.js': 'import "#dep";\nimport "#x";\nimport "#lib/a.js";\nimport "#lib/own/b.js";\nimport "#tool";',
+    });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      unused: ['delta'],
+      misplaced: [{ packageName: 'zeta', locations: [{ line: 5, importStatement: 'import "#tool";' }] }],
+      totalIssues: 2,
+    });
+  });
+
+  test('a tsconfig paths alias or baseUrl file is local; a paths target that is no project file is a package', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': {
+        dependencies: { utils: '1', components: '1', lodash: '4', 'lodash-es': '4', gone: '1', stale: '1', react: '1', preact: '1' },
+        devDependencies: { '@app/core': '1' },
+      },
+      'tsconfig.json': {
+        compilerOptions: {
+          baseUrl: 'src',
+          paths: {
+            'utils/*': ['utils/*'],
+            '@app/*': ['*'],
+            lodash: ['lodash-es'],
+            'gone/*': ['gone/*'],
+            'stale/*': ['utils/stale/*'],
+            react: ['../node_modules/preact/compat'],
+          },
+        },
+      },
+      'src/utils/format.ts': 'export const f = 1;',
+      'src/utils/data.json': '{}',
+      'src/core.ts': 'export const c = 1;',
+      'src/components/button.ts': 'export const b = 1;',
+      'src/index.ts': [
+        'import { f } from "utils/format";',
+        'import data from "utils/data.json";',
+        'import { c } from "@app/core";',
+        'import { b } from "components/button";',
+        'import merge from "lodash";',
+        'import { g } from "gone/x";',
+        'import { s } from "stale/x";',
+        'import { h } from "react";',
+        'console.log(f, data, c, b, merge, g, s, h);',
+      ].join('\n'),
+    });
+
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['utils', 'components', 'lodash', 'react', '@app/core'], misplaced: [] });
+  });
+
+  test.each([
+    [
+      'paths outside the tsconfig include',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { 'utils/*': ['src/utils/*'] } }, include: ['src'] },
+        'src/utils/format.ts': 'export const f = 1;',
+        'server/index.js': 'import { f } from "utils/format";',
+      },
+    ],
+    [
+      'baseUrl outside the tsconfig include',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: 'src' }, include: ['src'] },
+        'src/utils/format.ts': 'export const f = 1;',
+        'server/index.js': 'import { f } from "utils/format";',
+      },
+    ],
+    [
+      'a baseUrl file under a node_modules no import reaches',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: 'vendor/node_modules' } },
+        'vendor/node_modules/utils/package.json': { name: 'utils' },
+        'vendor/node_modules/utils/format.js': 'export const f = 1;',
+        'src/a.ts': 'import { f } from "utils/format";\nconsole.log(f);',
+      },
+    ],
+    [
+      'a paths target resolved into node_modules',
+      {
+        'tsconfig.json': { compilerOptions: { baseUrl: 'node_modules', paths: { 'u/*': ['utils/*'] } } },
+        'node_modules/utils/package.json': { name: 'utils' },
+        'node_modules/utils/format.js': 'export const f = 1;',
+        'src/a.ts': 'import { f } from "u/format";\nconsole.log(f);',
+      },
+    ],
+  ])('%s still loads the package', async (_, files) => {
+    await writeFiles(tmpDir, { 'package.json': { dependencies: { utils: '1' } }, ...files });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(JSON.parse(r.stdout).unused).toEqual([]);
+  });
+
+  test.each([
+    [
+      'a ?query suffix on a paths or baseUrl file',
+      ['utils', 'components'],
+      {
+        'package.json': { dependencies: { utils: '1', components: '1' } },
+        'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { 'utils/*': ['./src/utils/*'] } } },
+        'src/utils/icon.svg': '<svg/>',
+        'components/Button.tsx': 'export const B = 1;',
+        'src/x.ts': 'import u from "utils/icon.svg?raw";\nimport k from "components/Button?inline";\nconsole.log(u, k);',
+      },
+    ],
+    [
+      'a paths or baseUrl file written with .js for its .ts source',
+      ['shared', 'utils'],
+      {
+        'package.json': { dependencies: { shared: '1', utils: '1' } },
+        'tsconfig.json': {
+          compilerOptions: { module: 'nodenext', paths: { shared: ['./src/shared/index.js'], 'utils/*': ['./src/utils/*'] } },
+        },
+        'src/shared/index.ts': 'export const s = 1;',
+        'src/utils/fmt.ts': 'export const f = 1;',
+        'src/x.ts': 'import "shared";\nimport "utils/fmt.js";',
+      },
+    ],
+    [
+      'a paths entry that points only at declarations',
+      [],
+      {
+        'package.json': { dependencies: { pkg: '1', react: '1' }, devDependencies: { '@types/react': '1' } },
+        'tsconfig.json': { compilerOptions: { paths: { pkg: ['./local/pkg.d.ts'], react: ['./node_modules/@types/react/index.d.ts'] } } },
+        'local/pkg.d.ts': 'export declare const x: () => void;',
+        'node_modules/@types/react/index.d.ts': 'export declare const useState: () => void;',
+        'src/a.ts': 'import { x } from "pkg";\nimport { useState } from "react";\nx();\nuseState();',
+      },
+    ],
+    [
+      'a paths target that finds only a declaration file',
+      [],
+      {
+        'package.json': { dependencies: { react: '1', 'untyped-lib': '1' } },
+        'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { '*': ['types/*'], react: ['./types/react'] } } },
+        'types/untyped-lib.d.ts': 'declare const x: any;\nexport default x;',
+        'types/react.d.ts': 'export {};',
+        'src/a.ts': 'import u from "untyped-lib";\nimport React from "react";\nconsole.log(u, React);',
+      },
+    ],
+    [
+      'a baseUrl directory whose index is a declaration file',
+      [],
+      {
+        'package.json': { dependencies: { 'untyped-lib': '1' } },
+        'tsconfig.json': { compilerOptions: { baseUrl: 'src' } },
+        'src/untyped-lib/index.d.ts': 'declare const x: any;\nexport default x;',
+        'src/a.ts': 'import u from "untyped-lib";\nconsole.log(u);',
+      },
+    ],
+  ])('%s resolves as tsc does', async (_, unused, files) => {
+    await writeFiles(tmpDir, files);
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({ unused, misplaced: [] });
+  });
+
+  test('a project stored under a node_modules directory still resolves its own aliases', async () => {
+    await writeFiles(tmpDir, {
+      'node_modules/proj/package.json': { dependencies: { react: '1', zod: '1', proj: '1' } },
+      'node_modules/proj/tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { '~/*': ['./src/*'] } } },
+      'node_modules/proj/src/b.ts': 'export const b = 1;',
+      'node_modules/proj/src/a.ts': 'import { b } from "~/b";\nimport "react";\nimport "zod";\nconsole.log(b);',
+    });
+    const r = runCli(['--json', 'node_modules/proj'], tmpDir);
+    expect(JSON.parse(r.stdout).unused).toEqual(['proj']);
+  });
+
+  test('a paths alias to the source of an installed workspace package is that package', async () => {
+    await writeFiles(tmpDir, {
+      'packages/ui/package.json': { name: '@ws/ui', peerDependencies: { clsx: '1' } },
+      'packages/ui/src/index.ts': 'export const Button = 1;',
+      'apps/admin/package.json': { dependencies: { '@ws/ui': 'workspace:*', clsx: '1', utils: '1' } },
+      'apps/admin/tsconfig.json': {
+        compilerOptions: { paths: { '@ws/ui': ['../../packages/ui/src/index.ts'], utils: ['./src/utils.ts'] } },
+      },
+      'apps/admin/node_modules/utils/package.json': { name: 'utils' },
+      'apps/admin/node_modules/utils/index.js': 'module.exports = 1;',
+      'apps/admin/src/utils.ts': 'export const u = 1;',
+      'apps/admin/src/a.ts': 'import { Button } from "@ws/ui";\nimport { u } from "utils";\nconsole.log(Button, u);',
+    });
+    await mkdir(path.join(tmpDir, 'apps/admin/node_modules/@ws'), { recursive: true });
+    await symlink('../../../../packages/ui', path.join(tmpDir, 'apps/admin/node_modules/@ws/ui'));
+    const r = runCli(['--json', 'apps/admin'], tmpDir);
+    expect(JSON.parse(r.stdout).unused).toEqual(['utils']);
+  });
+
   test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),
@@ -397,6 +687,21 @@ describe('CLI e2e (bin/cli.js)', () => {
     const r = runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout).unused.length).toBe(50000);
+  });
+
+  test.each([
+    ['arrays', `const x = ${'['.repeat(10000)}${']'.repeat(10000)};`],
+    ['object literals', `const x = ${'{a:'.repeat(10000)}1${'}'.repeat(10000)};`],
+    ['type arguments', `type X = ${'Array<'.repeat(10000)}T${'>'.repeat(10000)};`],
+  ])('a source with %s nested 10,000 deep is scanned', async (_, deep) => {
+    await writeFiles(tmpDir, {
+      'package.json': { dependencies: { zod: '1', unused: '1' } },
+      'src/deep.ts': `import "zod";\n${deep}\n`,
+    });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout).unused).toEqual(['unused']);
   });
 
   describe('packages used without an import', () => {

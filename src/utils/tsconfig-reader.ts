@@ -6,10 +6,10 @@ import type { Gathered } from '../domain/types.js';
 import {
   decodeJsonc,
   gatherOptional,
+  isFile,
   lenientKey,
   readDirectory,
   readFile,
-  readStats,
 } from './file-reader.js';
 import { lineage } from './project-walk.js';
 
@@ -24,6 +24,8 @@ const TsConfig = Schema.Struct({
     Schema.Struct({
       outDir: lenientKey(Schema.NonEmptyString),
       declarationDir: lenientKey(Schema.NonEmptyString),
+      baseUrl: lenientKey(Schema.NullOr(Schema.String)),
+      paths: lenientKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Array(Schema.String)))),
       types: lenientKey(Schema.NullOr(Schema.Array(Schema.String))),
       plugins: lenientKey(Schema.NullOr(Schema.Array(Schema.Struct({ name: Schema.String })))),
       importHelpers: lenientKey(Schema.NullOr(Schema.Boolean)),
@@ -63,9 +65,6 @@ export const extendsOf = (config: TsConfig): ReadonlyArray<string> =>
     Match.when(Match.string, (single) => [single]),
     Match.orElse((several) => several),
   );
-
-const isFile = (file: string): boolean =>
-  Result.match(readStats(file), { onSuccess: (stats) => stats.isFile(), onFailure: () => false });
 
 const withJsonSuffix = (base: string): ReadonlyArray<string> =>
   base.endsWith('.json') ? [base] : [base, `${base}.json`];

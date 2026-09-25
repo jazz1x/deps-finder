@@ -28,6 +28,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: ['@mobily/ts-belt', 'unused-package'],
       devDependencies: [],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -51,6 +52,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['express', 'typescript'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -78,6 +80,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['typescript', 'jest'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -99,6 +102,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['typescript', 'jest'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -122,6 +126,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: ['react', 'eslint'],
       devDependencies: [],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -152,6 +157,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: ['type-only-lib', 'runtime-lib', 'mixed-lib', 'only-runtime-lib', 'unused-lib'],
       devDependencies: [],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -187,6 +193,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: ['common-lib'],
       devDependencies: [],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -216,6 +223,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: ['type-lib', 'runtime-lib', 'unused-lib'],
       devDependencies: ['dev-lib'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -240,6 +248,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['vite'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -265,6 +274,7 @@ describe('dependency-analyzer', () => {
     const packageJson: PackageJson = {
       dependencies: [],
       devDependencies: ['vite'],
+      optionalDependencies: [],
       peerDependencies: [],
       declarations: 'none',
     };
@@ -302,6 +312,7 @@ describe('dependency-analyzer: peerDependencies', () => {
   const peerOnlyPkg: PackageJson = {
     dependencies: [],
     devDependencies: [],
+    optionalDependencies: [],
     peerDependencies: ['typescript', 'react'],
     declarations: 'none',
   };
@@ -395,6 +406,8 @@ describe('dependency-analyzer: peerDependencies', () => {
 
 const ALL = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 
+const ALL_WITH_OPTIONAL = [...ALL, 'optionalDependencies'] as const;
+
 const use = (
   packageName: string,
   importType: ImportType = 'runtime',
@@ -413,6 +426,7 @@ const use = (
 const pkg = (sections: Partial<PackageJson>): PackageJson => ({
   dependencies: [],
   devDependencies: [],
+  optionalDependencies: [],
   peerDependencies: [],
   declarations: 'none',
   ...sections,
@@ -473,6 +487,15 @@ describe('dependency-analyzer: section classification', () => {
       ignoredPackages: [],
     });
     expect(result.misplaced).toEqual([]);
+  });
+
+  test('an optionalDependency is typeOnly and a peer like a dependency', () => {
+    const result = analyzeDependencies(
+      pkg({ optionalDependencies: ['type-fest', 'sharp'], peerDependencies: ['sharp'] }),
+      [use('type-fest', 'type-only')],
+      { sections: ALL_WITH_OPTIONAL, ignoredPackages: [] },
+    );
+    expect(result).toMatchObject({ unused: ['sharp'], unusedPeer: [], typeOnly: ['type-fest'] });
   });
 
   test('a peer kept in devDependencies for local development is not misplaced', () => {

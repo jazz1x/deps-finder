@@ -1,2 +1,27 @@
 #!/usr/bin/env node
-import '../dist/index.js';
+import { constants } from 'node:os';
+import { Worker } from 'node:worker_threads';
+
+// oxc parses on the native stack of the calling thread, and the main thread's is fixed by
+// `ulimit -s` (8 MB: a segfault past 5,500 nested arrays). A worker's stack is sized here.
+const worker = new Worker(new URL('../dist/index.js', import.meta.url), {
+  argv: process.argv.slice(2),
+  workerData: { stdoutIsTerminal: process.stdout.isTTY === true },
+  resourceLimits: { stackSizeMb: 256 },
+});
+
+// console drops a write to a closed pipe on the main thread; the worker's output is forwarded here instead.
+process.stdout.on('error', (error) => {
+  if (error.code !== 'EPIPE') throw error;
+});
+
+// A worker receives no signals and may be deep in a synchronous parse, so a signal ends it.
+process.exitCode = await new Promise((resolve) => {
+  worker.on('exit', resolve);
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      resolve(128 + constants.signals[signal]);
+      void worker.terminate();
+    });
+  }
+});

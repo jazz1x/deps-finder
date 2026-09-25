@@ -34,7 +34,8 @@ import {
   readDirectory,
   readFile,
 } from '../utils/file-reader.js';
-import { collectVisiting, extractPackageName, parse } from './import-parser.js';
+import { collectVisiting, parse } from './import-parser.js';
+import { extractPackageName } from './module-resolution.js';
 import type { LayoutManifest, ToolKey } from './package-parser.js';
 
 type KnownTool =
@@ -214,11 +215,8 @@ const staticValue = (node: ArrayExpressionElement): Value =>
     Match.when({ type: 'ObjectExpression' }, (object) =>
       Value.Map({ fields: staticRecord(object) }),
     ),
-    Match.whenOr(
-      { type: 'TSAsExpression' },
-      { type: 'TSSatisfiesExpression' },
-      { type: 'ParenthesizedExpression' },
-      (wrapped) => staticValue(wrapped.expression),
+    Match.whenOr({ type: 'TSAsExpression' }, { type: 'TSSatisfiesExpression' }, (wrapped) =>
+      staticValue(wrapped.expression),
     ),
     Match.orElse(() => Value.Opaque()),
   );

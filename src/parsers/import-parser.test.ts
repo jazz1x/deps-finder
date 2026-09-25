@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { Option } from 'effect';
 import { MESSAGES } from '@/constants/messages';
 import { FileError } from '@/domain/errors';
 import { formatSkippedSource } from '@/reporters/error-reporter';
 import { type EmitSettings, type FileContext, JsxRuntime } from '@/domain/types';
 import { UNCONFIGURED } from './emit-settings';
+import { NO_RESOLUTION } from './module-resolution';
 import {
   extractImports as extractIn,
-  extractPackageName,
   fileContextOf,
   findFiles,
   parseFile,
@@ -17,105 +16,8 @@ import {
   shouldAnalyzeFile,
 } from '@/parsers/import-parser';
 
-const extractImports = (content: string, file: string) => extractIn(content, file, { context: 'production', emit: UNCONFIGURED });
-
-describe('extractPackageName', () => {
-  test('should return None for relative imports', () => {
-    expect(extractPackageName('./utils')).toEqual(Option.none());
-    expect(extractPackageName('../helpers')).toEqual(Option.none());
-    expect(extractPackageName('../../src/index')).toEqual(Option.none());
-    expect(extractPackageName('./index.js')).toEqual(Option.none());
-  });
-
-  test('should return None for absolute path imports', () => {
-    expect(extractPackageName('/usr/local/lib')).toEqual(Option.none());
-    expect(extractPackageName('/home/user/project')).toEqual(Option.none());
-  });
-
-  test('should extract simple package names', () => {
-    expect(extractPackageName('react')).toEqual(Option.some('react'));
-    expect(extractPackageName('lodash')).toEqual(Option.some('lodash'));
-    expect(extractPackageName('express')).toEqual(Option.some('express'));
-  });
-
-  test('should extract scoped package names', () => {
-    expect(extractPackageName('@mobily/ts-belt')).toEqual(Option.some('@mobily/ts-belt'));
-    expect(extractPackageName('@types/node')).toEqual(Option.some('@types/node'));
-    expect(extractPackageName('@testing-library/react')).toEqual(Option.some('@testing-library/react'));
-  });
-
-  test('should extract package name from deep imports', () => {
-    expect(extractPackageName('lodash/map')).toEqual(Option.some('lodash'));
-    expect(extractPackageName('react-dom/client')).toEqual(Option.some('react-dom'));
-    expect(extractPackageName('lodash/fp/map')).toEqual(Option.some('lodash'));
-    expect(extractPackageName('express/lib/router')).toEqual(Option.some('express'));
-  });
-
-  test('should extract scoped package from deep imports', () => {
-    expect(extractPackageName('@mobily/ts-belt/Array')).toEqual(Option.some('@mobily/ts-belt'));
-    expect(extractPackageName('@babel/core/lib/config')).toEqual(Option.some('@babel/core'));
-    expect(extractPackageName('@types/node/fs')).toEqual(Option.some('@types/node'));
-  });
-
-  test('should handle edge cases - empty and malformed inputs', () => {
-    expect(extractPackageName('')).toEqual(Option.none());
-    expect(extractPackageName('@scope')).toEqual(Option.none()); // Incomplete scoped package
-    expect(extractPackageName('@scope/')).toEqual(Option.none()); // Malformed scoped package
-    expect(extractPackageName('@')).toEqual(Option.none());
-  });
-
-  test('should reject protocol-based imports', () => {
-    expect(extractPackageName('http://example.com/module')).toEqual(Option.none());
-    expect(extractPackageName('https://unpkg.com/lodash')).toEqual(Option.none());
-    expect(extractPackageName('file:///path/to/file')).toEqual(Option.none());
-  });
-
-  test('should handle popular packages with deep imports', () => {
-    // Core-js
-    expect(extractPackageName('core-js/actual')).toEqual(Option.some('core-js'));
-    expect(extractPackageName('core-js/stable')).toEqual(Option.some('core-js'));
-    expect(extractPackageName('core-js/features/array/flat')).toEqual(Option.some('core-js'));
-
-    // Next.js ecosystem
-    expect(extractPackageName('next-auth/react')).toEqual(Option.some('next-auth'));
-    expect(extractPackageName('next-auth/providers/google')).toEqual(Option.some('next-auth'));
-    expect(extractPackageName('next/image')).toEqual(Option.some('next'));
-    expect(extractPackageName('next/link')).toEqual(Option.some('next'));
-
-    // Date manipulation
-    expect(extractPackageName('date-fns/format')).toEqual(Option.some('date-fns'));
-    expect(extractPackageName('date-fns/addDays')).toEqual(Option.some('date-fns'));
-    expect(extractPackageName('date-fns/locale')).toEqual(Option.some('date-fns'));
-
-    // RxJS
-    expect(extractPackageName('rxjs/operators')).toEqual(Option.some('rxjs'));
-    expect(extractPackageName('rxjs/Observable')).toEqual(Option.some('rxjs'));
-
-    // Apollo
-    expect(extractPackageName('apollo-client/core')).toEqual(Option.some('apollo-client'));
-  });
-
-  test('should handle scoped packages with deep imports from popular libraries', () => {
-    // Material-UI / MUI
-    expect(extractPackageName('@mui/material')).toEqual(Option.some('@mui/material'));
-    expect(extractPackageName('@mui/material/Button')).toEqual(Option.some('@mui/material'));
-    expect(extractPackageName('@mui/material/styles')).toEqual(Option.some('@mui/material'));
-
-    // Radix UI
-    expect(extractPackageName('@radix-ui/react-dialog')).toEqual(Option.some('@radix-ui/react-dialog'));
-    expect(extractPackageName('@radix-ui/react-dialog/dist')).toEqual(Option.some('@radix-ui/react-dialog'));
-    expect(extractPackageName('@radix-ui/react-select')).toEqual(Option.some('@radix-ui/react-select'));
-
-    // Testing Library
-    expect(extractPackageName('@testing-library/react')).toEqual(Option.some('@testing-library/react'));
-    expect(extractPackageName('@testing-library/user-event')).toEqual(Option.some('@testing-library/user-event'));
-
-    // Apollo Client
-    expect(extractPackageName('@apollo/client')).toEqual(Option.some('@apollo/client'));
-    expect(extractPackageName('@apollo/client/react')).toEqual(Option.some('@apollo/client'));
-    expect(extractPackageName('@apollo/client/core')).toEqual(Option.some('@apollo/client'));
-  });
-});
+const extractImports = (content: string, file: string) =>
+  extractIn(content, file, { context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION });
 
 describe('findFiles', () => {
   const testDir = './test-find-files';
@@ -252,13 +154,13 @@ describe('parseFile', () => {
     const filePath = `${testDir}/test.ts`;
     await writeFile(filePath, "import { a } from 'pkg';");
 
-    const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED });
+    const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION });
     expect(result.unreadable).toEqual([]);
     expect(result.imports[0]!.packageName).toBe('pkg');
   });
 
   test('should return Error for non-existent file', () => {
-    const result = parseFile({ path: `${testDir}/non-existent.ts`, context: 'production', emit: UNCONFIGURED });
+    const result = parseFile({ path: `${testDir}/non-existent.ts`, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION });
     expect(result.imports).toEqual([]);
     expect(result.unreadable).toHaveLength(1);
   });
@@ -280,8 +182,8 @@ describe('parseMultipleFiles', () => {
     await writeFile(`${testDir}/b.js`, "import { b } from 'pkg-b';");
 
     const result = parseMultipleFiles([
-      { path: `${testDir}/a.js`, context: 'production', emit: UNCONFIGURED },
-      { path: `${testDir}/b.js`, context: 'development', emit: UNCONFIGURED },
+      { path: `${testDir}/a.js`, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION },
+      { path: `${testDir}/b.js`, context: 'development', emit: UNCONFIGURED, resolution: NO_RESOLUTION },
     ]).imports;
     expect(result.map((r) => [r.packageName, r.context])).toEqual([
       ['pkg-a', 'production'],
@@ -294,8 +196,8 @@ describe('parseMultipleFiles', () => {
     await mkdir(`${testDir}/dir.ts`);
 
     const result = parseMultipleFiles([
-      { path: `${testDir}/a.js`, context: 'production', emit: UNCONFIGURED },
-      { path: `${testDir}/dir.ts`, context: 'production', emit: UNCONFIGURED },
+      { path: `${testDir}/a.js`, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION },
+      { path: `${testDir}/dir.ts`, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION },
     ]);
     expect(result.imports.map((i) => i.packageName)).toEqual(['pkg-a']);
     expect(result.unreadable.map((e) => e.path)).toEqual([`${testDir}/dir.ts`]);
@@ -377,45 +279,6 @@ describe('extractImports type/runtime classification', () => {
   });
 });
 
-describe('extractPackageName edge cases', () => {
-  test('trims surrounding whitespace via regex (importPath usually pre-stripped)', () => {
-    // 일반적으로 정규식이 import path 양옆 공백을 캡처하지 않지만, 직접 호출 시의 안정성 확인
-    expect(extractPackageName('react')).toEqual(Option.some('react'));
-    // 공백 포함 입력은 그대로 들어가면 그 자체로 별도 이름 ("react ")이 되지 않도록 동작 확인
-    expect(extractPackageName(' react')).toEqual(Option.some(' react')); // 현재 동작: 공백 보존 — 테스트로 고정
-  });
-
-  test('returns null for whitespace-only input', () => {
-    // 현재 구현은 이 경우 공백 문자열을 반환함. 동작 고정용 회귀 가드.
-    expect(extractPackageName('   ')).toEqual(Option.some('   '));
-  });
-
-  test('handles trailing slash correctly', () => {
-    expect(extractPackageName('react/')).toEqual(Option.some('react'));
-  });
-
-  test('handles double slash inside path (treats first segment as package)', () => {
-    expect(extractPackageName('lodash//map')).toEqual(Option.some('lodash'));
-  });
-
-  test('handles deeply nested scoped package paths', () => {
-    expect(extractPackageName('@scope/pkg/a/b/c/d/e/f/g')).toEqual(Option.some('@scope/pkg'));
-  });
-
-  test('handles numeric and dash-prefixed package names', () => {
-    expect(extractPackageName('123-pkg')).toEqual(Option.some('123-pkg'));
-    expect(extractPackageName('-leading-dash')).toEqual(Option.some('-leading-dash')); // npm 자체는 거부하지만 파서는 통과
-  });
-
-  test('rejects bare @ and incomplete scope variants', () => {
-    expect(extractPackageName('@')).toEqual(Option.none());
-    expect(extractPackageName('@scope')).toEqual(Option.none());
-    expect(extractPackageName('@scope/')).toEqual(Option.none());
-    expect(extractPackageName('@/')).toEqual(Option.none());
-    expect(extractPackageName('@/components/Button')).toEqual(Option.none());
-  });
-});
-
 describe('extractImports edge cases', () => {
   test('returns empty array for empty content', () => {
     expect(extractImports('', 'test.ts')).toEqual([]);
@@ -493,6 +356,47 @@ describe('extractImports edge cases', () => {
     expect(extractImports(content, file).map((f) => f.packageName)).toEqual(['react', 'zod', 'clsx', 'react']);
   });
 
+  test.each([
+    ['require.resolve', 'const p = require.resolve("pkg/sub");'],
+    ['module.require', 'const m = module.require("pkg");'],
+    ['import.meta.resolve', 'const u = import.meta.resolve("pkg");'],
+    ['a createRequire binding', 'import { createRequire } from "node:module";\nconst req = createRequire(import.meta.url);\nreq("pkg");'],
+    ['a renamed createRequire', 'import { createRequire as cr } from "module";\nconst r = cr(import.meta.url);\nr("pkg");'],
+    ['module.createRequire', 'import module from "node:module";\nconst r = module.createRequire(import.meta.url);\nr("pkg");'],
+    ['a namespace createRequire', 'import * as m from "node:module";\nconst r = m.createRequire(import.meta.url);\nr.resolve("pkg");'],
+    [
+      'a createRequire read off a module object',
+      'const m = process.getBuiltinModule?.("module");\nconst createRequire = m?.createRequire;\nconst r = createRequire(x);\nr("pkg");',
+    ],
+    ['a destructured createRequire', 'const { createRequire: make } = require("node:module");\nconst r = make(x);\nr("pkg");'],
+    ['an inline createRequire', 'import { createRequire } from "node:module";\ncreateRequire(import.meta.url)("pkg");'],
+    ['a static template require', 'const m = require(`pkg`);'],
+    ['a static template import()', 'export const f = () => import(`pkg`);'],
+    ['a parenthesised require', 'const m = require(("pkg"));'],
+  ])('finds pkg at runtime through %s', (_, content) => {
+    expect(extractImports(content, 'src/a.mjs').filter((f) => f.packageName === 'pkg')).toEqual([
+      expect.objectContaining({ importType: 'runtime', line: content.split('\n').length }),
+    ]);
+  });
+
+  test.each([
+    ['require.resolve.paths', 'const p = require.resolve.paths("pkg");'],
+    ['a call not bound to createRequire', 'const req = make(import.meta.url);\nreq("pkg");\nrequire("other");'],
+    ['a createRequire from elsewhere', 'import { createRequire } from "other";\nconst r = createRequire(1);\nr("pkg");'],
+    ['another node:module export', 'import * as m from "node:module";\nconst r = m.findPackageJSON(1);\nr("pkg");\nrequire("other");'],
+    ['a template with an expression', 'const m = require(`pkg${suffix}`);\nimport(`pkg${suffix}`);'],
+    ['two arguments', 'const m = require.resolve("pkg", {});'],
+    ['a call on what another call returns', 'export const v = i18n("x")("pkg");\nrequire("other");'],
+  ])('does not find pkg through %s', (_, content) => {
+    expect(extractImports(content, 'src/a.mjs').filter((f) => f.packageName === 'pkg')).toEqual([]);
+  });
+
+  test('a deeply nested expression is walked without exhausting the stack', () => {
+    const terms = Array.from({ length: 20_000 }, (_, i) => `"s${i}"`).join(' + ');
+    const content = `// we do not require anything\nimport "zod";\nexport const x = ${terms};\nrequire("pkg");`;
+    expect(extractImports(content, 'src/gen.ts').map((f) => f.packageName)).toEqual(['zod', 'pkg']);
+  });
+
   test('require() counts as exactly one runtime finding (no duplicate from REQUIRE_REGEX)', () => {
     const result = extractImports("const m = require('lodash');", 'src/index.ts');
     const lodashEntries = result.filter((f) => f.packageName === 'lodash');
@@ -513,12 +417,17 @@ describe('parseFile error paths', () => {
   });
 
   test('returns Error tagged FileNotFound for missing file', () => {
-    const { unreadable } = parseFile({ path: `${testDir}/missing.ts`, context: 'production', emit: UNCONFIGURED });
+    const { unreadable } = parseFile({
+      path: `${testDir}/missing.ts`,
+      context: 'production',
+      emit: UNCONFIGURED,
+      resolution: NO_RESOLUTION,
+    });
     expect(unreadable.map(FileError.$is('FileNotFound'))).toEqual([true]);
   });
 
   test('returns Error tagged ReadFailed when path is a directory', () => {
-    const { unreadable } = parseFile({ path: testDir, context: 'production', emit: UNCONFIGURED });
+    const { unreadable } = parseFile({ path: testDir, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION });
     expect(unreadable.map(FileError.$is('ReadFailed'))).toEqual([true]);
   });
 });
@@ -644,7 +553,9 @@ describe('extractImports type positions', () => {
 });
 
 const uses = (content: string, file: string, emit: EmitSettings = UNCONFIGURED, context: FileContext = 'production') =>
-  extractIn(content, file, { context, emit }).map((found) => `${found.packageName}:${found.importType}:${found.line}`);
+  extractIn(content, file, { context, emit, resolution: NO_RESOLUTION }).map(
+    (found) => `${found.packageName}:${found.importType}:${found.line}`,
+  );
 
 const typesOf = (content: string) =>
   uses(content, 'test/a.test.js', UNCONFIGURED, 'development').filter((found) => found.startsWith('@types/'));
@@ -716,6 +627,7 @@ describe('extractImports JSX runtime', () => {
 
   test('no runtime import without JSX or under the classic runtime', () => {
     expect(uses('export const lt = (a: number) => a < 2;\nexport const id = <T,>(v: T) => v;', 'src/a.tsx')).toEqual([]);
+    expect(uses('const _ = require("lodash");\nif (_.a < 1) return;', 'src/x.js')).toEqual(['lodash:runtime:1']);
     expect(
       uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] }),
     ).toEqual([]);
@@ -771,7 +683,7 @@ describe('parseFile source kinds', () => {
   });
 
   const parsed = (file: string) =>
-    parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED }).imports.map(
+    parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION }).imports.map(
       (found) => `${found.packageName}:${found.importType}:${found.context}`,
     );
 
@@ -790,7 +702,7 @@ describe('parseFile source kinds', () => {
   });
 
   const located = (file: string) =>
-    parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED }).imports.map(
+    parseFile({ path: `${testDir}/${file}`, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION }).imports.map(
       (found) => `${found.line}:${found.packageName}:${found.importType}:${found.importStatement}`,
     );
 
@@ -925,7 +837,9 @@ describe('parseFile source kinds', () => {
   test('a style block that does not parse is skipped alone, and the scripts still count', async () => {
     const file = `${testDir}/App.svelte`;
     await writeFile(file, "<script>\nimport 'nanoid';\n</script>\n<style>\n.a { color: red\n</style>");
-    const { imports, unreadable } = parseMultipleFiles([{ path: file, context: 'production', emit: UNCONFIGURED }]);
+    const { imports, unreadable } = parseMultipleFiles([
+      { path: file, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION },
+    ]);
     expect(imports.map((found) => found.packageName)).toContain('nanoid');
     expect(unreadable.map(formatSkippedSource)).toEqual([
       MESSAGES.SOURCE_SKIPPED(MESSAGES.STYLE_BLOCK_OF(file), MESSAGES.PARSE_FAILED_AT('Unclosed block', 5)),

@@ -9,6 +9,7 @@ import type {
   IdentifierReference,
   ParamPattern,
   Program,
+  VariableDeclarator,
   TSGlobalDeclaration,
   TSImportEqualsDeclaration,
   TSModuleDeclaration,
@@ -21,7 +22,6 @@ import {
   type ParserOptions,
   type StaticExport,
   type StaticImport,
-  Visitor,
   type VisitorObject,
   parseSync,
 } from 'oxc-parser';
@@ -50,12 +50,20 @@ import {
   type ImportElision,
   type ImportType,
   JsxRuntime,
+  PRODUCTION_SECTIONS,
   type PackageJson,
   type PackageName,
+  type PartlyParsed,
   type SourceFile,
 } from '../domain/types.js';
 import { componentBlocks, componentFramework } from './component-blocks.js';
 import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
+import {
+  NO_RESOLUTION,
+  extractPackageName,
+  packagesOf,
+  resolutionOf,
+} from './module-resolution.js';
 import { type StyleLoad, type StyleSyntax, stylesheetReferences } from './stylesheet-parser.js';
 import { type LayoutManifest, readLayoutManifest, readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
@@ -67,11 +75,6 @@ import {
   readRootTsConfigs,
   readTsConfigChains,
 } from '../utils/tsconfig-reader.js';
-
-const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/]+\/[^/]+|[^@/][^/]*)/;
-
-export const extractPackageName = (specifier: string): Option.Option<string> =>
-  Option.fromNullishOr(PACKAGE_NAME.exec(specifier)?.[1]);
 
 const hasAnalyzableExtension = (filePath: string): boolean =>
   Array.contains(ANALYZABLE_EXTENSIONS, path.extname(filePath));
@@ -217,35 +220,131 @@ const reExportReference =
       ),
     );
 
-const QUOTED = /^(['"])(.*)\1$/s;
+// A template literal without ${} is as static as a quoted string.
+const STATIC_STRING = /^(?:(['"])(.*)\1|`([^`$\\]*)`)$/s;
 
 const dynamicImportReference =
   (content: string) =>
   (expression: DynamicImport): Option.Option<ModuleReference> =>
     pipe(
-      QUOTED.exec(content.slice(expression.moduleRequest.start, expression.moduleRequest.end)),
-      (quoted) => Option.fromNullishOr(quoted?.[2]),
+      STATIC_STRING.exec(
+        content.slice(expression.moduleRequest.start, expression.moduleRequest.end),
+      ),
+      (quoted) => Option.fromNullishOr(quoted?.[2] ?? quoted?.[3]),
       Option.map((specifier) => referenceAt(specifier, false, expression)),
     );
 
-const stringLiteralValue = (argument: Argument | undefined): Option.Option<string> =>
-  Match.value(argument).pipe(
-    Match.when({ type: 'Literal', value: Match.string }, (literal) => Option.some(literal.value)),
-    Match.orElse(() => Option.none()),
-  );
+// The matchers below run on every call and declarator the walk meets, so each is built once with
+// Match.type rather than per node with Match.value.
+const staticStringValue: (argument: Argument | undefined) => Option.Option<string> = Match.type<
+  Argument | undefined
+>().pipe(
+  Match.when({ type: 'Literal', value: Match.string }, (literal) => Option.some(literal.value)),
+  Match.when({ type: 'TemplateLiteral' }, (template) =>
+    pipe(
+      Option.liftPredicate(template, (static_) => Array.isReadonlyArrayEmpty(static_.expressions)),
+      Option.flatMap((static_) => Option.fromNullishOr(static_.quasis[0]?.value.cooked)),
+    ),
+  ),
+  Match.orElse(() => Option.none()),
+);
 
-const isRequireCall = (call: CallExpression): boolean =>
-  call.callee.type === 'Identifier' &&
-  call.callee.name === 'require' &&
-  call.arguments.length === 1;
+const MODULE_BUILTIN = ['module', 'node:module'];
 
-const requireReference = (call: CallExpression): ReadonlyArray<ModuleReference> =>
+const importedRequireFactories = (imports: ReadonlyArray<StaticImport>): ReadonlyArray<string> =>
   pipe(
-    Option.liftPredicate(call, isRequireCall),
-    Option.flatMap((required) => stringLiteralValue(required.arguments[0])),
-    Option.map((specifier) => referenceAt(specifier, false, call)),
-    Option.toArray,
+    imports,
+    Array.filter((statement) => Array.contains(MODULE_BUILTIN, statement.moduleRequest.value)),
+    Array.flatMap((statement) => statement.entries),
+    Array.filter((entry) => entry.importName.name === 'createRequire'),
+    Array.map((entry) => entry.localName.value),
   );
+
+// How a call names createRequire. A plain name is it only where the file imports or reads it
+// under that name; `.createRequire` read off any object (m.createRequire,
+// process.getBuiltinModule("module").createRequire) is taken as node:module's.
+type Factory = Data.TaggedEnum<{
+  Named: { readonly name: string };
+  Member: {};
+}>;
+
+const Factory = Data.taggedEnum<Factory>();
+
+const unchained: (node: Expression) => Expression = Match.type<Expression>().pipe(
+  Match.when({ type: 'ChainExpression' }, (chain): Expression => chain.expression),
+  Match.orElse((plain) => plain),
+);
+
+const isCreateRequireMember: (node: Expression) => boolean = Match.type<Expression>().pipe(
+  Match.when(
+    { type: 'MemberExpression', computed: false, property: { name: 'createRequire' } },
+    () => true,
+  ),
+  Match.orElse(() => false),
+);
+
+const readsCreateRequire = (node: Expression): boolean => isCreateRequireMember(unchained(node));
+
+const factoryOfCall: (node: Expression) => Option.Option<Factory> = Match.type<Expression>().pipe(
+  Match.when({ type: 'CallExpression', callee: { type: 'Identifier' } }, (call) =>
+    Option.some(Factory.Named({ name: call.callee.name })),
+  ),
+  Match.when({ type: 'CallExpression' }, (call) =>
+    Option.liftPredicate(Factory.Member(), () => readsCreateRequire(call.callee)),
+  ),
+  Match.orElse(() => Option.none()),
+);
+
+const factoryCalled = (node: Expression): Option.Option<Factory> => factoryOfCall(unchained(node));
+
+// Through: a call through a name that loads only if the file binds it to createRequire(...).
+// Made: a call on what a possible createRequire(...) returns.
+type Loader = Data.TaggedEnum<{
+  Direct: {};
+  Through: { readonly name: string };
+  Made: { readonly factory: Factory };
+  NotLoader: {};
+}>;
+
+const Loader = Data.taggedEnum<Loader>();
+
+const requireFunction: (node: Expression) => Loader = Match.type<Expression>().pipe(
+  Match.when({ type: 'Identifier', name: 'require' }, () => Loader.Direct()),
+  Match.when({ type: 'Identifier' }, (identifier) => Loader.Through({ name: identifier.name })),
+  Match.orElse((other) =>
+    Option.match(factoryCalled(other), {
+      onNone: () => Loader.NotLoader(),
+      onSome: (factory) => Loader.Made({ factory }),
+    }),
+  ),
+);
+
+// require.resolve, module.require and import.meta.resolve name a package as require does.
+const loaderOf: (callee: Expression) => Loader = Match.type<Expression>().pipe(
+  Match.when(
+    {
+      type: 'MemberExpression',
+      computed: false,
+      object: { type: 'MetaProperty', meta: { name: 'import' }, property: { name: 'meta' } },
+      property: { name: 'resolve' },
+    },
+    () => Loader.Direct(),
+  ),
+  Match.when(
+    {
+      type: 'MemberExpression',
+      computed: false,
+      object: { type: 'Identifier', name: 'module' },
+      property: { name: 'require' },
+    },
+    () => Loader.Direct(),
+  ),
+  Match.when(
+    { type: 'MemberExpression', computed: false, property: { name: 'resolve' } },
+    (member) => requireFunction(member.object),
+  ),
+  Match.orElse(requireFunction),
+);
 
 const importEqualsReference = (decl: TSImportEqualsDeclaration): ReadonlyArray<ModuleReference> =>
   Match.value(decl.moduleReference).pipe(
@@ -276,19 +375,46 @@ type AstReferences = {
 
 const NO_AST_REFERENCES: AstReferences = { references: [], augmentations: [] };
 
-// The one place that collects by mutation: oxc's Visitor walks 15.7k lines in 31ms where a pure
-// recursive fold took 139ms.
+type AstNode = { readonly type: string };
+
+type Handlers = Readonly<Record<string, ((node: AstNode) => void) | undefined>>;
+
+const isAstNode = (value: unknown): value is AstNode =>
+  typeof value === 'object' && value !== null && typeof Reflect.get(value, 'type') === 'string';
+
+// The one place that collects by mutation. A pure recursive fold took 139ms over 15.7k lines
+// where oxc's Visitor took 31ms, but the Visitor recurses once per nesting level: a 5,000-term
+// string concatenation overflowed the stack. This loop keeps its own stack, visits the nodes in
+// the Visitor's order, and walks foodspring-front's 1,975 files in 58ms against its 46ms.
 export const collectVisiting = <A>(
   program: Program,
   visitor: (collect: (found: ReadonlyArray<A>) => void) => VisitorObject,
 ): ReadonlyArray<A> => {
   const found: A[] = [];
-  new Visitor(visitor((items) => found.push(...items))).visit(program);
+  const handlers = visitor((items) => found.push(...items)) as Handlers;
+  const pending: AstNode[] = [program];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    handlers[node.type]?.(node);
+    const children = Object.values(node);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const child: unknown = children[index];
+      const nodes = globalThis.Array.isArray(child) ? child : [child];
+      for (let at = nodes.length - 1; at >= 0; at -= 1) {
+        const item: unknown = nodes[at];
+        if (isAstNode(item)) pending.push(item);
+      }
+    }
+  }
   return found;
 };
 
+// Bound: `const name = factory(...)`. Alias: a name the file reads createRequire into.
 type AstReference = Data.TaggedEnum<{
   Reference: { readonly reference: ModuleReference };
+  Through: { readonly name: string; readonly reference: ModuleReference };
+  Made: { readonly factory: Factory; readonly reference: ModuleReference };
+  Bound: { readonly name: string; readonly factory: Factory };
+  Alias: { readonly name: string };
   Augmentation: { readonly reference: ModuleReference };
 }>;
 
@@ -297,29 +423,97 @@ const AstReference = Data.taggedEnum<AstReference>();
 const references = (found: ReadonlyArray<ModuleReference>): ReadonlyArray<AstReference> =>
   Array.map(found, (reference) => AstReference.Reference({ reference }));
 
-// ESM comes from oxc's module record without materialising the AST. The other forms need the AST.
-const astReferences = (program: Program): AstReferences => {
-  const [found, augmentations] = Array.partition(
-    collectVisiting<AstReference>(program, (collect) => ({
-      CallExpression: (node) => collect(references(requireReference(node))),
-      TSImportEqualsDeclaration: (node) => collect(references(importEqualsReference(node))),
-      TSImportType: (node) => collect(references([referenceAt(node.source.value, true, node)])),
-      TSModuleDeclaration: (node) =>
-        collect(
-          Array.map(augmentationReference(node), (reference) =>
-            AstReference.Augmentation({ reference }),
-          ),
-        ),
-    })),
-    AstReference.$match({
-      Reference: ({ reference }) => Result.fail(reference),
-      Augmentation: ({ reference }) => Result.succeed(reference),
+const callReferences = (call: CallExpression): ReadonlyArray<AstReference> =>
+  pipe(
+    Option.liftPredicate(call, (single) => single.arguments.length === 1),
+    Option.flatMap((single) => staticStringValue(single.arguments[0])),
+    Option.map((specifier) => referenceAt(specifier, false, call)),
+    Option.match({
+      onNone: (): ReadonlyArray<AstReference> => [],
+      onSome: (reference) =>
+        Loader.$match(loaderOf(call.callee), {
+          Direct: () => [AstReference.Reference({ reference })],
+          Through: ({ name }) => [AstReference.Through({ name, reference })],
+          Made: ({ factory }) => [AstReference.Made({ factory, reference })],
+          NotLoader: () => [],
+        }),
     }),
   );
-  return { references: found, augmentations };
+
+const destructuredAlias: (
+  property: BindingProperty | BindingRestElement,
+) => ReadonlyArray<AstReference> = Match.type<BindingProperty | BindingRestElement>().pipe(
+  Match.when(
+    { type: 'Property', key: { name: 'createRequire' }, value: { type: 'Identifier' } },
+    (read) => [AstReference.Alias({ name: read.value.name })],
+  ),
+  Match.orElse(() => []),
+);
+
+const requireBinding: (declarator: VariableDeclarator) => ReadonlyArray<AstReference> =
+  Match.type<VariableDeclarator>().pipe(
+    Match.when({ id: { type: 'Identifier' }, init: Match.defined }, (bound) =>
+      Option.match(Option.liftPredicate(bound.init, readsCreateRequire), {
+        onSome: () => [AstReference.Alias({ name: bound.id.name })],
+        onNone: () =>
+          Array.map(Option.toArray(factoryCalled(bound.init)), (factory) =>
+            AstReference.Bound({ name: bound.id.name, factory }),
+          ),
+      }),
+    ),
+    Match.when({ id: { type: 'ObjectPattern' } }, (pattern) =>
+      Array.flatMap(pattern.id.properties, destructuredAlias),
+    ),
+    Match.orElse(() => []),
+  );
+
+// ESM comes from oxc's module record without materialising the AST. The other forms need the AST.
+const astReferences = (parsed: ParseResult): AstReferences => {
+  const found = collectVisiting<AstReference>(parsed.program, (collect) => ({
+    CallExpression: (node) => collect(callReferences(node)),
+    VariableDeclarator: (node) => collect(requireBinding(node)),
+    TSImportEqualsDeclaration: (node) => collect(references(importEqualsReference(node))),
+    TSImportType: (node) => collect(references([referenceAt(node.source.value, true, node)])),
+    TSModuleDeclaration: (node) =>
+      collect(
+        Array.map(augmentationReference(node), (reference) =>
+          AstReference.Augmentation({ reference }),
+        ),
+      ),
+  }));
+  const factories = new Set([
+    ...importedRequireFactories(parsed.module.staticImports),
+    ...Array.map(Array.filter(found, AstReference.$is('Alias')), ({ name }) => name),
+  ]);
+  const isFactory = Factory.$match({
+    Named: ({ name }) => factories.has(name),
+    Member: () => true,
+  });
+  const bound = new Set(
+    pipe(
+      Array.filter(found, AstReference.$is('Bound')),
+      Array.filter(({ factory }) => isFactory(factory)),
+      Array.map(({ name }) => name),
+    ),
+  );
+  const loaded = AstReference.$match({
+    Reference: ({ reference }): ReadonlyArray<ModuleReference> => [reference],
+    Through: ({ name, reference }) => (bound.has(name) ? [reference] : []),
+    Made: ({ factory, reference }) => (isFactory(factory) ? [reference] : []),
+    Bound: () => [],
+    Alias: () => [],
+    Augmentation: () => [],
+  });
+  return {
+    references: Array.flatMap(found, loaded),
+    augmentations: Array.map(
+      Array.filter(found, AstReference.$is('Augmentation')),
+      ({ reference }) => reference,
+    ),
+  };
 };
 
-const AST_MARKER = /require|declare\s+module/;
+const AST_MARKER = /require|createRequire|import\.meta\.resolve|declare\s+module/;
 
 const IMPORT_CALL = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/g;
 
@@ -380,8 +574,11 @@ const commentReferences = (comment: Comment): ReadonlyArray<ModuleReference> =>
     Match.orElse((): ReadonlyArray<ModuleReference> => []),
   );
 
+// Without parenthesised nodes, reading `require((("x")))` costs no call stack per `(`.
+const UNWRAPPED: ParserOptions = { preserveParens: false };
+
 // CRA and older Vite projects write JSX in .js files.
-const JSX_LANG: ParserOptions = { lang: 'jsx' };
+const JSX_LANG: ParserOptions = { ...UNWRAPPED, lang: 'jsx' };
 
 const OPTIONS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
   '.js': JSX_LANG,
@@ -389,32 +586,59 @@ const OPTIONS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
   '.cjs': JSX_LANG,
 };
 
-export const parse = (content: string, filePath: string): ParseResult =>
-  parseSync(
-    filePath,
-    content,
-    Option.getOrUndefined(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath))),
-  );
+const COMMONJS: ParserOptions = { ...JSX_LANG, sourceType: 'commonjs' };
 
-const WITHOUT_JSX: Readonly<Record<string, ParserOptions>> = {
-  '.tsx': { lang: 'ts' },
-  '.jsx': { lang: 'js' },
-  '.js': { lang: 'js' },
-  '.mjs': { lang: 'js' },
-  '.cjs': { lang: 'js' },
+const COMMONJS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
+  '.js': COMMONJS,
+  '.cjs': COMMONJS,
+};
+
+// oxc reads every file as a module. Node runs a .js or .cjs file without import or export as
+// CommonJS, where a top-level return is legal, so such a file that fails is read again as one.
+const parseWithOptions = (
+  content: string,
+  filePath: string,
+): { readonly parsed: ParseResult; readonly options: ParserOptions } => {
+  const options = Option.getOrElse(
+    Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath)),
+    () => UNWRAPPED,
+  );
+  const parsed = parseSync(filePath, content, options);
+  return pipe(
+    Record.get(COMMONJS_BY_EXTENSION, path.extname(filePath)),
+    Option.filter(
+      () => !parsed.module.hasModuleSyntax && Array.isReadonlyArrayNonEmpty(parsed.errors),
+    ),
+    Option.match({
+      onNone: () => ({ parsed, options }),
+      onSome: (commonjs) => ({ parsed: parseSync(filePath, content, commonjs), options: commonjs }),
+    }),
+  );
+};
+
+export const parse = (content: string, filePath: string): ParseResult =>
+  parseWithOptions(content, filePath).parsed;
+
+const WITHOUT_JSX: Readonly<Record<string, NonNullable<ParserOptions['lang']>>> = {
+  '.tsx': 'ts',
+  '.jsx': 'js',
+  '.js': 'js',
+  '.mjs': 'js',
+  '.cjs': 'js',
 };
 
 // A file that parses only with JSX holds JSX. Walking every such AST for JSX nodes cost
 // foodspring-front 1.3s over a 0.2s parse; this second parse costs 30ms and fails on the same files.
+// It keeps the accepted parse's source type, or a CommonJS top-level return would read as JSX.
 const firstJsxAt = (
   content: string,
   filePath: string,
-  parsed: ParseResult,
+  { parsed, options }: ReturnType<typeof parseWithOptions>,
 ): Option.Option<number> =>
   pipe(
     Record.get(WITHOUT_JSX, path.extname(filePath)),
     Option.filter(() => content.includes('<') && Array.isReadonlyArrayEmpty(parsed.errors)),
-    Option.flatMap((options) => Array.head(parseSync(filePath, content, options).errors)),
+    Option.flatMap((lang) => Array.head(parseSync(filePath, content, { ...options, lang }).errors)),
     // An error without a label still means JSX, which starts at the first '<' or after it.
     Option.map((error) =>
       pipe(
@@ -496,14 +720,14 @@ export const fileJsxRuntimes = (
 const jsxRuntimeReferences = (
   content: string,
   filePath: string,
-  parsed: ParseResult,
+  accepted: ReturnType<typeof parseWithOptions>,
   configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
 ): ReadonlyArray<ModuleReference> =>
-  Option.match(firstJsxAt(content, filePath, parsed), {
+  Option.match(firstJsxAt(content, filePath, accepted), {
     onNone: () => [],
     onSome: (at) =>
       Array.flatMap(
-        fileJsxRuntimes(content, parsed, configured),
+        fileJsxRuntimes(content, accepted.parsed, configured),
         JsxRuntime.$match({
           Classic: (): ReadonlyArray<ModuleReference> => [],
           Automatic: ({ importSource }) => [
@@ -658,69 +882,90 @@ const testGlobalReferences = (
   );
 };
 
-type Scope = Pick<SourceFile, 'context' | 'emit'>;
+type Scope = Pick<SourceFile, 'context' | 'emit' | 'resolution'>;
+
+type OxcError = ParseResult['errors'][number];
+
+// A syntax error empties the program. A grammar error leaves it whole, so nothing is lost and it
+// is left to the type checker.
+const stoppedAt = (parsed: ParseResult): Option.Option<OxcError> =>
+  Option.filter(Array.head(parsed.errors), () => Array.isReadonlyArrayEmpty(parsed.program.body));
 
 const moduleReferences = (
   content: string,
   filePath: string,
   { context, emit }: Scope,
-): ReadonlyArray<ModuleReference> => {
-  const parsed = parse(content, filePath);
+): {
+  readonly references: ReadonlyArray<ModuleReference>;
+  readonly stoppedAt: Option.Option<OxcError>;
+} => {
+  const accepted = parseWithOptions(content, filePath);
+  const { parsed } = accepted;
   const ast =
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
-      ? astReferences(parsed.program)
+      ? astReferences(parsed)
       : NO_AST_REFERENCES;
   const erased = erasesAllTypeSpecifiers(content, emit.elision);
-  return [
-    ...Array.map(parsed.module.staticImports, staticImportReference(erased)),
-    ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference(erased))),
-    ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
-    ...ast.references,
-    ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
-    ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
-    ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
-    ...Match.value(context).pipe(
-      Match.when('development', () => testGlobalReferences(content, parsed)),
-      Match.when('production', () => []),
-      Match.exhaustive,
-    ),
-  ];
+  return {
+    references: [
+      ...Array.map(parsed.module.staticImports, staticImportReference(erased)),
+      ...Array.getSomes(Array.map(parsed.module.staticExports, reExportReference(erased))),
+      ...Array.getSomes(Array.map(parsed.module.dynamicImports, dynamicImportReference(content))),
+      ...ast.references,
+      ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
+      ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
+      ...jsxRuntimeReferences(content, filePath, accepted, emit.jsx),
+      ...Match.value(context).pipe(
+        Match.when('development', () => testGlobalReferences(content, parsed)),
+        Match.when('production', () => []),
+        Match.exhaustive,
+      ),
+    ],
+    stoppedAt: stoppedAt(parsed),
+  };
 };
 
 type FileImport = Omit<ImportDetails, 'context'>;
 
-// parsedAs: the name whose extension picks the parser, a component block's lang for one.
-const importsIn = (
-  content: string,
-  filePath: string,
-  parsedAs: string,
-  scope: Scope,
-): ReadonlyArray<FileImport> => {
-  const lineStarts = buildLineStarts(content);
+type Scanned = {
+  readonly imports: ReadonlyArray<FileImport>;
+  readonly partlyParsed: ReadonlyArray<PartlyParsed>;
+};
 
-  return pipe(
-    moduleReferences(content, parsedAs, scope),
-    Array.map((ref) =>
-      pipe(
-        extractPackageName(ref.specifier),
-        Option.map((packageName): FileImport => ({
-          packageName,
-          importType: ref.importType,
-          file: filePath,
-          line: lineNumberAt(lineStarts, ref.start),
-          importStatement: content.slice(ref.start, ref.end).trim(),
-        })),
-      ),
+const errorReason = (error: OxcError, lineStarts: ReadonlyArray<number>): string =>
+  Option.match(Array.head(error.labels), {
+    onNone: () => error.message,
+    onSome: (label) =>
+      MESSAGES.PARSE_FAILED_AT(error.message, lineNumberAt(lineStarts, label.start)),
+  });
+
+// parsedAs: the name whose extension picks the parser, a component block's lang for one.
+const importsIn = (content: string, filePath: string, parsedAs: string, scope: Scope): Scanned => {
+  const lineStarts = buildLineStarts(content);
+  const packagesFor = packagesOf(scope.resolution);
+  const scanned = moduleReferences(content, parsedAs, scope);
+  return {
+    imports: Array.flatMap(scanned.references, (ref) =>
+      Array.map(packagesFor(ref.specifier), (packageName): FileImport => ({
+        packageName,
+        importType: ref.importType,
+        file: filePath,
+        line: lineNumberAt(lineStarts, ref.start),
+        importStatement: content.slice(ref.start, ref.end).trim(),
+      })),
     ),
-    Array.getSomes,
-  );
+    partlyParsed: Array.map(Option.toArray(scanned.stoppedAt), (error): PartlyParsed => ({
+      path: filePath,
+      reason: errorReason(error, lineStarts),
+    })),
+  };
 };
 
 export const extractImports = (
   content: string,
   filePath: string,
   scope: Scope,
-): ReadonlyArray<FileImport> => importsIn(content, filePath, filePath, scope);
+): ReadonlyArray<FileImport> => importsIn(content, filePath, filePath, scope).imports;
 
 const inContext =
   (context: FileContext) =>
@@ -762,22 +1007,39 @@ const styleImports = (
 type ParsedSources = {
   readonly imports: ReadonlyArray<ImportDetails>;
   readonly unreadable: ReadonlyArray<FileError>;
+  readonly partlyParsed: ReadonlyArray<PartlyParsed>;
 };
 
-type Extract = (content: string, source: SourceFile) => Gathered<ImportDetails>;
+const NOTHING_PARSED: ParsedSources = { imports: [], unreadable: [], partlyParsed: [] };
+
+const combined = (parts: ReadonlyArray<ParsedSources>): ParsedSources => ({
+  imports: Array.flatMap(parts, (part) => part.imports),
+  unreadable: Array.flatMap(parts, (part) => part.unreadable),
+  partlyParsed: Array.flatMap(parts, (part) => part.partlyParsed),
+});
+
+const fromScanned = (scanned: Scanned, context: FileContext): ParsedSources => ({
+  imports: Array.map(scanned.imports, inContext(context)),
+  unreadable: [],
+  partlyParsed: scanned.partlyParsed,
+});
+
+const fromGathered = (gathered: Gathered<ImportDetails>): ParsedSources => ({
+  imports: gathered.found,
+  unreadable: gathered.skipped,
+  partlyParsed: [],
+});
+
+type Extract = (content: string, source: SourceFile) => ParsedSources;
 
 const readWith =
   (extract: Extract) =>
   (source: SourceFile): Result.Result<ParsedSources, FileError> =>
-    Result.map(readFile(source.path), (content) => {
-      const { found, skipped } = extract(content, source);
-      return { imports: found, unreadable: skipped };
-    });
+    Result.map(readFile(source.path), (content) => extract(content, source));
 
-const readImports = readWith((content, source) => ({
-  found: Array.map(extractImports(content, source.path, source), inContext(source.context)),
-  skipped: [],
-}));
+const readImports = readWith((content, source) =>
+  fromScanned(importsIn(content, source.path, source.path, source), source.context),
+);
 
 const STYLE_SYNTAX_BY_EXTENSION: Readonly<Record<string, StyleSyntax>> = {
   '.scss': 'scss',
@@ -785,16 +1047,18 @@ const STYLE_SYNTAX_BY_EXTENSION: Readonly<Record<string, StyleSyntax>> = {
 };
 
 const readStylesheetImports = readWith((content, source) =>
-  styleImports(
-    {
-      text: content,
-      syntax: Option.getOrElse(
-        Record.get(STYLE_SYNTAX_BY_EXTENSION, path.extname(source.path)),
-        (): StyleSyntax => 'css',
-      ),
-    },
-    source,
-    source.path,
+  fromGathered(
+    styleImports(
+      {
+        text: content,
+        syntax: Option.getOrElse(
+          Record.get(STYLE_SYNTAX_BY_EXTENSION, path.extname(source.path)),
+          (): StyleSyntax => 'css',
+        ),
+      },
+      source,
+      source.path,
+    ),
   ),
 );
 
@@ -809,23 +1073,24 @@ const frameworkUse = (file: string, framework: string): FileImport => ({
 // A style block that does not parse is skipped on its own.
 const readComponentImports = readWith((content, source) => {
   const { scripts, styles } = componentBlocks(source.path, content);
-  return gatherAll([
-    {
-      found: Array.map(
-        [
-          ...Array.flatMap(scripts, (script) =>
-            importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
-          ),
-          ...Array.map(Option.toArray(componentFramework(source.path)), (framework) =>
-            frameworkUse(source.path, framework),
-          ),
-        ],
-        inContext(source.context),
+  return combined([
+    ...Array.map(scripts, (script) =>
+      fromScanned(
+        importsIn(script.text, source.path, `${source.path}${script.parsedAs}`, source),
+        source.context,
       ),
-      skipped: [],
-    },
+    ),
+    fromScanned(
+      {
+        imports: Array.map(Option.toArray(componentFramework(source.path)), (framework) =>
+          frameworkUse(source.path, framework),
+        ),
+        partlyParsed: [],
+      },
+      source.context,
+    ),
     ...Array.map(styles, (style) =>
-      styleImports(style, source, MESSAGES.STYLE_BLOCK_OF(source.path)),
+      fromGathered(styleImports(style, source, MESSAGES.STYLE_BLOCK_OF(source.path))),
     ),
   ]);
 });
@@ -851,7 +1116,7 @@ const mapImports =
 const readSource = (source: SourceFile): Result.Result<ParsedSources, FileError> =>
   Match.value(sourceKindOf(source.path)).pipe(
     Match.when('tsconfig', () =>
-      Result.succeed<ParsedSources>({ imports: [typescriptUse(source.path)], unreadable: [] }),
+      Result.succeed<ParsedSources>({ ...NOTHING_PARSED, imports: [typescriptUse(source.path)] }),
     ),
     Match.when('declaration', () =>
       Result.map(
@@ -870,17 +1135,12 @@ const readSource = (source: SourceFile): Result.Result<ParsedSources, FileError>
 
 export const parseFile = (source: SourceFile): ParsedSources =>
   Result.match(readSource(source), {
-    onFailure: (error) => ({ imports: [], unreadable: [error] }),
+    onFailure: (error) => ({ ...NOTHING_PARSED, unreadable: [error] }),
     onSuccess: (parsed) => parsed,
   });
 
-export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSources => {
-  const parsed = Array.map(sources, parseFile);
-  return {
-    imports: Array.flatMap(parsed, (file) => file.imports),
-    unreadable: Array.flatMap(parsed, (file) => file.unreadable),
-  };
-};
+export const parseMultipleFiles = (sources: ReadonlyArray<SourceFile>): ParsedSources =>
+  combined(Array.map(sources, parseFile));
 
 const detectedBuildDirectories = (rootDir: string): Gathered<string> => {
   const tsconfigs = readRootTsConfigs(rootDir);
@@ -960,17 +1220,32 @@ export const findFiles = (
   const contextOf = fileContextOf(Array.flatMap(manifests.found, (manifest) => manifest.bins));
   const tsconfigs = governingTsConfigs(rootDir, walked.found);
   const emitOf = emitSettingsOf(tsconfigs.found);
+  const resolution = resolutionOf(
+    manifests.found,
+    tsconfigs.found,
+    new Set(Array.map(walked.found, (source) => path.resolve(rootDir, source.path))),
+  );
   return {
     found: pipe(
       walked.found,
       Array.map((source): SourceFile => {
         const absolute = path.resolve(rootDir, source.path);
-        return { path: absolute, context: contextOf(source), emit: emitOf(absolute) };
+        return {
+          path: absolute,
+          context: contextOf(source),
+          emit: emitOf(absolute),
+          resolution: resolution.resolve(absolute),
+        };
       }),
       (files) => Array.sort(files, byPath),
     ),
     // Build-directory detection reads the root tsconfig files too.
-    skipped: Array.dedupe([...detected.skipped, ...walked.skipped, ...tsconfigs.skipped]),
+    skipped: Array.dedupe([
+      ...detected.skipped,
+      ...walked.skipped,
+      ...tsconfigs.skipped,
+      ...resolution.skipped,
+    ]),
     unreadable: walked.unreadable,
     packages: Array.map(walked.packages, ({ dir, files }) => ({
       dir: path.join(rootDir, dir),
@@ -984,7 +1259,7 @@ export const findFiles = (
 
 // A peer declaration installs nothing in the package itself.
 const INSTALLED_SECTIONS = [
-  'dependencies',
+  ...PRODUCTION_SECTIONS,
   'devDependencies',
 ] as const satisfies ReadonlyArray<DependencyType>;
 
@@ -1002,6 +1277,7 @@ const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileEr
         path: file,
         context: 'development',
         emit: UNCONFIGURED,
+        resolution: NO_RESOLUTION,
       })),
     );
     return {
@@ -1014,9 +1290,5 @@ export const parseHoistedImports = (
   packages: ReadonlyArray<LeftOut>,
 ): ParsedSources & { readonly skipped: ReadonlyArray<FileError> } => {
   const [skipped, parsed] = Array.partition(packages, hoistedImportsOf);
-  return {
-    imports: Array.flatMap(parsed, (sources) => sources.imports),
-    unreadable: Array.flatMap(parsed, (sources) => sources.unreadable),
-    skipped,
-  };
+  return { ...combined(parsed), skipped };
 };

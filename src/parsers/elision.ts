@@ -8,8 +8,8 @@ import {
   type ImportDetails,
   JsxRuntime,
   type PackageJson,
-  type PackageName,
   type SourceFile,
+  installedOnlyForDevelopment,
 } from '../domain/types.js';
 import { readFile } from '../utils/file-reader.js';
 import { buildLineStarts, lineNumberAt } from '../utils/line-index.js';
@@ -82,7 +82,7 @@ const valueUses = (
   program: Program,
   bound: ReadonlyArray<string>,
   factories: ReadonlyArray<string>,
-): ReadonlyArray<string> => {
+): ReadonlySet<string> => {
   const boundNames: ReadonlySet<string> = new Set(bound);
   const events = collectVisiting<AstEvent>(program, (collect) => ({
     ImportDeclaration: (node) => collect(typeSpan(node)),
@@ -122,12 +122,13 @@ const valueUses = (
   const detached = new Set(
     Array.map(Array.filter(events, AstEvent.$is('NotReference')), ({ at }) => at),
   );
-  return pipe(
-    events,
-    Array.filter(AstEvent.$is('Name')),
-    Array.filter(({ at }) => !detached.has(at) && !insideType(at)),
-    Array.map(({ name }) => name),
-    Array.dedupe,
+  return new Set(
+    pipe(
+      events,
+      Array.filter(AstEvent.$is('Name')),
+      Array.filter(({ at }) => !detached.has(at) && !insideType(at)),
+      Array.map(({ name }) => name),
+    ),
   );
 };
 
@@ -152,7 +153,7 @@ const valueEntries = (statement: StaticImport) =>
 const statementKey = (line: number, statement: string): string => `${line}:${statement}`;
 
 // The import statements TypeScript erases: every binding is used only as a type, or not at all.
-const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<string> => {
+const erasedStatements = (content: string, source: SourceFile): ReadonlySet<string> => {
   const parsed = parse(content, source.path);
   const withValues = Array.filter(parsed.module.staticImports, (statement) =>
     Array.isReadonlyArrayNonEmpty(valueEntries(statement)),
@@ -165,18 +166,18 @@ const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<st
     keptFactories(content, parsed, source.emit.jsx),
   );
   const lineStarts = buildLineStarts(content);
-  return pipe(
-    withValues,
-    Array.filter(
-      (statement) =>
-        !Array.some(valueEntries(statement), (entry) =>
-          Array.contains(used, entry.localName.value),
+  return new Set(
+    pipe(
+      withValues,
+      Array.filter(
+        (statement) =>
+          !Array.some(valueEntries(statement), (entry) => used.has(entry.localName.value)),
+      ),
+      Array.map((statement) =>
+        statementKey(
+          lineNumberAt(lineStarts, statement.start),
+          content.slice(statement.start, statement.end).trim(),
         ),
-    ),
-    Array.map((statement) =>
-      statementKey(
-        lineNumberAt(lineStarts, statement.start),
-        content.slice(statement.start, statement.end).trim(),
       ),
     ),
   );
@@ -185,13 +186,6 @@ const erasedStatements = (content: string, source: SourceFile): ReadonlyArray<st
 // Only would-be misplaced imports are re-read. A dependency whose value import is used only as a
 // type is often a runtime peer of another package (graphql for @apollo/client), so elision must
 // not move it to typeOnly: on real projects that turned into "move to devDependencies" advice.
-const couldBeMisplaced =
-  (packageJson: PackageJson) =>
-  (name: PackageName): boolean =>
-    Array.contains(packageJson.devDependencies, name) &&
-    !Array.contains(packageJson.dependencies, name) &&
-    !Array.contains(packageJson.peerDependencies, name);
-
 type Candidate = {
   readonly detail: ImportDetails;
   readonly source: SourceFile;
@@ -216,7 +210,7 @@ const candidatesByFile = (
       (source) => [source.path, source] as const,
     ),
   );
-  const misplacedCandidate = couldBeMisplaced(packageJson);
+  const misplacedCandidate = installedOnlyForDevelopment(packageJson);
   return pipe(
     imports,
     Array.filter(
@@ -266,10 +260,7 @@ const refineFile = (
             ...pipe(
               candidates,
               Array.filter((candidate) =>
-                Array.contains(
-                  erased,
-                  statementKey(candidate.detail.line, candidate.detail.importStatement),
-                ),
+                erased.has(statementKey(candidate.detail.line, candidate.detail.importStatement)),
               ),
               Array.map((candidate) => detailKey(candidate.detail)),
             ),
