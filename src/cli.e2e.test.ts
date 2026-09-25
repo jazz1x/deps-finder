@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pkg from '../package.json';
@@ -128,6 +128,18 @@ describe('CLI e2e (bin/cli.js)', () => {
     await proc.stdout.cancel();
     expect(await proc.exited).toBe(0);
     expect(await new Response(proc.stderr).text()).not.toContain('EPIPE');
+  });
+
+  // Opening a FIFO's write end waits for the worker to open its read end, and the worker then
+  // blocks until the write end closes, so the interrupt lands while it is busy.
+  test('an interrupt ends a busy run with 130', async () => {
+    const manifest = path.join(tmpDir, 'package.json');
+    spawnSync('mkfifo', [manifest]);
+    const proc = Bun.spawn(['node', CLI_PATH, '--json'], { cwd: tmpDir, stdout: 'ignore', stderr: 'ignore' });
+    const writer = await open(manifest, 'w');
+    proc.kill('SIGINT');
+    await writer.close();
+    expect(await proc.exited).toBe(130);
   });
 
   test('warns about source files it cannot read', async () => {
