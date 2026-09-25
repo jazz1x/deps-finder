@@ -72,19 +72,26 @@ export type SubpathImport = {
   readonly targets: ReadonlyArray<string>;
 };
 
-// A tsconfig paths target: a project file, as an absolute path, or a package specifier. Both keep
-// the pattern's "*".
+// A tsconfig paths target: a project file, as an absolute path, or a package specifier. All keep
+// the pattern's "*". A Declaration target redirects types only, so the runtime still loads the
+// package the specifier names.
 export type PathTarget = Data.TaggedEnum<{
   Local: { readonly template: string };
   Installed: { readonly template: string };
+  Declaration: { readonly template: string };
 }>;
 
 export const PathTarget = Data.taggedEnum<PathTarget>();
 
 type PathAlias = { readonly key: string; readonly targets: ReadonlyArray<PathTarget> };
 
-// names: the entries at its top level, files also without their extension.
-export type BaseUrl = { readonly dir: string; readonly names: ReadonlySet<string> };
+// names: the entries at its top level, files also without their extension. root: the directory
+// of the tsconfig that sets it.
+export type BaseUrl = {
+  readonly dir: string;
+  readonly names: ReadonlySet<string>;
+  readonly root: string;
+};
 
 export type CompilerResolution = {
   readonly paths: ReadonlyArray<PathAlias>;

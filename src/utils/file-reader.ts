@@ -50,6 +50,12 @@ export const readStats = (path: string): Result.Result<Stats, FileError> =>
 export const isFile = (file: string): boolean =>
   Result.match(readStats(file), { onSuccess: (stats) => stats.isFile(), onFailure: () => false });
 
+export const isDirectory = (dir: string): boolean =>
+  Result.match(readStats(dir), {
+    onSuccess: (stats) => stats.isDirectory(),
+    onFailure: () => false,
+  });
+
 export const readRealPath = (path: string): Result.Result<string, FileError> =>
   Result.try({ try: () => realpathSync(path), catch: readFailure(path) });
 

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { Array, Match, Option, Order, Record, Result, String, pipe } from 'effect';
+import { DECLARATION_FILE_PATTERN } from '../constants/patterns.js';
 import type { FileError } from '../domain/errors.js';
 import {
   type BaseUrl,
@@ -10,7 +11,7 @@ import {
   PathTarget,
   type SubpathImport,
 } from '../domain/types.js';
-import { gatherOptional, isFile, readDirectory } from '../utils/file-reader.js';
+import { gatherOptional, isDirectory, isFile, readDirectory } from '../utils/file-reader.js';
 import { lineage } from '../utils/project-walk.js';
 import type { TsConfigChain } from '../utils/tsconfig-reader.js';
 import { compiledBy, setWhere } from './emit-settings.js';
@@ -21,6 +22,8 @@ const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/?#]+\/[^/?#]+|[^@/?#][^/?#]*)/
 
 export const extractPackageName = (specifier: string): Option.Option<string> =>
   Option.fromNullishOr(PACKAGE_NAME.exec(specifier)?.[1]);
+
+const QUERY_OR_FRAGMENT = /[?#].*$/s;
 
 export const NO_RESOLUTION: ModuleResolution = {
   subpathImports: [],
@@ -118,38 +121,63 @@ const CANDIDATES: ReadonlyArray<(base: string) => string> = [
   ),
 ];
 
+// tsc reads an import written with its output extension as the source that emits it.
+const SOURCE_EXTENSIONS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  '.js': ['.ts', '.tsx', '.d.ts'],
+  '.jsx': ['.tsx', '.ts', '.d.ts'],
+  '.mjs': ['.mts', '.d.mts'],
+  '.cjs': ['.cts', '.d.cts'],
+};
+
+const sourceCandidates = (base: string): ReadonlyArray<string> =>
+  pipe(
+    Record.get(SOURCE_EXTENSIONS, path.extname(base)),
+    Option.map(
+      Array.map((extension) => `${base.slice(0, -path.extname(base).length)}${extension}`),
+    ),
+    Option.getOrElse((): ReadonlyArray<string> => []),
+  );
+
 // The walked sources answer most lookups without touching the disk: on macaron-front's 9,146
-// `~/` imports, stat'ing every candidate cost 137ms.
+// `~/` imports, stat'ing every candidate cost 137ms. Every candidate sits in the base's directory
+// or below it, so one stat of that directory spares the rest when a catch-all "*" alias misses:
+// 30,000 package imports through `"*": ["src/*", ...]` took 3.2s, and 0.7s with it.
 const resolvesToFile =
   (sources: ReadonlySet<string>) =>
   (base: string): boolean =>
     Array.some(CANDIDATES, (candidate) => sources.has(candidate(base))) ||
-    Array.some(CANDIDATES, (candidate) => isFile(candidate(base)));
+    Array.some(sourceCandidates(base), (candidate) => sources.has(candidate)) ||
+    (isDirectory(path.dirname(base)) &&
+      (Array.some(CANDIDATES, (candidate) => isFile(candidate(base))) ||
+        Array.some(sourceCandidates(base), isFile)));
 
 const firstSegment = (specifier: string): string =>
   Array.headNonEmpty(String.split(specifier, '/'));
 
-const THROUGH_NODE_MODULES = /^.*node_modules\//;
+// Tested below the tsconfig's directory, so a project stored inside a node_modules keeps its files.
+const THROUGH_NODE_MODULES = /^(?:.*\/)?node_modules\//;
 
-const isInstalled = (file: string): boolean => THROUGH_NODE_MODULES.test(file);
+const isInstalled = (relative: string): boolean => THROUGH_NODE_MODULES.test(relative);
 
-const installedPackage = (file: string): ReadonlyArray<PackageName> =>
-  Option.toArray(extractPackageName(file.replace(THROUGH_NODE_MODULES, '')));
+const installedPackage = (relative: string): ReadonlyArray<PackageName> =>
+  Option.toArray(extractPackageName(relative.replace(THROUGH_NODE_MODULES, '')));
 
 const baseUrlPackages = (
   baseUrl: BaseUrl,
   specifier: string,
   name: PackageName,
   resolves: (base: string) => boolean,
-): ReadonlyArray<PackageName> =>
-  Match.value(path.join(baseUrl.dir, specifier)).pipe(
+): ReadonlyArray<PackageName> => {
+  const file = path.join(baseUrl.dir, specifier);
+  return Match.value(path.relative(baseUrl.root, file)).pipe(
     Match.when(isInstalled, installedPackage),
     Match.when(
-      (file) => baseUrl.names.has(firstSegment(specifier)) && resolves(file),
+      () => baseUrl.names.has(firstSegment(specifier)) && resolves(file),
       (): ReadonlyArray<PackageName> => [],
     ),
     Match.orElse(() => [name]),
   );
+};
 
 // tsc tries a matched alias's targets in order; with none resolving it goes to node_modules.
 const compilerPackages =
@@ -167,6 +195,8 @@ const compilerPackages =
                   Option.liftPredicate(filled(template, captured), resolves),
                   [] as ReadonlyArray<PackageName>,
                 ),
+              Declaration: ({ template }) =>
+                Option.as(Option.liftPredicate(filled(template, captured), resolves), [name]),
             }),
           ),
           Option.getOrElse(() => [name]),
@@ -188,8 +218,9 @@ export const packagesOf = (
     Match.when(String.startsWith('#'), (subpath) =>
       subpathPackages(resolution.subpathImports, subpath),
     ),
-    Match.orElse((bare) =>
-      Option.match(extractPackageName(bare), {
+    Match.orElse((specifier) => {
+      const bare = specifier.replace(QUERY_OR_FRAGMENT, '');
+      return Option.match(extractPackageName(bare), {
         onNone: (): ReadonlyArray<PackageName> => [],
         onSome: (name) =>
           Array.match(resolution.compilers, {
@@ -197,8 +228,8 @@ export const packagesOf = (
             onNonEmpty: (compilers) =>
               Array.dedupe(Array.flatMap(compilers, compilerPackages(bare, name, resolves))),
           }),
-      }),
-    ),
+      });
+    }),
   );
 };
 
@@ -222,13 +253,18 @@ const namesNothingIn =
 // A target that resolves through node_modules, or a bare one whose first segment names nothing in
 // its base directory, is a package; any other resolves inside the project.
 const pathTargetOf =
-  (base: string, names: ReadonlySet<string>) =>
+  (base: string, names: ReadonlySet<string>, root: string) =>
   (target: string): PathTarget => {
     const resolved = path.resolve(base, target);
+    const relative = path.relative(root, resolved);
     return Match.value(target).pipe(
       Match.when(
-        () => isInstalled(resolved),
-        () => PathTarget.Installed({ template: resolved.replace(THROUGH_NODE_MODULES, '') }),
+        (declaration) => DECLARATION_FILE_PATTERN.test(declaration),
+        () => PathTarget.Declaration({ template: resolved }),
+      ),
+      Match.when(
+        () => isInstalled(relative),
+        () => PathTarget.Installed({ template: relative.replace(THROUGH_NODE_MODULES, '') }),
       ),
       Match.when(namesNothingIn(names), (bare) => PathTarget.Installed({ template: bare })),
       Match.orElse(() => PathTarget.Local({ template: resolved })),
@@ -244,11 +280,14 @@ type Compiled = {
 const compilerResolutionOf = (chain: TsConfigChain): Compiled => {
   const baseUrl = Option.map(
     setWhere((config) => config.compilerOptions?.baseUrl)(chain),
-    ({ dir, value }) => path.resolve(dir, value),
+    ({ dir, value }) => ({ dir: path.resolve(dir, value), root: dir }),
   );
   const paths = setWhere((config) => config.compilerOptions?.paths)(chain);
   const base = pipe(
-    Option.orElse(baseUrl, () => Option.map(paths, ({ dir }) => dir)),
+    Option.orElse(
+      Option.map(baseUrl, ({ dir }) => dir),
+      () => Option.map(paths, ({ dir }) => dir),
+    ),
     Option.map((dir) => ({ dir, listed: topLevelNames(dir) })),
   );
   const names = new Set(
@@ -258,13 +297,13 @@ const compilerResolutionOf = (chain: TsConfigChain): Compiled => {
     resolution: {
       paths: Option.match(Option.all([paths, base]), {
         onNone: () => [],
-        onSome: ([{ value }, { dir }]) =>
+        onSome: ([{ value, dir: root }, { dir }]) =>
           Array.map(Record.toEntries(value), ([key, targets]) => ({
             key,
-            targets: Array.map(targets, pathTargetOf(dir, names)),
+            targets: Array.map(targets, pathTargetOf(dir, names, root)),
           })),
       }),
-      baseUrl: Option.map(baseUrl, (dir): BaseUrl => ({ dir, names })),
+      baseUrl: Option.map(baseUrl, ({ dir, root }): BaseUrl => ({ dir, names, root })),
     },
     skipped: Option.match(base, { onNone: () => [], onSome: ({ listed }) => listed.skipped }),
   };

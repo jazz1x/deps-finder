@@ -527,6 +527,59 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual([]);
   });
 
+  test.each([
+    [
+      'a ?query suffix on a paths or baseUrl file',
+      ['utils', 'components'],
+      {
+        'package.json': { dependencies: { utils: '1', components: '1' } },
+        'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { 'utils/*': ['./src/utils/*'] } } },
+        'src/utils/icon.svg': '<svg/>',
+        'components/Button.tsx': 'export const B = 1;',
+        'src/x.ts': 'import u from "utils/icon.svg?raw";\nimport k from "components/Button?inline";\nconsole.log(u, k);',
+      },
+    ],
+    [
+      'a paths or baseUrl file written with .js for its .ts source',
+      ['shared', 'utils'],
+      {
+        'package.json': { dependencies: { shared: '1', utils: '1' } },
+        'tsconfig.json': {
+          compilerOptions: { module: 'nodenext', paths: { shared: ['./src/shared/index.js'], 'utils/*': ['./src/utils/*'] } },
+        },
+        'src/shared/index.ts': 'export const s = 1;',
+        'src/utils/fmt.ts': 'export const f = 1;',
+        'src/x.ts': 'import "shared";\nimport "utils/fmt.js";',
+      },
+    ],
+    [
+      'a paths entry that points only at declarations',
+      [],
+      {
+        'package.json': { dependencies: { pkg: '1', react: '1' }, devDependencies: { '@types/react': '1' } },
+        'tsconfig.json': { compilerOptions: { paths: { pkg: ['./local/pkg.d.ts'], react: ['./node_modules/@types/react/index.d.ts'] } } },
+        'local/pkg.d.ts': 'export declare const x: () => void;',
+        'node_modules/@types/react/index.d.ts': 'export declare const useState: () => void;',
+        'src/a.ts': 'import { x } from "pkg";\nimport { useState } from "react";\nx();\nuseState();',
+      },
+    ],
+  ])('%s resolves as tsc does', async (_, unused, files) => {
+    await writeFiles(tmpDir, files);
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({ unused, misplaced: [] });
+  });
+
+  test('a project stored under a node_modules directory still resolves its own aliases', async () => {
+    await writeFiles(tmpDir, {
+      'node_modules/proj/package.json': { dependencies: { react: '1', zod: '1', proj: '1' } },
+      'node_modules/proj/tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { '~/*': ['./src/*'] } } },
+      'node_modules/proj/src/b.ts': 'export const b = 1;',
+      'node_modules/proj/src/a.ts': 'import { b } from "~/b";\nimport "react";\nimport "zod";\nconsole.log(b);',
+    });
+    const r = runCli(['--json', 'node_modules/proj'], tmpDir);
+    expect(JSON.parse(r.stdout).unused).toEqual(['proj']);
+  });
+
   test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),
