@@ -13,7 +13,7 @@ const runCli = (args: ReadonlyArray<string>, cwd: string) => {
   const reports = process.env['PROBE_REPORT_DIR'] ?? '/tmp/probe-reports';
   const watch = [
     'sleep 4',
-    `for p in $(pgrep -P ${process.pid} -x node); do d=${reports}/hang-$p; mkdir -p $d; ps -L -o pid,tid,stat,wchan:32,etime,comm -p $p > $d/ps.txt; grep State /proc/$p/status > $d/state.txt; for t in /proc/$p/task/*; do echo "$t $(cat $t/comm) $(cat $t/wchan) $(cat $t/stat | cut -d' ' -f3)"; done > $d/tasks.txt; ps -ef --forest > $d/tree.txt; done`,
+    `d=${reports}/hang-$$; mkdir -p $d; echo "bun=${process.pid} args=${args.join(' ')}" > $d/meta.txt; ps -eLo pid,ppid,tid,stat,etime,wchan:32,comm,args --forest > $d/tree.txt; for p in $(pgrep -P ${process.pid}); do for t in /proc/$p/task/*; do echo "$p $t $(cat $t/comm) $(cat $t/wchan) $(cut -d' ' -f3 $t/stat)"; done; done > $d/tasks.txt`,
   ].join('\n');
   const watcher = Bun.spawn(['sh', '-c', watch], { stdio: ['ignore', 'ignore', 'ignore'] });
   const result = spawnSync('node', [CLI_PATH, ...args], {
