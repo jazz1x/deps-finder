@@ -118,7 +118,7 @@ Unknown flags and flags missing their value are errors, not warnings.
 |------|---------|
 | `0` | No issues |
 | `1` | Issues found |
-| `2` | The run failed (bad flags, missing or malformed `package.json`) |
+| `2` | The run failed (bad flags, missing or malformed `package.json`, a report that could not be written) |
 
 ---
 

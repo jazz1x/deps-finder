@@ -11,7 +11,7 @@ Imports are now read by a real parser (oxc) instead of regular expressions, the 
 
 ### ⚠ BREAKING
 
-- **Exit codes**: `0` no issues, `1` issues found, `2` the run failed (bad flags, missing or malformed `package.json`). A missing `package.json` used to exit `1`.
+- **Exit codes**: `0` no issues, `1` issues found, `2` the run failed (bad flags, missing or malformed `package.json`, a report that could not be written). A missing `package.json` used to exit `1`, and so did a failed write of the report, with a stack trace.
 - **Unknown flags and flags missing their value are errors (exit `2`)**. They used to print a warning and carry on, so a typo in CI silently changed the check.
 - **`--all` semantics**: peers are reported only under `unusedPeer` (no longer twice), misplaced detection stays on, and a devDependency used only for types is not "type-only". Only `dependencies` entries can be type-only.
 - **`optionalDependencies` are checked like `dependencies`**: an unused one is now reported (#62).
