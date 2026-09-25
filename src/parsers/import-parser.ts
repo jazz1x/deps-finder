@@ -9,6 +9,7 @@ import type {
   IdentifierReference,
   ParamPattern,
   Program,
+  VariableDeclarator,
   TSGlobalDeclaration,
   TSImportEqualsDeclaration,
   TSModuleDeclaration,
@@ -21,6 +22,7 @@ import {
   type ParserOptions,
   type StaticExport,
   type StaticImport,
+  type StaticImportEntry,
   Visitor,
   type VisitorObject,
   parseSync,
@@ -218,35 +220,129 @@ const reExportReference =
       ),
     );
 
-const QUOTED = /^(['"])(.*)\1$/s;
+// A template literal without ${} is as static as a quoted string.
+const STATIC_STRING = /^(?:(['"])(.*)\1|`([^`$\\]*)`)$/s;
 
 const dynamicImportReference =
   (content: string) =>
   (expression: DynamicImport): Option.Option<ModuleReference> =>
     pipe(
-      QUOTED.exec(content.slice(expression.moduleRequest.start, expression.moduleRequest.end)),
-      (quoted) => Option.fromNullishOr(quoted?.[2]),
+      STATIC_STRING.exec(
+        content.slice(expression.moduleRequest.start, expression.moduleRequest.end),
+      ),
+      (quoted) => Option.fromNullishOr(quoted?.[2] ?? quoted?.[3]),
       Option.map((specifier) => referenceAt(specifier, false, expression)),
     );
 
-const stringLiteralValue = (argument: Argument | undefined): Option.Option<string> =>
+const staticStringValue = (argument: Argument | undefined): Option.Option<string> =>
   Match.value(argument).pipe(
     Match.when({ type: 'Literal', value: Match.string }, (literal) => Option.some(literal.value)),
+    Match.when({ type: 'TemplateLiteral' }, (template) =>
+      pipe(
+        Option.liftPredicate(template, (static_) =>
+          Array.isReadonlyArrayEmpty(static_.expressions),
+        ),
+        Option.flatMap((static_) => Option.fromNullishOr(static_.quasis[0]?.value.cooked)),
+      ),
+    ),
+    Match.when({ type: 'ParenthesizedExpression' }, (parenthesised) =>
+      staticStringValue(parenthesised.expression),
+    ),
     Match.orElse(() => Option.none()),
   );
 
-const isRequireCall = (call: CallExpression): boolean =>
-  call.callee.type === 'Identifier' &&
-  call.callee.name === 'require' &&
-  call.arguments.length === 1;
+const MODULE_BUILTIN = ['module', 'node:module'];
 
-const requireReference = (call: CallExpression): ReadonlyArray<ModuleReference> =>
-  pipe(
-    Option.liftPredicate(call, isRequireCall),
-    Option.flatMap((required) => stringLiteralValue(required.arguments[0])),
-    Option.map((specifier) => referenceAt(specifier, false, call)),
-    Option.toArray,
+// The names a file imports node:module's createRequire under, and node:module itself.
+type RequireFactories = {
+  readonly functions: ReadonlySet<string>;
+  readonly namespaces: ReadonlySet<string>;
+};
+
+const requireFactoriesOf = (imports: ReadonlyArray<StaticImport>): RequireFactories => {
+  const entries = pipe(
+    imports,
+    Array.filter((statement) => Array.contains(MODULE_BUILTIN, statement.moduleRequest.value)),
+    Array.flatMap((statement) => statement.entries),
   );
+  const localNames = (kept: (entry: StaticImportEntry) => boolean): ReadonlySet<string> =>
+    new Set(Array.map(Array.filter(entries, kept), (entry) => entry.localName.value));
+  return {
+    functions: localNames((entry) => entry.importName.name === 'createRequire'),
+    namespaces: localNames((entry) => entry.importName.kind !== 'Name'),
+  };
+};
+
+const isRequireFactoryCall =
+  (factories: RequireFactories) =>
+  (node: Expression): node is CallExpression =>
+    Match.value(node).pipe(
+      Match.when({ type: 'CallExpression', callee: { type: 'Identifier' } }, (call) =>
+        factories.functions.has(call.callee.name),
+      ),
+      Match.when(
+        {
+          type: 'CallExpression',
+          callee: {
+            type: 'MemberExpression',
+            computed: false,
+            object: { type: 'Identifier' },
+            property: { name: 'createRequire' },
+          },
+        },
+        (call) => factories.namespaces.has(call.callee.object.name),
+      ),
+      Match.orElse(() => false),
+    );
+
+// Through: a call through a name that loads only if the file binds it to createRequire(...).
+type Loader = Data.TaggedEnum<{
+  Direct: {};
+  Through: { readonly name: string };
+  NotLoader: {};
+}>;
+
+const Loader = Data.taggedEnum<Loader>();
+
+const requireFunction =
+  (factories: RequireFactories) =>
+  (node: Expression): Loader =>
+    Match.value(node).pipe(
+      Match.when({ type: 'Identifier', name: 'require' }, () => Loader.Direct()),
+      Match.when({ type: 'Identifier' }, (identifier) => Loader.Through({ name: identifier.name })),
+      Match.when(isRequireFactoryCall(factories), () => Loader.Direct()),
+      Match.orElse(() => Loader.NotLoader()),
+    );
+
+// require.resolve, module.require and import.meta.resolve name a package as require does.
+const loaderOf =
+  (factories: RequireFactories) =>
+  (callee: Expression): Loader =>
+    Match.value(callee).pipe(
+      Match.when(
+        {
+          type: 'MemberExpression',
+          computed: false,
+          object: { type: 'MetaProperty', meta: { name: 'import' }, property: { name: 'meta' } },
+          property: { name: 'resolve' },
+        },
+        () => Loader.Direct(),
+      ),
+      Match.when(
+        {
+          type: 'MemberExpression',
+          computed: false,
+          object: { type: 'Identifier', name: 'module' },
+          property: { name: 'require' },
+        },
+        () => Loader.Direct(),
+      ),
+      Match.when(
+        { type: 'MemberExpression', computed: false, property: { name: 'resolve' } },
+        (member) => requireFunction(factories)(member.object),
+      ),
+      Match.orElse(requireFunction(factories)),
+    );
 
 const importEqualsReference = (decl: TSImportEqualsDeclaration): ReadonlyArray<ModuleReference> =>
   Match.value(decl.moduleReference).pipe(
@@ -288,8 +384,11 @@ export const collectVisiting = <A>(
   return found;
 };
 
+// Bound: a name the file binds to createRequire(...).
 type AstReference = Data.TaggedEnum<{
   Reference: { readonly reference: ModuleReference };
+  Through: { readonly name: string; readonly reference: ModuleReference };
+  Bound: { readonly name: string };
   Augmentation: { readonly reference: ModuleReference };
 }>;
 
@@ -298,11 +397,58 @@ const AstReference = Data.taggedEnum<AstReference>();
 const references = (found: ReadonlyArray<ModuleReference>): ReadonlyArray<AstReference> =>
   Array.map(found, (reference) => AstReference.Reference({ reference }));
 
+const callReferences =
+  (factories: RequireFactories) =>
+  (call: CallExpression): ReadonlyArray<AstReference> =>
+    pipe(
+      Option.liftPredicate(call, (single) => single.arguments.length === 1),
+      Option.flatMap((single) => staticStringValue(single.arguments[0])),
+      Option.map((specifier) => referenceAt(specifier, false, call)),
+      Option.match({
+        onNone: (): ReadonlyArray<AstReference> => [],
+        onSome: (reference) =>
+          Loader.$match(loaderOf(factories)(call.callee), {
+            Direct: () => [AstReference.Reference({ reference })],
+            Through: ({ name }) => [AstReference.Through({ name, reference })],
+            NotLoader: () => [],
+          }),
+      }),
+    );
+
+const requireBinding =
+  (factories: RequireFactories) =>
+  (declarator: VariableDeclarator): ReadonlyArray<AstReference> =>
+    Match.value(declarator).pipe(
+      Match.when({ id: { type: 'Identifier' }, init: isRequireFactoryCall(factories) }, (bound) => [
+        AstReference.Bound({ name: bound.id.name }),
+      ]),
+      Match.orElse(() => []),
+    );
+
+type AstFindings = {
+  readonly references: ReadonlyArray<ModuleReference>;
+  readonly through: ReadonlyArray<{ readonly name: string; readonly reference: ModuleReference }>;
+  readonly bound: ReadonlySet<string>;
+  readonly augmentations: ReadonlyArray<ModuleReference>;
+};
+
+const foldAstReferences = (found: ReadonlyArray<AstReference>): AstFindings => ({
+  references: Array.map(Array.filter(found, AstReference.$is('Reference')), (r) => r.reference),
+  through: Array.filter(found, AstReference.$is('Through')),
+  bound: new Set(Array.map(Array.filter(found, AstReference.$is('Bound')), ({ name }) => name)),
+  augmentations: Array.map(
+    Array.filter(found, AstReference.$is('Augmentation')),
+    ({ reference }) => reference,
+  ),
+});
+
 // ESM comes from oxc's module record without materialising the AST. The other forms need the AST.
-const astReferences = (program: Program): AstReferences => {
-  const [found, augmentations] = Array.partition(
-    collectVisiting<AstReference>(program, (collect) => ({
-      CallExpression: (node) => collect(references(requireReference(node))),
+const astReferences = (parsed: ParseResult): AstReferences => {
+  const factories = requireFactoriesOf(parsed.module.staticImports);
+  const found = foldAstReferences(
+    collectVisiting<AstReference>(parsed.program, (collect) => ({
+      CallExpression: (node) => collect(callReferences(factories)(node)),
+      VariableDeclarator: (node) => collect(requireBinding(factories)(node)),
       TSImportEqualsDeclaration: (node) => collect(references(importEqualsReference(node))),
       TSImportType: (node) => collect(references([referenceAt(node.source.value, true, node)])),
       TSModuleDeclaration: (node) =>
@@ -312,15 +458,21 @@ const astReferences = (program: Program): AstReferences => {
           ),
         ),
     })),
-    AstReference.$match({
-      Reference: ({ reference }) => Result.fail(reference),
-      Augmentation: ({ reference }) => Result.succeed(reference),
-    }),
   );
-  return { references: found, augmentations };
+  return {
+    references: [
+      ...found.references,
+      ...pipe(
+        found.through,
+        Array.filter(({ name }) => found.bound.has(name)),
+        Array.map(({ reference }) => reference),
+      ),
+    ],
+    augmentations: found.augmentations,
+  };
 };
 
-const AST_MARKER = /require|declare\s+module/;
+const AST_MARKER = /require|createRequire|import\.meta\.resolve|declare\s+module/;
 
 const IMPORT_CALL = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/g;
 
@@ -669,7 +821,7 @@ const moduleReferences = (
   const parsed = parse(content, filePath);
   const ast =
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
-      ? astReferences(parsed.program)
+      ? astReferences(parsed)
       : NO_AST_REFERENCES;
   const erased = erasesAllTypeSpecifiers(content, emit.elision);
   return [

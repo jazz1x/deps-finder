@@ -504,6 +504,35 @@ describe('extractImports edge cases', () => {
     expect(extractImports(content, file).map((f) => f.packageName)).toEqual(['react', 'zod', 'clsx', 'react']);
   });
 
+  test.each([
+    ['require.resolve', 'const p = require.resolve("pkg/sub");'],
+    ['module.require', 'const m = module.require("pkg");'],
+    ['import.meta.resolve', 'const u = import.meta.resolve("pkg");'],
+    ['a createRequire binding', 'import { createRequire } from "node:module";\nconst req = createRequire(import.meta.url);\nreq("pkg");'],
+    ['a renamed createRequire', 'import { createRequire as cr } from "module";\nconst r = cr(import.meta.url);\nr("pkg");'],
+    ['module.createRequire', 'import module from "node:module";\nconst r = module.createRequire(import.meta.url);\nr("pkg");'],
+    ['a namespace createRequire', 'import * as m from "node:module";\nconst r = m.createRequire(import.meta.url);\nr.resolve("pkg");'],
+    ['an inline createRequire', 'import { createRequire } from "node:module";\ncreateRequire(import.meta.url)("pkg");'],
+    ['a static template require', 'const m = require(`pkg`);'],
+    ['a static template import()', 'export const f = () => import(`pkg`);'],
+    ['a parenthesised require', 'const m = require(("pkg"));'],
+  ])('finds pkg at runtime through %s', (_, content) => {
+    expect(extractImports(content, 'src/a.mjs').filter((f) => f.packageName === 'pkg')).toEqual([
+      expect.objectContaining({ importType: 'runtime', line: content.split('\n').length }),
+    ]);
+  });
+
+  test.each([
+    ['require.resolve.paths', 'const p = require.resolve.paths("pkg");'],
+    ['a call not bound to createRequire', 'const req = make(import.meta.url);\nreq("pkg");\nrequire("other");'],
+    ['a createRequire from elsewhere', 'import { createRequire } from "other";\nconst r = createRequire(1);\nr("pkg");'],
+    ['another node:module export', 'import * as m from "node:module";\nconst r = m.findPackageJSON(1);\nr("pkg");\nrequire("other");'],
+    ['a template with an expression', 'const m = require(`pkg${suffix}`);\nimport(`pkg${suffix}`);'],
+    ['two arguments', 'const m = require.resolve("pkg", {});'],
+  ])('does not find pkg through %s', (_, content) => {
+    expect(extractImports(content, 'src/a.mjs').filter((f) => f.packageName === 'pkg')).toEqual([]);
+  });
+
   test('require() counts as exactly one runtime finding (no duplicate from REQUIRE_REGEX)', () => {
     const result = extractImports("const m = require('lodash');", 'src/index.ts');
     const lodashEntries = result.filter((f) => f.packageName === 'lodash');
