@@ -23,10 +23,8 @@ export const MESSAGES = {
   PARSE_FAILED_AT: (reason: string, line: number) => `${reason} at line ${line}`,
   SOURCE_SKIPPED: (path: string, reason: string) =>
     `warning: skipped ${path} (${reason}); its imports are not counted.`,
-  SOURCE_PARTLY_PARSED: (path: string, reason: string) =>
-    `warning: the parser reported an error in ${path} (${reason}); the imports it read still count.`,
   SOURCE_PARSE_STOPPED: (path: string, reason: string) =>
-    `warning: the parser stopped at an error in ${path} (${reason}); only its import and export statements before the error count.`,
+    `warning: the parser stopped at an error in ${path} (${reason}); only the import and export statements, import() calls and type imports in comments before the error count, and nothing else in the file does, require() and import x = require() included.`,
   INPUT_SKIPPED: (path: string, reason: string) =>
     `warning: could not use ${path} (${reason}); the scan went on without it.`,
   PACKAGE_LEFT_OUT: (path: string) =>

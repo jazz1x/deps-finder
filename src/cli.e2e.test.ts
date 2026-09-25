@@ -153,23 +153,21 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual(['tailwindcss']);
   });
 
-  test('warns about a source with a parse error and counts what the parser kept', async () => {
+  test('warns about a source the parser stopped in and counts what it kept', async () => {
     await writeFiles(tmpDir, {
-      'package.json': { dependencies: { lodash: '4', zod: '3', d: '1', e: '1' } },
-      'src/a.ts': 'import lodash from "lodash";\nconst x = {;\nimport { z } from "zod";',
+      'package.json': { dependencies: { lodash: '4', zod: '3', d: '1', e: '1', f: '1' } },
+      'src/a.ts': 'import lodash from "lodash";\nconst f = import("f");\nconst x = {;\nimport { z } from "zod";',
       'src/b.vue': '<script>\nimport { z } from "zod";\nconst y = {;\n</script>',
       'src/d.js': 'const d = require("d");\nreturn d;\nfunction (',
       'src/e.ts': 'declare const x: number = 1;\nrequire("e");',
     });
     const r = runCli(['--json'], tmpDir);
     expect(r.stderr).toMatch(
-      /warning: the parser stopped at an error in \S*src\/a\.ts \(Unexpected token at line 2\); only its import and export statements before the error count\./,
+      /warning: the parser stopped at an error in \S*src\/a\.ts \(Unexpected token at line 3\); only the import and export statements, import\(\) calls and type imports in comments before the error count, and nothing else in the file does, require\(\) and import x = require\(\) included\./,
     );
     expect(r.stderr).toMatch(/warning: the parser stopped at an error in \S*src\/b\.vue \(\S.* at line 3\)/);
     expect(r.stderr).toMatch(/warning: the parser stopped at an error in \S*src\/d\.js \(Expected function name at line 3\)/);
-    expect(r.stderr).toMatch(
-      /warning: the parser reported an error in \S*src\/e\.ts \(Initializers are not allowed in ambient contexts\. at line 1\); the imports it read still count\./,
-    );
+    expect(r.stderr).not.toContain('e.ts');
     expect(JSON.parse(r.stdout).unused).toEqual(['d']);
   });
 
@@ -181,7 +179,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     });
     const r = runCli(['--json'], tmpDir);
     expect(r.stderr).not.toContain('login.js');
-    expect(r.stderr).toMatch(/warning: the parser reported an error in \S*src\/a\.js/);
+    expect(r.stderr).not.toContain('a.js');
     expect(JSON.parse(r.stdout).unused).toEqual([]);
   });
 

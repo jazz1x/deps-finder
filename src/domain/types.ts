@@ -121,14 +121,9 @@ export type SourceFile = {
   readonly resolution: ModuleResolution;
 };
 
-// A source the parser reported errors in. Recovered: it kept the program, so what it read still
-// counts. Stopped: after a syntax error oxc keeps only the import and export statements before it.
-export type PartlyParsed = Data.TaggedEnum<{
-  Recovered: { readonly path: string; readonly reason: string };
-  Stopped: { readonly path: string; readonly reason: string };
-}>;
-
-export const PartlyParsed = Data.taggedEnum<PartlyParsed>();
+// A source oxc stopped in at a syntax error: it keeps the module record and comments before the
+// error, and no program.
+export type PartlyParsed = { readonly path: string; readonly reason: string };
 
 export type ImportLocation = {
   readonly file: string;

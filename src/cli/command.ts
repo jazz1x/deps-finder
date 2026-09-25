@@ -12,7 +12,6 @@ import {
   type ImportDetails,
   Installation,
   type PackageJson,
-  PartlyParsed,
   type ScriptCommand,
 } from '../domain/types.js';
 import { readToolConfigs } from '../parsers/config-references.js';
@@ -202,13 +201,8 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
       Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),
     ),
     Effect.tap(({ sources }) =>
-      Effect.forEach(sources.partlyParsed, (source) =>
-        Console.error(
-          PartlyParsed.$match(source, {
-            Recovered: ({ path, reason }) => MESSAGES.SOURCE_PARTLY_PARSED(path, reason),
-            Stopped: ({ path, reason }) => MESSAGES.SOURCE_PARSE_STOPPED(path, reason),
-          }),
-        ),
+      Effect.forEach(sources.partlyParsed, ({ path, reason }) =>
+        Console.error(MESSAGES.SOURCE_PARSE_STOPPED(path, reason)),
       ),
     ),
     Effect.map(({ packageJson, sources }) =>

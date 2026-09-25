@@ -53,7 +53,7 @@ import {
   PRODUCTION_SECTIONS,
   type PackageJson,
   type PackageName,
-  PartlyParsed,
+  type PartlyParsed,
   type SourceFile,
 } from '../domain/types.js';
 import { componentBlocks, componentFramework } from './component-blocks.js';
@@ -886,19 +886,10 @@ type Scope = Pick<SourceFile, 'context' | 'emit' | 'resolution'>;
 
 type OxcError = ParseResult['errors'][number];
 
-type ParseError = {
-  readonly error: OxcError;
-  readonly kept: (source: { readonly path: string; readonly reason: string }) => PartlyParsed;
-};
-
-// A syntax error empties the program; a grammar error leaves it whole.
-const parseErrorOf = (parsed: ParseResult): Option.Option<ParseError> =>
-  Option.map(Array.head(parsed.errors), (error) => ({
-    error,
-    kept: Array.isReadonlyArrayEmpty(parsed.program.body)
-      ? PartlyParsed.Stopped
-      : PartlyParsed.Recovered,
-  }));
+// A syntax error empties the program. A grammar error leaves it whole, so nothing is lost and it
+// is left to the type checker.
+const stoppedAt = (parsed: ParseResult): Option.Option<OxcError> =>
+  Option.filter(Array.head(parsed.errors), () => Array.isReadonlyArrayEmpty(parsed.program.body));
 
 const moduleReferences = (
   content: string,
@@ -906,7 +897,7 @@ const moduleReferences = (
   { context, emit }: Scope,
 ): {
   readonly references: ReadonlyArray<ModuleReference>;
-  readonly parseError: Option.Option<ParseError>;
+  readonly stoppedAt: Option.Option<OxcError>;
 } => {
   const accepted = parseWithOptions(content, filePath);
   const { parsed } = accepted;
@@ -930,7 +921,7 @@ const moduleReferences = (
         Match.exhaustive,
       ),
     ],
-    parseError: parseErrorOf(parsed),
+    stoppedAt: stoppedAt(parsed),
   };
 };
 
@@ -963,9 +954,10 @@ const importsIn = (content: string, filePath: string, parsedAs: string, scope: S
         importStatement: content.slice(ref.start, ref.end).trim(),
       })),
     ),
-    partlyParsed: Array.map(Option.toArray(scanned.parseError), ({ error, kept }) =>
-      kept({ path: filePath, reason: errorReason(error, lineStarts) }),
-    ),
+    partlyParsed: Array.map(Option.toArray(scanned.stoppedAt), (error): PartlyParsed => ({
+      path: filePath,
+      reason: errorReason(error, lineStarts),
+    })),
   };
 };
 
