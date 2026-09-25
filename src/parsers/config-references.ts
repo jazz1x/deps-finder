@@ -215,11 +215,8 @@ const staticValue = (node: ArrayExpressionElement): Value =>
     Match.when({ type: 'ObjectExpression' }, (object) =>
       Value.Map({ fields: staticRecord(object) }),
     ),
-    Match.whenOr(
-      { type: 'TSAsExpression' },
-      { type: 'TSSatisfiesExpression' },
-      { type: 'ParenthesizedExpression' },
-      (wrapped) => staticValue(wrapped.expression),
+    Match.whenOr({ type: 'TSAsExpression' }, { type: 'TSSatisfiesExpression' }, (wrapped) =>
+      staticValue(wrapped.expression),
     ),
     Match.orElse(() => Value.Opaque()),
   );

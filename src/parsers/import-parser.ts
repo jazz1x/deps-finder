@@ -246,9 +246,6 @@ const staticStringValue: (argument: Argument | undefined) => Option.Option<strin
       Option.flatMap((static_) => Option.fromNullishOr(static_.quasis[0]?.value.cooked)),
     ),
   ),
-  Match.when({ type: 'ParenthesizedExpression' }, (parenthesised) =>
-    staticStringValue(parenthesised.expression),
-  ),
   Match.orElse(() => Option.none()),
 );
 
@@ -577,8 +574,11 @@ const commentReferences = (comment: Comment): ReadonlyArray<ModuleReference> =>
     Match.orElse((): ReadonlyArray<ModuleReference> => []),
   );
 
+// Without parenthesised nodes, reading `require((("x")))` costs no call stack per `(`.
+const UNWRAPPED: ParserOptions = { preserveParens: false };
+
 // CRA and older Vite projects write JSX in .js files.
-const JSX_LANG: ParserOptions = { lang: 'jsx' };
+const JSX_LANG: ParserOptions = { ...UNWRAPPED, lang: 'jsx' };
 
 const OPTIONS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
   '.js': JSX_LANG,
@@ -590,7 +590,7 @@ export const parse = (content: string, filePath: string): ParseResult =>
   parseSync(
     filePath,
     content,
-    Option.getOrUndefined(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath))),
+    Option.getOrElse(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath)), () => UNWRAPPED),
   );
 
 const WITHOUT_JSX: Readonly<Record<string, ParserOptions>> = {
