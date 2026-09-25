@@ -394,6 +394,44 @@ describe('CLI e2e (bin/cli.js)', () => {
     });
   });
 
+  test('a tsconfig paths alias or baseUrl file is local; a paths target that is no project file is a package', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': {
+        dependencies: { utils: '1', components: '1', lodash: '4', 'lodash-es': '4', gone: '1', stale: '1', react: '1', preact: '1' },
+        devDependencies: { '@app/core': '1' },
+      },
+      'tsconfig.json': {
+        compilerOptions: {
+          baseUrl: 'src',
+          paths: {
+            'utils/*': ['utils/*'],
+            '@app/*': ['*'],
+            lodash: ['lodash-es'],
+            'gone/*': ['gone/*'],
+            'stale/*': ['utils/stale/*'],
+            react: ['../node_modules/preact/compat'],
+          },
+        },
+      },
+      'src/utils/format.ts': 'export const f = 1;',
+      'src/core.ts': 'export const c = 1;',
+      'src/components/button.ts': 'export const b = 1;',
+      'src/index.ts': [
+        'import { f } from "utils/format";',
+        'import { c } from "@app/core";',
+        'import { b } from "components/button";',
+        'import merge from "lodash";',
+        'import { g } from "gone/x";',
+        'import { s } from "stale/x";',
+        'import { h } from "react";',
+        'console.log(f, c, b, merge, g, s, h);',
+      ].join('\n'),
+    });
+
+    const r = runCli(['--json', '-a'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['utils', 'components', 'lodash', 'react', '@app/core'], misplaced: [] });
+  });
+
   test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),

@@ -159,6 +159,7 @@ describe('packagesOf', () => {
       { key: '#a/*.css', targets: ['gamma/*.css'] },
       { key: '#npm/*', targets: ['*'] },
     ],
+    compilers: [],
   };
 
   test.each([

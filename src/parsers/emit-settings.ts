@@ -16,7 +16,7 @@ type Located<A> = { readonly dir: string; readonly value: A };
 
 // The nearest file that sets the option decides; its null clears what it inherits. Paths in an
 // option are relative to the file that sets it.
-const setWhere =
+export const setWhere =
   <A>(pick: (config: TsConfig) => A | null | undefined) =>
   (chain: TsConfigChain): Option.Option<Located<A>> =>
     pipe(
@@ -140,21 +140,15 @@ const coverageOf = (chain: TsConfigChain): ((file: string) => boolean) => {
   return (file) => listed.has(file) || (included(file) && !excluded(file));
 };
 
-type Governing = {
+type Governing<A> = {
   readonly head: string;
   readonly covers: (file: string) => boolean;
-  readonly jsx: Option.Option<JsxRuntime>;
-  readonly elision: ImportElision;
+  readonly settings: A;
 };
 
 const headOf = (chain: TsConfigChain): string => Array.headNonEmpty(chain).path;
 
-const governingOf = (chain: TsConfigChain): Governing => ({
-  head: headOf(chain),
-  covers: coverageOf(chain),
-  jsx: jsxRuntimeOf(chain),
-  elision: elisionOf(chain),
-});
+type Emit = { readonly jsx: Option.Option<JsxRuntime>; readonly elision: ImportElision };
 
 const KEEPING: Record<ImportElision, number> = {
   'unused-bindings': 0,
@@ -166,7 +160,7 @@ const byKeeping = Order.mapInput(Order.Number, (elision: ImportElision) => KEEPI
 
 // A file that several tsconfig files compile gets every JSX runtime they set and the elision that
 // keeps the most imports.
-const merged = (governing: Array.NonEmptyReadonlyArray<Governing>): EmitSettings => ({
+const merged = (governing: Array.NonEmptyReadonlyArray<Emit>): EmitSettings => ({
   jsx: Array.match(Array.dedupe(Array.getSomes(Array.map(governing, ({ jsx }) => jsx))), {
     onEmpty: () => UNCONFIGURED.jsx,
     onNonEmpty: (set) => set,
@@ -181,8 +175,10 @@ const merged = (governing: Array.NonEmptyReadonlyArray<Governing>): EmitSettings
 // it; a file none covers falls to tsconfig.json, as tsc and bundlers do, else to all of them.
 const governingFor =
   (file: string) =>
-  (group: Array.NonEmptyReadonlyArray<Governing>): Array.NonEmptyReadonlyArray<Governing> => {
-    const preferred: ReadonlyArray<ReadonlyArray<Governing>> = [
+  <A>(
+    group: Array.NonEmptyReadonlyArray<Governing<A>>,
+  ): Array.NonEmptyReadonlyArray<Governing<A>> => {
+    const preferred: ReadonlyArray<ReadonlyArray<Governing<A>>> = [
       Array.filter(group, (governing) => governing.covers(file)),
       Array.filter(group, (governing) => path.basename(governing.head) === 'tsconfig.json'),
     ];
@@ -193,19 +189,43 @@ const governingFor =
   };
 
 // A file follows the tsconfig files of the nearest directory above it that has any.
-export const emitSettingsOf = (
-  chains: ReadonlyArray<TsConfigChain>,
-): ((file: string) => EmitSettings) => {
+export const governedBy = <A>(
+  chains: ReadonlyArray<readonly [TsConfigChain, A]>,
+): ((file: string) => ReadonlyArray<A>) => {
   const byDirectory = pipe(
-    Array.sort(chains, Order.mapInput(Order.String, headOf)),
-    Array.groupBy((chain) => path.dirname(headOf(chain))),
-    Record.map(Array.map(governingOf)),
+    Array.sort(
+      chains,
+      Order.mapInput(Order.String, ([chain]: readonly [TsConfigChain, A]) => headOf(chain)),
+    ),
+    Array.groupBy(([chain]) => path.dirname(headOf(chain))),
+    Record.map(
+      Array.map(([chain, settings]): Governing<A> => ({
+        head: headOf(chain),
+        covers: coverageOf(chain),
+        settings,
+      })),
+    ),
   );
   return (file) =>
     pipe(
       lineage(path.dirname(file)),
       Array.findFirst((dir) => Record.get(byDirectory, dir)),
-      Option.map((group) => merged(governingFor(file)(group))),
-      Option.getOrElse(() => UNCONFIGURED),
+      Option.match({
+        onNone: (): ReadonlyArray<A> => [],
+        onSome: (group) => Array.map(governingFor(file)(group), ({ settings }) => settings),
+      }),
     );
+};
+
+export const emitSettingsOf = (
+  chains: ReadonlyArray<TsConfigChain>,
+): ((file: string) => EmitSettings) => {
+  const governing = governedBy(
+    Array.map(
+      chains,
+      (chain) => [chain, { jsx: jsxRuntimeOf(chain), elision: elisionOf(chain) }] as const,
+    ),
+  );
+  return (file) =>
+    Array.match(governing(file), { onEmpty: () => UNCONFIGURED, onNonEmpty: merged });
 };

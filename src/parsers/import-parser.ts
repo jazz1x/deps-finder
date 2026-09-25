@@ -1108,7 +1108,7 @@ export const findFiles = (
   const contextOf = fileContextOf(Array.flatMap(manifests.found, (manifest) => manifest.bins));
   const tsconfigs = governingTsConfigs(rootDir, walked.found);
   const emitOf = emitSettingsOf(tsconfigs.found);
-  const resolutionFor = resolutionOf(manifests.found);
+  const resolution = resolutionOf(manifests.found, tsconfigs.found);
   return {
     found: pipe(
       walked.found,
@@ -1118,13 +1118,18 @@ export const findFiles = (
           path: absolute,
           context: contextOf(source),
           emit: emitOf(absolute),
-          resolution: resolutionFor(absolute),
+          resolution: resolution.resolve(absolute),
         };
       }),
       (files) => Array.sort(files, byPath),
     ),
     // Build-directory detection reads the root tsconfig files too.
-    skipped: Array.dedupe([...detected.skipped, ...walked.skipped, ...tsconfigs.skipped]),
+    skipped: Array.dedupe([
+      ...detected.skipped,
+      ...walked.skipped,
+      ...tsconfigs.skipped,
+      ...resolution.skipped,
+    ]),
     unreadable: walked.unreadable,
     packages: Array.map(walked.packages, ({ dir, files }) => ({
       dir: path.join(rootDir, dir),

@@ -1,4 +1,4 @@
-import { Array, Data } from 'effect';
+import { Array, Data, type Option } from 'effect';
 import type { FileError } from './errors.js';
 
 export type PackageName = string;
@@ -72,9 +72,30 @@ export type SubpathImport = {
   readonly targets: ReadonlyArray<string>;
 };
 
-// What a file's specifiers resolve through before node_modules.
+// A tsconfig paths target: a project file, as an absolute path, or a package specifier. Both keep
+// the pattern's "*".
+export type PathTarget = Data.TaggedEnum<{
+  Local: { readonly template: string };
+  Installed: { readonly template: string };
+}>;
+
+export const PathTarget = Data.taggedEnum<PathTarget>();
+
+export type PathAlias = { readonly key: string; readonly targets: ReadonlyArray<PathTarget> };
+
+// names: the entries at its top level, files also without their extension.
+export type BaseUrl = { readonly dir: string; readonly names: ReadonlySet<string> };
+
+export type CompilerResolution = {
+  readonly paths: ReadonlyArray<PathAlias>;
+  readonly baseUrl: Option.Option<BaseUrl>;
+};
+
+// What a file's specifiers resolve through before node_modules: its package.json "imports" and
+// the paths and baseUrl of each tsconfig that compiles it.
 export type ModuleResolution = {
   readonly subpathImports: ReadonlyArray<SubpathImport>;
+  readonly compilers: ReadonlyArray<CompilerResolution>;
 };
 
 export type SourceFile = {

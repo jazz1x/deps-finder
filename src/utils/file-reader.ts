@@ -46,6 +46,10 @@ export const readFile = (path: string): Result.Result<string, FileError> =>
 export const readStats = (path: string): Result.Result<Stats, FileError> =>
   Result.try({ try: () => statSync(path), catch: readFailure(path) });
 
+// A path that cannot be stat'ed holds no file to resolve to.
+export const isFile = (file: string): boolean =>
+  Result.match(readStats(file), { onSuccess: (stats) => stats.isFile(), onFailure: () => false });
+
 export const readRealPath = (path: string): Result.Result<string, FileError> =>
   Result.try({ try: () => realpathSync(path), catch: readFailure(path) });
 
