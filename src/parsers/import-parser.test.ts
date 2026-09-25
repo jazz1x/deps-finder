@@ -390,6 +390,12 @@ describe('extractImports edge cases', () => {
     expect(extractImports(content, 'src/a.mjs').filter((f) => f.packageName === 'pkg')).toEqual([]);
   });
 
+  test('a deeply nested expression is walked without exhausting the stack', () => {
+    const terms = Array.from({ length: 20_000 }, (_, i) => `"s${i}"`).join(' + ');
+    const content = `// we do not require anything\nimport "zod";\nexport const x = ${terms};\nrequire("pkg");`;
+    expect(extractImports(content, 'src/gen.ts').map((f) => f.packageName)).toEqual(['zod', 'pkg']);
+  });
+
   test('require() counts as exactly one runtime finding (no duplicate from REQUIRE_REGEX)', () => {
     const result = extractImports("const m = require('lodash');", 'src/index.ts');
     const lodashEntries = result.filter((f) => f.packageName === 'lodash');

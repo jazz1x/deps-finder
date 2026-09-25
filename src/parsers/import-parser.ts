@@ -22,7 +22,6 @@ import {
   type ParserOptions,
   type StaticExport,
   type StaticImport,
-  Visitor,
   type VisitorObject,
   parseSync,
 } from 'oxc-parser';
@@ -379,14 +378,36 @@ type AstReferences = {
 
 const NO_AST_REFERENCES: AstReferences = { references: [], augmentations: [] };
 
-// The one place that collects by mutation: oxc's Visitor walks 15.7k lines in 31ms where a pure
-// recursive fold took 139ms.
+type AstNode = { readonly type: string };
+
+type Handlers = Readonly<Record<string, ((node: AstNode) => void) | undefined>>;
+
+const isAstNode = (value: unknown): value is AstNode =>
+  typeof value === 'object' && value !== null && typeof Reflect.get(value, 'type') === 'string';
+
+// The one place that collects by mutation. A pure recursive fold took 139ms over 15.7k lines
+// where oxc's Visitor took 31ms, but the Visitor recurses once per nesting level: a 5,000-term
+// string concatenation overflowed the stack. This loop keeps its own stack, visits the nodes in
+// the Visitor's order, and walks foodspring-front's 1,975 files in 58ms against its 46ms.
 export const collectVisiting = <A>(
   program: Program,
   visitor: (collect: (found: ReadonlyArray<A>) => void) => VisitorObject,
 ): ReadonlyArray<A> => {
   const found: A[] = [];
-  new Visitor(visitor((items) => found.push(...items))).visit(program);
+  const handlers = visitor((items) => found.push(...items)) as Handlers;
+  const pending: AstNode[] = [program];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    handlers[node.type]?.(node);
+    const children = Object.values(node);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const child: unknown = children[index];
+      const nodes = globalThis.Array.isArray(child) ? child : [child];
+      for (let at = nodes.length - 1; at >= 0; at -= 1) {
+        const item: unknown = nodes[at];
+        if (isAstNode(item)) pending.push(item);
+      }
+    }
+  }
   return found;
 };
 
