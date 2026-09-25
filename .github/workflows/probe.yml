@@ -1,7 +1,6 @@
 name: probe-cli-hang
 on:
-  push:
-    branches: [probe/cli-hang]
+  pull_request:
 
 jobs:
   probe:
@@ -16,18 +15,23 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
+      - name: Cache Bun
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      - run: bun run build
-      - name: full validate x12 with a report on any CLI run past 4s
+      - name: validate x6, thread state of any CLI run alive past 4s
         env:
           PROBE_REPORT_DIR: ${{ runner.temp }}/reports
         run: |
           mkdir -p "$PROBE_REPORT_DIR"
-          for i in $(seq 1 12); do
+          for i in $(seq 1 6); do
             bun run validate > "$RUNNER_TEMP/run-$i.log" 2>&1 || echo "run $i failed"
-            grep -hE '\(fail\)|timed out|dangling' "$RUNNER_TEMP/run-$i.log" || true
           done
-          ls -la "$PROBE_REPORT_DIR"
+          for d in "$PROBE_REPORT_DIR"/hang-*; do [ -d "$d" ] && { echo "== $d"; cat "$d/ps.txt" "$d/tasks.txt"; }; done
+          echo "hangs: $(ls -d "$PROBE_REPORT_DIR"/hang-* 2>/dev/null | wc -l)"
       - uses: actions/upload-artifact@v5
         if: always()
         with:

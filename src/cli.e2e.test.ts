@@ -11,13 +11,16 @@ const STRIP_ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
 const runCli = (args: ReadonlyArray<string>, cwd: string) => {
   const reports = process.env['PROBE_REPORT_DIR'] ?? '/tmp/probe-reports';
-  const result = spawnSync('node', ['--report-on-signal', '--report-signal=SIGUSR2', `--report-directory=${reports}`, CLI_PATH, ...args], {
+  const watch = [
+    'node "$@" & pid=$!',
+    `( sleep 4; kill -0 $pid 2>/dev/null && { d=${reports}/hang-$pid; mkdir -p $d; ps -L -o pid,tid,stat,wchan:32,etime,comm -p $pid > $d/ps.txt; for t in /proc/$pid/task/*; do echo "$t $(cat $t/comm) $(cat $t/wchan) $(cat $t/syscall 2>&1)"; done > $d/tasks.txt; ps -ef --forest > $d/tree.txt; } ) </dev/null >/dev/null 2>&1 & w=$!`,
+    'wait $pid; s=$?; kill $w 2>/dev/null; exit $s',
+  ].join('\n');
+  const result = spawnSync('sh', ['-c', watch, 'probe', CLI_PATH, ...args], {
     cwd,
     encoding: 'utf-8',
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
-    timeout: 4000,
-    killSignal: 'SIGUSR2',
   });
   return {
     stdout: result.stdout ?? '',
