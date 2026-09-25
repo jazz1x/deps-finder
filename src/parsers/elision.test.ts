@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { type EmitSettings, JsxRuntime, type PackageJson, type SourceFile } from '@/domain/types';
 import { UNCONFIGURED } from './emit-settings';
+import { NO_RESOLUTION } from './module-resolution';
 import { parseMultipleFiles } from './import-parser';
 import { elideTypeOnlyImports } from './elision';
 
@@ -28,7 +29,12 @@ describe('elideTypeOnlyImports', () => {
 
   const elided = async (files: Record<string, string>, packageJson: PackageJson, emit: EmitSettings = UNCONFIGURED) => {
     await Promise.all(Object.entries(files).map(([file, content]) => writeFile(path.join(testDir, file), content)));
-    const sources = Object.keys(files).map((file): SourceFile => ({ path: path.join(testDir, file), context: 'production', emit }));
+    const sources = Object.keys(files).map((file): SourceFile => ({
+      path: path.join(testDir, file),
+      context: 'production',
+      emit,
+      resolution: NO_RESOLUTION,
+    }));
     return elideTypeOnlyImports(packageJson, parseMultipleFiles(sources).imports, sources)
       .imports.filter((found) => found.packageName !== 'typescript')
       .map((found) => `${found.packageName}:${found.importType}:${path.basename(found.file)}:${found.line}`);

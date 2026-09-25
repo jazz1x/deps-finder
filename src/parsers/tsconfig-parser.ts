@@ -8,7 +8,7 @@ import {
   type TsConfigFile,
   extendsOf,
 } from '../utils/tsconfig-reader.js';
-import { extractPackageName } from './import-parser.js';
+import { extractPackageName } from './module-resolution.js';
 
 type Use = {
   readonly packageName: PackageName;

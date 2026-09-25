@@ -369,6 +369,31 @@ describe('CLI e2e (bin/cli.js)', () => {
     });
   });
 
+  test('a # import uses the packages its package.json "imports" maps it to', async () => {
+    await writeFiles(tmpDir, {
+      'package.json': {
+        type: 'module',
+        imports: {
+          '#dep': 'alpha',
+          '#x': { node: { import: 'beta' }, default: './src/x.js' },
+          '#lib/*': ['gamma/*'],
+          '#lib/own/*': './src/own/*',
+          '#tool': 'zeta',
+        },
+        dependencies: { alpha: '1', beta: '1', gamma: '1', delta: '1' },
+        devDependencies: { zeta: '1' },
+      },
+      'src/index.js': 'import "#dep";\nimport "#x";\nimport "#lib/a.js";\nimport "#lib/own/b.js";\nimport "#tool";',
+    });
+
+    const r = runCli(['--json'], tmpDir);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      unused: ['delta'],
+      misplaced: [{ packageName: 'zeta', locations: [{ line: 5, importStatement: 'import "#tool";' }] }],
+      totalIssues: 2,
+    });
+  });
+
   test('tsconfig usage counts: types, importHelpers, and a missing extends warns', async () => {
     await writeFile(
       path.join(tmpDir, 'package.json'),

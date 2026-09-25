@@ -59,6 +59,12 @@ import {
 } from '../domain/types.js';
 import { componentBlocks, componentFramework } from './component-blocks.js';
 import { UNCONFIGURED, emitSettingsOf } from './emit-settings.js';
+import {
+  NO_RESOLUTION,
+  extractPackageName,
+  packagesOf,
+  resolutionOf,
+} from './module-resolution.js';
 import { type StyleLoad, type StyleSyntax, stylesheetReferences } from './stylesheet-parser.js';
 import { type LayoutManifest, readLayoutManifest, readPackageJson } from './package-parser.js';
 import { detectBuildDirectories, detectByHeuristic } from '../utils/detect-build-dirs.js';
@@ -70,12 +76,6 @@ import {
   readRootTsConfigs,
   readTsConfigChains,
 } from '../utils/tsconfig-reader.js';
-
-// A bundler's ?raw or #fragment suffix is not part of the name; a leading # is a subpath import.
-const PACKAGE_NAME = /^(?![./]|https?:|file:)(@[^/?#]+\/[^/?#]+|[^@/?#][^/?#]*)/;
-
-export const extractPackageName = (specifier: string): Option.Option<string> =>
-  Option.fromNullishOr(PACKAGE_NAME.exec(specifier)?.[1]);
 
 const hasAnalyzableExtension = (filePath: string): boolean =>
   Array.contains(ANALYZABLE_EXTENSIONS, path.extname(filePath));
@@ -812,7 +812,7 @@ const testGlobalReferences = (
   );
 };
 
-type Scope = Pick<SourceFile, 'context' | 'emit'>;
+type Scope = Pick<SourceFile, 'context' | 'emit' | 'resolution'>;
 
 const moduleReferences = (
   content: string,
@@ -851,22 +851,16 @@ const importsIn = (
   scope: Scope,
 ): ReadonlyArray<FileImport> => {
   const lineStarts = buildLineStarts(content);
+  const packagesFor = packagesOf(scope.resolution);
 
-  return pipe(
-    moduleReferences(content, parsedAs, scope),
-    Array.map((ref) =>
-      pipe(
-        extractPackageName(ref.specifier),
-        Option.map((packageName): FileImport => ({
-          packageName,
-          importType: ref.importType,
-          file: filePath,
-          line: lineNumberAt(lineStarts, ref.start),
-          importStatement: content.slice(ref.start, ref.end).trim(),
-        })),
-      ),
-    ),
-    Array.getSomes,
+  return Array.flatMap(moduleReferences(content, parsedAs, scope), (ref) =>
+    Array.map(packagesFor(ref.specifier), (packageName): FileImport => ({
+      packageName,
+      importType: ref.importType,
+      file: filePath,
+      line: lineNumberAt(lineStarts, ref.start),
+      importStatement: content.slice(ref.start, ref.end).trim(),
+    })),
   );
 };
 
@@ -1114,12 +1108,18 @@ export const findFiles = (
   const contextOf = fileContextOf(Array.flatMap(manifests.found, (manifest) => manifest.bins));
   const tsconfigs = governingTsConfigs(rootDir, walked.found);
   const emitOf = emitSettingsOf(tsconfigs.found);
+  const resolutionFor = resolutionOf(manifests.found);
   return {
     found: pipe(
       walked.found,
       Array.map((source): SourceFile => {
         const absolute = path.resolve(rootDir, source.path);
-        return { path: absolute, context: contextOf(source), emit: emitOf(absolute) };
+        return {
+          path: absolute,
+          context: contextOf(source),
+          emit: emitOf(absolute),
+          resolution: resolutionFor(absolute),
+        };
       }),
       (files) => Array.sort(files, byPath),
     ),
@@ -1156,6 +1156,7 @@ const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileEr
         path: file,
         context: 'development',
         emit: UNCONFIGURED,
+        resolution: NO_RESOLUTION,
       })),
     );
     return {

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Array, Match, Predicate, Record, Result, Schema, pipe } from 'effect';
 import type { FileError } from '../domain/errors.js';
-import type { PackageJson, PackageName } from '../domain/types.js';
+import type { PackageJson, PackageName, SubpathImport } from '../domain/types.js';
 import { lenientKey, readJsonFile } from '../utils/file-reader.js';
 
 const DependencySection = Schema.optionalKey(
@@ -82,6 +82,7 @@ export type ToolKey = (typeof TOOL_KEYS)[number];
 
 const LayoutManifestFile = Schema.Struct({
   scripts: lenientKey(Schema.Record(Schema.String, Schema.Unknown)),
+  imports: lenientKey(Schema.Record(Schema.String, ExportsTarget)),
   bin: lenientKey(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
   eslintConfig: Schema.optionalKey(Schema.Unknown),
   babel: Schema.optionalKey(Schema.Unknown),
@@ -99,7 +100,28 @@ export type LayoutManifest = {
   readonly scripts: Readonly<Record<string, string>>;
   readonly bins: ReadonlyArray<string>;
   readonly tools: ReadonlyArray<readonly [ToolKey, unknown]>;
+  readonly subpathImports: ReadonlyArray<SubpathImport>;
 };
+
+// Every string a target can resolve to, under any condition.
+const targetStrings = (target: ExportsTarget): ReadonlyArray<string> =>
+  Match.value(target).pipe(
+    Match.when(Match.string, (single) => [single]),
+    Match.when(Match.null, (): ReadonlyArray<string> => []),
+    Match.when(isTargetList, (targets) => Array.flatMap(targets, targetStrings)),
+    Match.when(Match.record, (conditions) =>
+      Array.flatMap(Record.values(conditions), targetStrings),
+    ),
+    Match.exhaustive,
+  );
+
+const subpathImportsOf = (
+  imports: Readonly<Record<string, ExportsTarget>> | undefined,
+): ReadonlyArray<SubpathImport> =>
+  Array.map(Record.toEntries(imports ?? {}), ([key, target]) => ({
+    key,
+    targets: targetStrings(target),
+  }));
 
 const binTargetsOf = (bin: string | Readonly<Record<string, string>> | undefined) =>
   Match.value(bin).pipe(
@@ -123,6 +145,7 @@ export const readLayoutManifest =
           Array.map((key) => [key, file[key]] as const),
           Array.filter(([, value]) => value !== undefined),
         ),
+        subpathImports: subpathImportsOf(file.imports),
       })),
     );
 

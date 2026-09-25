@@ -66,10 +66,22 @@ export type EmitSettings = {
   readonly elision: ImportElision;
 };
 
+// A package.json "imports" key and the targets of all its conditions.
+export type SubpathImport = {
+  readonly key: string;
+  readonly targets: ReadonlyArray<string>;
+};
+
+// What a file's specifiers resolve through before node_modules.
+export type ModuleResolution = {
+  readonly subpathImports: ReadonlyArray<SubpathImport>;
+};
+
 export type SourceFile = {
   readonly path: string;
   readonly context: FileContext;
   readonly emit: EmitSettings;
+  readonly resolution: ModuleResolution;
 };
 
 export type ImportLocation = {

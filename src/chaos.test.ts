@@ -14,7 +14,8 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { Option, Schema } from 'effect';
 import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
 import { UNCONFIGURED } from '@/parsers/emit-settings';
-import { extractImports, extractPackageName, parseFile } from '@/parsers/import-parser';
+import { extractImports, parseFile } from '@/parsers/import-parser';
+import { NO_RESOLUTION, extractPackageName } from '@/parsers/module-resolution';
 import { readPackageJson } from '@/parsers/package-parser';
 import type { PackageJson } from '@/domain/types';
 import { makeRng } from '@/test-utils/random';
@@ -83,7 +84,7 @@ describe('chaos: extractPackageName never throws', () => {
 
 describe('chaos: extractImports never throws', () => {
   const rng = makeRng(0xdeadbeef);
-  const scope = { context: 'production', emit: UNCONFIGURED } as const;
+  const scope = { context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION } as const;
   test(`returns ImportDetails[] on ${FUZZ_ITERATIONS} random source-like inputs`, () => {
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
       const content = randomImportLikeContent(rng);
@@ -191,7 +192,7 @@ describe('chaos: file-reader on random file contents', () => {
     await Promise.all(paths.map((p) => writeFile(p, randomImportLikeContent(rng))));
 
     for (const filePath of paths) {
-      const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED });
+      const result = parseFile({ path: filePath, context: 'production', emit: UNCONFIGURED, resolution: NO_RESOLUTION });
       expect(Array.isArray(result.imports)).toBe(true);
     }
   });

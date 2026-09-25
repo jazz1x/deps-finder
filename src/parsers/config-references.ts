@@ -34,7 +34,8 @@ import {
   readDirectory,
   readFile,
 } from '../utils/file-reader.js';
-import { collectVisiting, extractPackageName, parse } from './import-parser.js';
+import { collectVisiting, parse } from './import-parser.js';
+import { extractPackageName } from './module-resolution.js';
 import type { LayoutManifest, ToolKey } from './package-parser.js';
 
 type KnownTool =
