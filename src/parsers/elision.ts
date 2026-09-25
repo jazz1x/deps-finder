@@ -54,10 +54,10 @@ const factoryUse = (factories: ReadonlyArray<string>, at: number): ReadonlyArray
 
 const byStart = Order.mapInput(Order.Number, (span: Spanned) => span.start);
 
-// Type spans come from a tree walk, so they nest or are disjoint, and no two start together
-// (0 in 34k spans across 1975 real files): the outermost ones are disjoint and answer "inside a
-// type?" by binary search. A 34k-line codegen file took 1.9s when every name was checked
-// against every span.
+// Type spans come from a pre-order tree walk, so they nest or are disjoint and a stable sort
+// keeps a parent before a child that starts with it: the outermost ones are disjoint and answer
+// "inside a type?" by binary search. A 34k-line codegen file took 1.9s when every name was
+// checked against every span.
 const coveredBy = (spans: ReadonlyArray<Spanned>): ((at: number) => boolean) => {
   const sorted = Array.sort(spans, byStart);
   const reachBefore = Array.scan(sorted, -1, (reach, span) => Math.max(reach, span.end));

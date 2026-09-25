@@ -93,7 +93,7 @@ describe('elideTypeOnlyImports', () => {
     const content = [
       "import { Base } from 'base';",
       "import { Inner } from 'inner';",
-      'export interface I<T = Inner> extends Base {}',
+      'export interface I<T = Inner, U = Inner> extends Base {}',
     ].join('\n');
     expect(await elided({ 'a.ts': content }, pkg({ devDependencies: ['base', 'inner'] }))).toEqual([
       'base:type-only:a.ts:1',
