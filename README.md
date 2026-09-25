@@ -249,6 +249,8 @@ A package used without an import is still reported as unused when nothing above 
 
 A bare builtin name such as `buffer` or `events` is matched against a declared package of that name (the npm polyfill a bundler would use). Write `node:buffer` when you mean the Node builtin.
 
+`createRequire` is followed by name, not by scope: a function assigned later (`let r; r = createRequire(…)`) is not counted, and a parameter that shadows an imported `createRequire` is.
+
 Indented Sass (`.sass`, `<style lang="sass">`) and Stylus (`.styl`, `<style lang="stylus">`) are not read. A Sass or Less `@import "name"` that loads a local partial counts as use of a declared package called `name`. The `src` attribute of a component's `<script>` or `<style>` (`<style src="pkg/theme.css">`) is not read. An `outDir` that holds the analysed sources, such as `"outDir": "src"`, is excluded as build output, so the imports in it are not counted.
 
 deps-finder runs on a worker thread with a 256 MB stack, because oxc's native parser recurses once per nesting level. A source nested deeper than that stack holds still crashes the process (exit `132` or `139`, outside the codes above), and no report is printed: on macOS arm64 that is past about 140,000 nested object literals, 160,000 nested arrays or parentheses, or 180,000 nested type arguments. Such files are usually generated; `--exclude` them.

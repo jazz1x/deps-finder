@@ -250,6 +250,8 @@ import 없이 쓰는 패키지라도 위 방법으로 찾지 못하면 unused로
 
 `buffer`, `events` 같은 내장 모듈 이름을 접두사 없이 쓰면, 같은 이름으로 선언된 패키지(번들러가 쓰는 npm 폴리필)와 맞춰 봅니다. Node 내장 모듈을 뜻한다면 `node:buffer`처럼 쓰세요.
 
+`createRequire`는 스코프가 아니라 이름으로 따라갑니다: 나중에 대입한 함수(`let r; r = createRequire(…)`)는 세지 않고, import한 `createRequire`를 가리는 매개변수는 셉니다.
+
 들여쓰기 문법 Sass(`.sass`, `<style lang="sass">`)와 Stylus(`.styl`, `<style lang="stylus">`)는 읽지 않습니다. Sass나 Less의 `@import "name"`이 로컬 partial을 불러오더라도, `name`이라는 패키지가 선언돼 있으면 그 패키지 사용으로 셉니다. 컴포넌트 `<script>`·`<style>`의 `src` 속성(`<style src="pkg/theme.css">`)은 읽지 않습니다. `"outDir": "src"`처럼 분석할 소스가 든 디렉토리를 `outDir`로 잡으면 빌드 출력으로 보고 제외하므로, 그 안의 import는 세지 않습니다.
 
 oxc 네이티브 파서는 중첩 한 단마다 재귀하므로 deps-finder는 스택 256 MB의 워커 스레드에서 돕니다. 그 스택보다 깊게 중첩된 소스는 여전히 프로세스를 죽이고(종료 코드 `132`나 `139`, 위 표 밖의 코드), 보고서는 나오지 않습니다. macOS arm64에서는 객체 리터럴 약 140,000단, 배열이나 괄호 약 160,000단, 타입 인자 약 180,000단을 넘으면 그렇습니다. 이런 파일은 대개 생성물이니 `--exclude`로 빼세요.
