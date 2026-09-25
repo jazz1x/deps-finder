@@ -25,6 +25,8 @@ export const MESSAGES = {
     `warning: skipped ${path} (${reason}); its imports are not counted.`,
   SOURCE_PARTLY_PARSED: (path: string, reason: string) =>
     `warning: the parser reported an error in ${path} (${reason}); the imports it read still count.`,
+  SOURCE_PARSE_STOPPED: (path: string, reason: string) =>
+    `warning: the parser stopped at an error in ${path} (${reason}); only its import and export statements before the error count.`,
   INPUT_SKIPPED: (path: string, reason: string) =>
     `warning: could not use ${path} (${reason}); the scan went on without it.`,
   PACKAGE_LEFT_OUT: (path: string) =>

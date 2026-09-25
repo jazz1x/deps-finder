@@ -153,18 +153,24 @@ describe('CLI e2e (bin/cli.js)', () => {
     expect(JSON.parse(r.stdout).unused).toEqual(['tailwindcss']);
   });
 
-  test('warns about a source with a syntax error and counts the imports the parser recovered', async () => {
+  test('warns about a source with a parse error and counts what the parser kept', async () => {
     await writeFiles(tmpDir, {
-      'package.json': { dependencies: { lodash: '4', zod: '3' } },
+      'package.json': { dependencies: { lodash: '4', zod: '3', d: '1', e: '1' } },
       'src/a.ts': 'import lodash from "lodash";\nconst x = {;\nimport { z } from "zod";',
       'src/b.vue': '<script>\nimport { z } from "zod";\nconst y = {;\n</script>',
+      'src/d.js': 'const d = require("d");\nreturn d;\nfunction (',
+      'src/e.ts': 'declare const x: number = 1;\nrequire("e");',
     });
     const r = runCli(['--json'], tmpDir);
     expect(r.stderr).toMatch(
-      /warning: the parser reported an error in \S*src\/a\.ts \(Unexpected token at line 2\); the imports it read still count\./,
+      /warning: the parser stopped at an error in \S*src\/a\.ts \(Unexpected token at line 2\); only its import and export statements before the error count\./,
     );
-    expect(r.stderr).toMatch(/warning: the parser reported an error in \S*src\/b\.vue \(\S.* at line 3\)/);
-    expect(JSON.parse(r.stdout).unused).toEqual([]);
+    expect(r.stderr).toMatch(/warning: the parser stopped at an error in \S*src\/b\.vue \(\S.* at line 3\)/);
+    expect(r.stderr).toMatch(/warning: the parser stopped at an error in \S*src\/d\.js \(Expected function name at line 3\)/);
+    expect(r.stderr).toMatch(
+      /warning: the parser reported an error in \S*src\/e\.ts \(Initializers are not allowed in ambient contexts\. at line 1\); the imports it read still count\./,
+    );
+    expect(JSON.parse(r.stdout).unused).toEqual(['d']);
   });
 
   test('a script without import or export parses as CommonJS, where a top-level return is legal', async () => {

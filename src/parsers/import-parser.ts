@@ -53,7 +53,7 @@ import {
   PRODUCTION_SECTIONS,
   type PackageJson,
   type PackageName,
-  type PartlyParsed,
+  PartlyParsed,
   type SourceFile,
 } from '../domain/types.js';
 import { componentBlocks, componentFramework } from './component-blocks.js';
@@ -886,14 +886,27 @@ type Scope = Pick<SourceFile, 'context' | 'emit' | 'resolution'>;
 
 type OxcError = ParseResult['errors'][number];
 
-// firstError: oxc recovers from syntax errors, so the references are what it could read.
+type ParseError = {
+  readonly error: OxcError;
+  readonly kept: (source: { readonly path: string; readonly reason: string }) => PartlyParsed;
+};
+
+// A syntax error empties the program; a grammar error leaves it whole.
+const parseErrorOf = (parsed: ParseResult): Option.Option<ParseError> =>
+  Option.map(Array.head(parsed.errors), (error) => ({
+    error,
+    kept: Array.isReadonlyArrayEmpty(parsed.program.body)
+      ? PartlyParsed.Stopped
+      : PartlyParsed.Recovered,
+  }));
+
 const moduleReferences = (
   content: string,
   filePath: string,
   { context, emit }: Scope,
 ): {
   readonly references: ReadonlyArray<ModuleReference>;
-  readonly firstError: Option.Option<OxcError>;
+  readonly parseError: Option.Option<ParseError>;
 } => {
   const accepted = parseWithOptions(content, filePath);
   const { parsed } = accepted;
@@ -917,7 +930,7 @@ const moduleReferences = (
         Match.exhaustive,
       ),
     ],
-    firstError: Array.head(parsed.errors),
+    parseError: parseErrorOf(parsed),
   };
 };
 
@@ -950,10 +963,9 @@ const importsIn = (content: string, filePath: string, parsedAs: string, scope: S
         importStatement: content.slice(ref.start, ref.end).trim(),
       })),
     ),
-    partlyParsed: Array.map(Option.toArray(scanned.firstError), (error) => ({
-      path: filePath,
-      reason: errorReason(error, lineStarts),
-    })),
+    partlyParsed: Array.map(Option.toArray(scanned.parseError), ({ error, kept }) =>
+      kept({ path: filePath, reason: errorReason(error, lineStarts) }),
+    ),
   };
 };
 
