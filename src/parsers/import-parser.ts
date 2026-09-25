@@ -595,43 +595,50 @@ const COMMONJS_BY_EXTENSION: Readonly<Record<string, ParserOptions>> = {
 
 // oxc reads every file as a module. Node runs a .js or .cjs file without import or export as
 // CommonJS, where a top-level return is legal, so such a file that fails is read again as one.
-export const parse = (content: string, filePath: string): ParseResult => {
-  const parsed = parseSync(
-    filePath,
-    content,
-    Option.getOrElse(Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath)), () => UNWRAPPED),
+const parseWithOptions = (
+  content: string,
+  filePath: string,
+): { readonly parsed: ParseResult; readonly options: ParserOptions } => {
+  const options = Option.getOrElse(
+    Record.get(OPTIONS_BY_EXTENSION, path.extname(filePath)),
+    () => UNWRAPPED,
   );
+  const parsed = parseSync(filePath, content, options);
   return pipe(
     Record.get(COMMONJS_BY_EXTENSION, path.extname(filePath)),
     Option.filter(
       () => !parsed.module.hasModuleSyntax && Array.isReadonlyArrayNonEmpty(parsed.errors),
     ),
     Option.match({
-      onNone: () => parsed,
-      onSome: (commonjs) => parseSync(filePath, content, commonjs),
+      onNone: () => ({ parsed, options }),
+      onSome: (commonjs) => ({ parsed: parseSync(filePath, content, commonjs), options: commonjs }),
     }),
   );
 };
 
-const WITHOUT_JSX: Readonly<Record<string, ParserOptions>> = {
-  '.tsx': { lang: 'ts' },
-  '.jsx': { lang: 'js' },
-  '.js': { lang: 'js' },
-  '.mjs': { lang: 'js' },
-  '.cjs': { lang: 'js' },
+export const parse = (content: string, filePath: string): ParseResult =>
+  parseWithOptions(content, filePath).parsed;
+
+const WITHOUT_JSX: Readonly<Record<string, NonNullable<ParserOptions['lang']>>> = {
+  '.tsx': 'ts',
+  '.jsx': 'js',
+  '.js': 'js',
+  '.mjs': 'js',
+  '.cjs': 'js',
 };
 
 // A file that parses only with JSX holds JSX. Walking every such AST for JSX nodes cost
 // foodspring-front 1.3s over a 0.2s parse; this second parse costs 30ms and fails on the same files.
+// It keeps the accepted parse's source type, or a CommonJS top-level return would read as JSX.
 const firstJsxAt = (
   content: string,
   filePath: string,
-  parsed: ParseResult,
+  { parsed, options }: ReturnType<typeof parseWithOptions>,
 ): Option.Option<number> =>
   pipe(
     Record.get(WITHOUT_JSX, path.extname(filePath)),
     Option.filter(() => content.includes('<') && Array.isReadonlyArrayEmpty(parsed.errors)),
-    Option.flatMap((options) => Array.head(parseSync(filePath, content, options).errors)),
+    Option.flatMap((lang) => Array.head(parseSync(filePath, content, { ...options, lang }).errors)),
     // An error without a label still means JSX, which starts at the first '<' or after it.
     Option.map((error) =>
       pipe(
@@ -713,14 +720,14 @@ export const fileJsxRuntimes = (
 const jsxRuntimeReferences = (
   content: string,
   filePath: string,
-  parsed: ParseResult,
+  accepted: ReturnType<typeof parseWithOptions>,
   configured: Array.NonEmptyReadonlyArray<JsxRuntime>,
 ): ReadonlyArray<ModuleReference> =>
-  Option.match(firstJsxAt(content, filePath, parsed), {
+  Option.match(firstJsxAt(content, filePath, accepted), {
     onNone: () => [],
     onSome: (at) =>
       Array.flatMap(
-        fileJsxRuntimes(content, parsed, configured),
+        fileJsxRuntimes(content, accepted.parsed, configured),
         JsxRuntime.$match({
           Classic: (): ReadonlyArray<ModuleReference> => [],
           Automatic: ({ importSource }) => [
@@ -888,7 +895,8 @@ const moduleReferences = (
   readonly references: ReadonlyArray<ModuleReference>;
   readonly firstError: Option.Option<OxcError>;
 } => {
-  const parsed = parse(content, filePath);
+  const accepted = parseWithOptions(content, filePath);
+  const { parsed } = accepted;
   const ast =
     AST_MARKER.test(content) || hasTypeImport(content, parsed)
       ? astReferences(parsed)
@@ -902,7 +910,7 @@ const moduleReferences = (
       ...ast.references,
       ...(parsed.module.hasModuleSyntax ? ast.augmentations : []),
       ...(COMMENT_MARKER.test(content) ? Array.flatMap(parsed.comments, commentReferences) : []),
-      ...jsxRuntimeReferences(content, filePath, parsed, emit.jsx),
+      ...jsxRuntimeReferences(content, filePath, accepted, emit.jsx),
       ...Match.value(context).pipe(
         Match.when('development', () => testGlobalReferences(content, parsed)),
         Match.when('production', () => []),

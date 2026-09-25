@@ -627,6 +627,7 @@ describe('extractImports JSX runtime', () => {
 
   test('no runtime import without JSX or under the classic runtime', () => {
     expect(uses('export const lt = (a: number) => a < 2;\nexport const id = <T,>(v: T) => v;', 'src/a.tsx')).toEqual([]);
+    expect(uses('const _ = require("lodash");\nif (_.a < 1) return;', 'src/x.js')).toEqual(['lodash:runtime:1']);
     expect(
       uses('export const A = () => <div />;', 'src/A.tsx', { ...UNCONFIGURED, jsx: [JsxRuntime.Classic({ factory: 'React' })] }),
     ).toEqual([]);
