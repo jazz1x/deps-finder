@@ -18,13 +18,13 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: bun install --frozen-lockfile
       - run: bun run build
-      - name: e2e x15 with a report on any run past 4s
+      - name: full validate x12 with a report on any CLI run past 4s
         env:
           PROBE_REPORT_DIR: ${{ runner.temp }}/reports
         run: |
           mkdir -p "$PROBE_REPORT_DIR"
-          for i in $(seq 1 15); do
-            bun test src/cli.e2e.test.ts > "$RUNNER_TEMP/run-$i.log" 2>&1 || echo "run $i failed"
+          for i in $(seq 1 12); do
+            bun run validate > "$RUNNER_TEMP/run-$i.log" 2>&1 || echo "run $i failed"
             grep -hE '\(fail\)|timed out|dangling' "$RUNNER_TEMP/run-$i.log" || true
           done
           ls -la "$PROBE_REPORT_DIR"
