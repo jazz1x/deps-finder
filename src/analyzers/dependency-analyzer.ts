@@ -98,6 +98,34 @@ const declaredIn =
       Array.dedupe,
     );
 
+const notIgnoredBy =
+  (options: AnalyzeOptions) =>
+  (name: PackageName): boolean =>
+    !Array.contains(options.ignoredPackages, name);
+
+type UnusedCandidates = Pick<AnalysisResult, 'unused' | 'unusedPeer'>;
+
+// What is reported unused when nothing is used.
+export const unusedCandidates = (
+  packageJson: PackageJson,
+  options: AnalyzeOptions,
+): UnusedCandidates => {
+  const declared = declaredIn(packageJson, options.sections);
+  const ships = shipsWith(packageJson);
+  const peers = pipe(
+    declared('peerDependencies'),
+    Array.filter((dep) => !ships(dep)),
+  );
+  return {
+    unused: pipe(
+      declared(...PRODUCTION_SECTIONS, 'devDependencies'),
+      Array.filter((dep) => !Array.contains(peers, dep)),
+      Array.filter(notIgnoredBy(options)),
+    ),
+    unusedPeer: Array.filter(peers, notIgnoredBy(options)),
+  };
+};
+
 export const analyzeDependencies = (
   packageJson: PackageJson,
   allImports: ReadonlyArray<ImportDetails>,
@@ -108,24 +136,12 @@ export const analyzeDependencies = (
   const productionRuntime = indexUsage(Array.filter(production, ofType('runtime')));
   const productionTypeOnly = indexUsage(Array.filter(production, ofType('type-only')));
   const productionPeer = indexUsage(Array.filter(production, ofType('peer')));
-  const notIgnored = (name: PackageName): boolean => !Array.contains(options.ignoredPackages, name);
-  const declared = declaredIn(packageJson, options.sections);
+  const notIgnored = notIgnoredBy(options);
+  const candidates = unusedCandidates(packageJson, options);
 
-  const ships = shipsWith(packageJson);
+  const unused = Array.filter(candidates.unused, isUnused(used));
 
-  const peers = pipe(
-    declared('peerDependencies'),
-    Array.filter((dep) => !ships(dep)),
-  );
-
-  const unused = pipe(
-    declared(...PRODUCTION_SECTIONS, 'devDependencies'),
-    Array.filter((dep) => !Array.contains(peers, dep)),
-    Array.filter(isUnused(used)),
-    Array.filter(notIgnored),
-  );
-
-  const unusedPeer = pipe(peers, Array.filter(isUnused(used)), Array.filter(notIgnored));
+  const unusedPeer = Array.filter(candidates.unusedPeer, isUnused(used));
 
   // Published declarations import these types, so consumers need them installed.
   const typeOnlyUsed = Match.value(packageJson.declarations).pipe(

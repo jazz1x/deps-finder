@@ -14,3 +14,10 @@ export type RunOutcome = Data.TaggedEnum<{
 }>;
 
 export const { IssuesFound } = Data.taggedEnum<RunOutcome>();
+
+export type RunFailure = Data.TaggedEnum<{
+  InstallRequired: { readonly root: string };
+  PlugAndPlayUnread: { readonly root: string };
+}>;
+
+export const { InstallRequired, PlugAndPlayUnread } = Data.taggedEnum<RunFailure>();

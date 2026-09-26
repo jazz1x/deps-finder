@@ -15,6 +15,7 @@ const installedIn = (installation: Installation) => (name: PackageName) =>
   Installation.$match(installation, {
     Installed: ({ packages }) => Record.get(packages, name),
     NotInstalled: () => Option.none<InstalledPackage>(),
+    PlugAndPlay: () => Option.none<InstalledPackage>(),
   });
 
 // A package that is not installed is taken to name its binary after itself.

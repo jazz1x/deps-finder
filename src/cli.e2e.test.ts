@@ -5,6 +5,7 @@ import { chmod, mkdir, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/pro
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pkg from '../package.json';
+import { MESSAGES } from '@/constants/messages';
 
 const REPO_ROOT = path.resolve(import.meta.dir, '..');
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'cli.js');
@@ -29,6 +30,9 @@ const writeFiles = async (root: string, files: Readonly<Record<string, unknown>>
     await writeFile(path.join(root, file), typeof content === 'string' ? content : JSON.stringify(content));
   }
 };
+
+// A run decides unused only against an install, and one declared package installed is one.
+const installed = (name: string) => ({ [`node_modules/${name}/package.json`]: { name } });
 
 describe('CLI e2e (bin/cli.js)', () => {
   let baseTmpDir = '';
@@ -71,6 +75,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('analyzes the project directory given as an argument', async () => {
     await mkdir(path.join(tmpDir, 'app'));
     await writeFile(path.join(tmpDir, 'app/package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await writeFiles(path.join(tmpDir, 'app'), installed('lodash'));
     const r = await runCli(['--json', 'app'], tmpDir);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout).unused).toEqual(['lodash']);
@@ -88,6 +93,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ name: 'clean', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }),
     );
+    await writeFiles(tmpDir, installed('lodash'));
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.ts'), `import _ from 'lodash'; console.log(_);`);
 
@@ -98,6 +104,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('exits 1 and reports unused deps', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }));
+    await writeFiles(tmpDir, installed('lodash'));
     const r = await runCli([], tmpDir);
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('Unused Dependencies');
@@ -107,6 +114,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('colours the report and --help on a terminal', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await writeFiles(tmpDir, installed('lodash'));
     const onTerminal = async (args: ReadonlyArray<string>) => {
       let output = '';
       const env: Record<string, string | undefined> = { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined };
@@ -153,6 +161,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('warns about source files it cannot read', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await writeFiles(tmpDir, installed('lodash'));
     await mkdir(path.join(tmpDir, 'src'));
     await writeFile(path.join(tmpDir, 'src/broken.ts'), "import _ from 'lodash';");
     await chmod(path.join(tmpDir, 'src/broken.ts'), 0o000);
@@ -166,6 +175,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ dependencies: { 'slick-carousel': '1' }, devDependencies: { tailwindcss: '4' } }),
     );
+    await writeFiles(tmpDir, installed('slick-carousel'));
     await mkdir(path.join(tmpDir, 'src'));
     await writeFile(path.join(tmpDir, 'src/global.css'), "@import 'slick-carousel/slick/slick.css';");
     await writeFile(path.join(tmpDir, 'src/broken.css'), '@import "tailwindcss";\n.a { color: red');
@@ -177,6 +187,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('warns about a source the parser stopped in and counts what it kept', async () => {
     await writeFiles(tmpDir, {
       'package.json': { dependencies: { lodash: '4', zod: '3', d: '1', e: '1', f: '1' } },
+      ...installed('lodash'),
       'src/a.ts': 'import lodash from "lodash";\nconst f = import("f");\nconst x = {;\nimport { z } from "zod";',
       'src/b.vue': '<script>\nimport { z } from "zod";\nconst y = {;\n</script>',
       'src/d.js': 'const d = require("d");\nreturn d;\nfunction (',
@@ -195,6 +206,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('a script without import or export parses as CommonJS, where a top-level return is legal', async () => {
     await writeFiles(tmpDir, {
       'package.json': { dependencies: { lodash: '4', zod: '3' } },
+      ...installed('lodash'),
       'login.js': 'const _ = require("lodash");\nif (!_) return;\nrequire("zod");',
       'src/a.js': 'import { z } from "zod";\nreturn;',
     });
@@ -206,6 +218,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('warns about a source directory it cannot read as about a source file', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await writeFiles(tmpDir, installed('lodash'));
     await mkdir(path.join(tmpDir, 'src/locked'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/locked/a.ts'), "import _ from 'lodash';");
     await chmod(path.join(tmpDir, 'src/locked'), 0o000);
@@ -217,6 +230,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('warns about project inputs it cannot use and goes on', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }));
+    await writeFiles(tmpDir, installed('lodash'));
     await mkdir(path.join(tmpDir, 'weird'));
     await writeFile(path.join(tmpDir, 'weird/package.json'), '{"name":');
     await writeFile(path.join(tmpDir, 'weird/index.ts'), "import _ from 'lodash';\nexport default _;");
@@ -233,6 +247,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         devDependencies: { '@happy-dom/global-registrator': '^20.0.0', dayjs: '^1.0.0', zod: '^3.0.0' },
       }),
     );
+    await writeFiles(tmpDir, installed('dayjs'));
     await mkdir(path.join(tmpDir, 'packages/shared-ui/src'), { recursive: true });
     await writeFile(
       path.join(tmpDir, 'packages/shared-ui/package.json'),
@@ -257,6 +272,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('--json emits parseable JSON with totalIssues and exits 1 when issues exist', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }));
+    await writeFiles(tmpDir, installed('lodash'));
     const r = await runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -323,6 +339,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         dependencies: { 'unused-a': '^1.0.0', 'unused-b': '^1.0.0' },
       }),
     );
+    await writeFiles(tmpDir, installed('unused-b'));
     const r = await runCli(['--json', '--ignore', 'unused-a'], tmpDir);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.unused).not.toContain('unused-a');
@@ -360,6 +377,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     );
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.js'), 'export const x = 1;');
+    await writeFiles(tmpDir, installed('typescript'));
 
     const r = await runCli(['--json', '--check-peer'], tmpDir);
     expect(r.status).toBe(1);
@@ -377,6 +395,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         peerDependencies: { typescript: '^5.0.0' },
       }),
     );
+    await writeFiles(tmpDir, installed('typescript'));
     const r = await runCli(['-p'], tmpDir);
     expect(r.stdout).toContain('Unused peerDependencies');
     expect(r.stdout).toContain('typescript');
@@ -386,6 +405,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies: { lodash: '^4.0.0' } }));
     await mkdir(path.join(tmpDir, 'vendor'), { recursive: true });
     await writeFile(path.join(tmpDir, 'vendor/use.ts'), `import _ from 'lodash'; export {};`);
+    await writeFiles(tmpDir, installed('lodash'));
 
     const r = await runCli(['--json', '--exclude', 'vendor/**'], tmpDir);
     const parsed = JSON.parse(r.stdout);
@@ -401,6 +421,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         devDependencies: { 'unused-dev': '^1.0.0' },
       }),
     );
+    await writeFiles(tmpDir, installed('unused-dev'));
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(path.join(tmpDir, 'src/index.ts'), 'export const x = 1;');
 
@@ -434,6 +455,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         optionalDependencies: { bufferutil: '4', fsevents: '2' },
         devDependencies: { bufferutil: '4', 'utf-8-validate': '6' },
       },
+      ...installed('fsevents'),
       'src/index.ts': 'export const b = require("bufferutil");\nexport const u = await import("utf-8-validate");',
     });
 
@@ -459,6 +481,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         dependencies: { alpha: '1', beta: '1', gamma: '1', delta: '1' },
         devDependencies: { zeta: '1' },
       },
+      ...installed('alpha'),
       'src/index.js': 'import "#dep";\nimport "#x";\nimport "#lib/a.js";\nimport "#lib/own/b.js";\nimport "#tool";',
     });
 
@@ -476,6 +499,7 @@ describe('CLI e2e (bin/cli.js)', () => {
         dependencies: { utils: '1', components: '1', lodash: '4', 'lodash-es': '4', gone: '1', stale: '1', react: '1', preact: '1' },
         devDependencies: { '@app/core': '1' },
       },
+      ...installed('gone'),
       'tsconfig.json': {
         compilerOptions: {
           baseUrl: 'src',
@@ -546,7 +570,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       },
     ],
   ])('%s still loads the package', async (_, files) => {
-    await writeFiles(tmpDir, { 'package.json': { dependencies: { utils: '1' } }, ...files });
+    await writeFiles(tmpDir, { 'package.json': { dependencies: { utils: '1' } }, ...installed('utils'), ...files });
 
     const r = await runCli(['--json'], tmpDir);
     expect(JSON.parse(r.stdout).unused).toEqual([]);
@@ -558,6 +582,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       ['utils', 'components'],
       {
         'package.json': { dependencies: { utils: '1', components: '1' } },
+        ...installed('components'),
         'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { 'utils/*': ['./src/utils/*'] } } },
         'src/utils/icon.svg': '<svg/>',
         'components/Button.tsx': 'export const B = 1;',
@@ -569,6 +594,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       ['shared', 'utils'],
       {
         'package.json': { dependencies: { shared: '1', utils: '1' } },
+        ...installed('shared'),
         'tsconfig.json': {
           compilerOptions: { module: 'nodenext', paths: { shared: ['./src/shared/index.js'], 'utils/*': ['./src/utils/*'] } },
         },
@@ -582,6 +608,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       [],
       {
         'package.json': { dependencies: { pkg: '1', react: '1' }, devDependencies: { '@types/react': '1' } },
+        ...installed('pkg'),
         'tsconfig.json': { compilerOptions: { paths: { pkg: ['./local/pkg.d.ts'], react: ['./node_modules/@types/react/index.d.ts'] } } },
         'local/pkg.d.ts': 'export declare const x: () => void;',
         'node_modules/@types/react/index.d.ts': 'export declare const useState: () => void;',
@@ -593,6 +620,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       [],
       {
         'package.json': { dependencies: { react: '1', 'untyped-lib': '1' } },
+        ...installed('untyped-lib'),
         'tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { '*': ['types/*'], react: ['./types/react'] } } },
         'types/untyped-lib.d.ts': 'declare const x: any;\nexport default x;',
         'types/react.d.ts': 'export {};',
@@ -604,6 +632,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       [],
       {
         'package.json': { dependencies: { 'untyped-lib': '1' } },
+        ...installed('untyped-lib'),
         'tsconfig.json': { compilerOptions: { baseUrl: 'src' } },
         'src/untyped-lib/index.d.ts': 'declare const x: any;\nexport default x;',
         'src/a.ts': 'import u from "untyped-lib";\nconsole.log(u);',
@@ -650,6 +679,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ dependencies: { tslib: '2' }, devDependencies: { '@types/node': '1', '@types/uuid': '1' } }),
     );
+    await writeFiles(tmpDir, installed('tslib'));
     await writeFile(
       path.join(tmpDir, 'tsconfig.json'),
       JSON.stringify({ extends: './missing.json', compilerOptions: { types: ['node'], importHelpers: true } }),
@@ -665,6 +695,7 @@ describe('CLI e2e (bin/cli.js)', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ dependencies: { react: '1', hotscript: '1' }, devDependencies: { '@mui/types': '7' } }),
     );
+    await writeFiles(tmpDir, installed('react'));
     await mkdir(path.join(tmpDir, 'src'), { recursive: true });
     await writeFile(
       path.join(tmpDir, 'src/a.ts'),
@@ -683,6 +714,7 @@ describe('CLI e2e (bin/cli.js)', () => {
 
   test('a malformed tsconfig.json warns once', async () => {
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ devDependencies: { typescript: '1' } }));
+    await writeFiles(tmpDir, installed('typescript'));
     await writeFile(path.join(tmpDir, 'tsconfig.json'), '{ "compilerOptions": { ');
 
     const r = await runCli(['--json', '-a'], tmpDir);
@@ -692,6 +724,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   test('--json output larger than one pipe read arrives whole before a failing exit', async () => {
     const dependencies = Object.fromEntries(Array.from({ length: 50000 }, (_, i) => [`unused-package-${i}`, '^1.0.0']));
     await writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 't', version: '1.0.0', dependencies }));
+    await writeFiles(tmpDir, installed('unused-package-0'));
 
     const r = await runCli(['--json'], tmpDir);
     expect(r.status).toBe(1);
@@ -705,6 +738,7 @@ describe('CLI e2e (bin/cli.js)', () => {
   ])('a source with %s nested 10,000 deep is scanned', async (_, deep) => {
     await writeFiles(tmpDir, {
       'package.json': { dependencies: { zod: '1', unused: '1' } },
+      ...installed('zod'),
       'src/deep.ts': `import "zod";\n${deep}\n`,
     });
 
@@ -767,17 +801,58 @@ describe('CLI e2e (bin/cli.js)', () => {
       expect(JSON.parse(r.stdout)).toMatchObject({ unused: ['left-pad'], misplaced: [], typeOnly: [] });
     });
 
-    test('without node_modules, binaries match by package name and one note says so', async () => {
+    test('without node_modules, a run that decides unused fails with one line and no report', async () => {
       await writeFiles(tmpDir, {
-        'package.json': {
-          scripts: { a: 'jest', b: 'vite build' },
-          devDependencies: { jest: '29', vite: '5', '@vitejs/plugin-react': '4' },
-        },
+        'package.json': { scripts: { a: 'jest' }, devDependencies: { jest: '29' } },
+        'src/a.ts': 'import "missing";',
       });
 
+      const r = await runCli(['--json', '-a', '.'], tmpDir);
+      expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.INSTALL_REQUIRED('.')}\n` });
+    });
+
+    test('without node_modules, a peer-only project decides unused peers under -a and fails', async () => {
+      await writeFiles(tmpDir, { 'package.json': { peerDependencies: { react: '1' } } });
+
       const r = await runCli(['--json', '-a'], tmpDir);
-      expect(JSON.parse(r.stdout).unused).toEqual(['@vitejs/plugin-react']);
-      expect(r.stderr.match(/node_modules/g)).toHaveLength(1);
+      expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.INSTALL_REQUIRED('.')}\n` });
+    });
+
+    test.each(['.pnp.cjs', '.pnp.js'])("a Plug'n'Play install (%s above the root) fails with its own line", async (pnp) => {
+      await writeFiles(tmpDir, {
+        [pnp]: '',
+        'app/package.json': { dependencies: { 'left-pad': '1' } },
+      });
+
+      const r = await runCli(['--json', 'app'], tmpDir);
+      expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.PLUG_AND_PLAY('app')}\n` });
+    });
+
+    test('an installed package whose manifest does not parse is installed: a warning, then the report', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': { dependencies: { 'left-pad': '1' } },
+        'node_modules/left-pad/package.json': '{bad',
+      });
+
+      const r = await runCli(['--json'], tmpDir);
+      expect(r.stderr).toMatch(/^warning: could not use \S*node_modules\/left-pad\/package\.json \(.*\); the scan went on without it\.\n$/);
+      expect(r.status).toBe(1);
+      expect(JSON.parse(r.stdout).unused).toEqual(['left-pad']);
+    });
+
+    test.each([
+      ['no section that decides unused', []],
+      ['every candidate ignored', ['-a', '-i', 'jest']],
+    ])('without node_modules, %s reports with a clean stderr and exit 0', async (_, args) => {
+      await writeFiles(tmpDir, {
+        'package.json': { devDependencies: { jest: '29' } },
+        'src/a.ts': 'export const a = 1;',
+      });
+
+      const r = await runCli(['--json', ...args], tmpDir);
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout)).toMatchObject({ unused: [], unusedPeer: [] });
     });
 
     test('a lint-staged command runs a declared binary', async () => {
@@ -786,6 +861,7 @@ describe('CLI e2e (bin/cli.js)', () => {
           'lint-staged': { '*.css': 'stylelint --fix' },
           devDependencies: { stylelint: '16', 'left-pad': '1' },
         },
+        ...installed('left-pad'),
       });
 
       expect(JSON.parse((await runCli(['--json', '-a'], tmpDir)).stdout).unused).toEqual(['left-pad']);
@@ -825,6 +901,7 @@ describe('CLI e2e (bin/cli.js)', () => {
             ].map((name) => [name, '1']),
           ),
         },
+        ...installed('left-pad'),
         '.eslintrc': JSON.stringify({
           parser: '@typescript-eslint/parser',
           plugins: ['relay'],
@@ -860,6 +937,7 @@ describe('CLI e2e (bin/cli.js)', () => {
           dependencies: { commander: '12' },
           devDependencies: { kleur: '4', chalk: '5' },
         },
+        ...installed('commander'),
         'scripts/cli.js': "const { program } = require('commander'); const k = require('kleur'); program.parse(k);",
         'packages/web/package.json': { name: 'web', bin: 'scripts/run.js' },
         'packages/web/scripts/run.js': "require('chalk');",

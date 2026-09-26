@@ -175,6 +175,7 @@ export type InstalledPackage = {
 export type Installation = Data.TaggedEnum<{
   Installed: { readonly packages: Readonly<Record<PackageName, InstalledPackage>> };
   NotInstalled: {};
+  PlugAndPlay: {};
 }>;
 
 export const Installation = Data.taggedEnum<Installation>();

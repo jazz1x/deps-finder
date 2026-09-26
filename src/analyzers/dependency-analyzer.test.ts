@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { analyzeDependencies } from '@/analyzers/dependency-analyzer';
+import { analyzeDependencies, unusedCandidates } from '@/analyzers/dependency-analyzer';
 import type { FileContext, ImportDetails, ImportType, PackageJson } from '@/domain/types';
 import { findFiles, parseMultipleFiles } from '@/parsers/import-parser';
 
@@ -577,5 +577,24 @@ describe('dependency-analyzer: @types pairing', () => {
     expect(result.misplaced).toEqual([]);
     expect(result.typeOnly).toEqual([]);
     expect(result.unused).toEqual([]);
+  });
+});
+
+describe('dependency-analyzer: unused candidates', () => {
+  const declared = pkg({
+    dependencies: ['react', 'left-pad'],
+    optionalDependencies: ['fsevents'],
+    devDependencies: ['vitest', 'react-dom'],
+    peerDependencies: ['react', 'react-dom', 'ignored-peer'],
+  });
+
+  test.each([
+    ['default', ['dependencies', 'optionalDependencies'] as const, { unused: ['react', 'left-pad', 'fsevents'], unusedPeer: [] }],
+    ['--all', ALL_WITH_OPTIONAL, { unused: ['react', 'left-pad', 'fsevents', 'vitest'], unusedPeer: ['react-dom'] }],
+  ])('with nothing used, %s sections report exactly the candidates', (_, sections, expected) => {
+    const options = { sections, ignoredPackages: ['ignored-peer'] };
+    const { unused, unusedPeer } = analyzeDependencies(declared, [], options);
+    expect({ unused, unusedPeer }).toEqual(unusedCandidates(declared, options));
+    expect(unusedCandidates(declared, options)).toEqual(expected);
   });
 });

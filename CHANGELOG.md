@@ -12,6 +12,7 @@ Imports are now read by a real parser (oxc) instead of regular expressions, the 
 ### ⚠ BREAKING
 
 - **Exit codes**: `0` no issues, `1` issues found, `2` the run failed (bad flags, missing or malformed `package.json`, a report that could not be written). A missing `package.json` used to exit `1`, and so did a failed write of the report, with a stack trace.
+- **Without installed dependencies, a run that decides unused exits `2`**. When no declared package is installed in a `node_modules` at or above the project, binaries and peers are unknown, so the run prints one error, no report, and exits `2`; install first. A Yarn Plug'n'Play install (a `.pnp.cjs` or `.pnp.js` at or above the project) is not read and fails the same way, with its own error. It used to print a note and report unused anyway, matching script binaries by package name. A run with nothing to check for unused goes on, and no longer prints that note.
 - **Unknown flags and flags missing their value are errors (exit `2`)**. They used to print a warning and carry on, so a typo in CI silently changed the check.
 - **`--all` semantics**: peers are reported only under `unusedPeer` (no longer twice), misplaced detection stays on, and a devDependency used only for types is not "type-only". Only `dependencies` entries can be type-only.
 - **`optionalDependencies` are checked like `dependencies`**: an unused one is now reported (#62).
