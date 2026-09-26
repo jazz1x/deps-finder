@@ -1,10 +1,16 @@
 import { join } from 'node:path';
 import { Array, Console, Effect, Option, Record, String, pipe } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
-import { analyzeDependencies } from '../analyzers/dependency-analyzer.js';
+import { analyzeDependencies, unusedCandidates } from '../analyzers/dependency-analyzer.js';
 import { binaryUses, peerUses } from '../analyzers/implied-usage.js';
 import { CLI_TEXT, MESSAGES } from '../constants/messages.js';
-import { type FileError, IssuesFound, type RunOutcome } from '../domain/errors.js';
+import {
+  type FileError,
+  InstallRequired,
+  IssuesFound,
+  type RunFailure,
+  type RunOutcome,
+} from '../domain/errors.js';
 import {
   type CliOptions,
   DEPENDENCY_TYPES,
@@ -12,6 +18,7 @@ import {
   type ImportDetails,
   Installation,
   type PackageJson,
+  type PackageName,
   type ScriptCommand,
 } from '../domain/types.js';
 import { readToolConfigs } from '../parsers/config-references.js';
@@ -96,15 +103,37 @@ const scriptCommands = (manifest: LayoutManifest): ReadonlyArray<ScriptCommand> 
     scripts: Record.keys(manifest.scripts),
   }));
 
+const declaredPackages = (packageJson: PackageJson): ReadonlyArray<PackageName> =>
+  Array.dedupe(Array.flatMap(DEPENDENCY_TYPES, (section) => packageJson[section]));
+
+// Without an install, peers and binaries are unknown, so nothing can be called unused.
+const requireInstallation = (
+  options: CliOptions,
+  packageJson: PackageJson,
+  installation: Installation,
+): Effect.Effect<void, RunFailure> =>
+  Installation.$match(installation, {
+    Installed: () => Effect.void,
+    NotInstalled: () =>
+      pipe(
+        unusedCandidates(packageJson, options),
+        ({ unused, unusedPeer }) => [...unused, ...unusedPeer],
+        Array.match({
+          onEmpty: () => Effect.void,
+          onNonEmpty: () => Effect.fail(InstallRequired({ root: options.rootDir })),
+        }),
+      ),
+  });
+
 // Scripts, git hooks, tool configs and peers use packages that no source file imports.
 const usesWithoutImport = (
   rootDir: string,
   packageJson: PackageJson,
+  { installation, skipped }: ReturnType<typeof readInstallation>,
   files: ReturnType<typeof findFiles>,
   imports: ReadonlyArray<ImportDetails>,
 ) => {
-  const declared = Array.dedupe(Array.flatMap(DEPENDENCY_TYPES, (section) => packageJson[section]));
-  const { installation, skipped } = readInstallation(rootDir, declared);
+  const declared = declaredPackages(packageJson);
   const configs = readToolConfigs(files.layoutRoots, files.manifests);
   const hooks = readHookCommands(
     rootDir,
@@ -127,30 +156,41 @@ const usesWithoutImport = (
     ...binaryUses(commands, installation, declared),
   ];
   return {
-    installation,
     imports: [...seeds, ...peerUses(installation, declared, seeds)],
     skipped: [...skipped, ...configs.skipped, ...hooks.skipped],
   };
 };
 
-const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | RunOutcome> =>
+const analyzeProject = (
+  options: CliOptions,
+): Effect.Effect<void, FileError | RunOutcome | RunFailure> =>
   pipe(
     Effect.fromResult(readPackageJson(join(options.rootDir, 'package.json'))),
     Effect.map((packageJson) => ({
       packageJson,
+      installed: readInstallation(options.rootDir, declaredPackages(packageJson)),
+    })),
+    Effect.tap(({ packageJson, installed }) =>
+      requireInstallation(options, packageJson, installed.installation),
+    ),
+    Effect.map(({ packageJson, installed }) => ({
+      packageJson,
+      installed,
       files: findFiles(options.rootDir, {
         excludePatterns: options.excludePatterns,
         noAutoDetect: options.noAutoDetect,
       }),
     })),
-    Effect.map(({ packageJson, files }) => ({
+    Effect.map(({ packageJson, installed, files }) => ({
       packageJson,
+      installed,
       files,
       own: parseMultipleFiles(files.found),
       hoisted: parseHoistedImports(files.packages),
     })),
-    Effect.map(({ packageJson, files, own, hoisted }) => ({
+    Effect.map(({ packageJson, installed, files, own, hoisted }) => ({
       packageJson,
+      installed,
       files,
       own,
       hoisted,
@@ -160,13 +200,19 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
         files.found,
       ),
     })),
-    Effect.map(({ packageJson, files, own, hoisted, emitted }) => ({
+    Effect.map(({ packageJson, installed, files, own, hoisted, emitted }) => ({
       packageJson,
       files,
       own,
       hoisted,
       emitted,
-      unimported: usesWithoutImport(options.rootDir, packageJson, files, emitted.imports),
+      unimported: usesWithoutImport(
+        options.rootDir,
+        packageJson,
+        installed,
+        files,
+        emitted.imports,
+      ),
     })),
     Effect.map(({ packageJson, files, own, hoisted, emitted, unimported }) => ({
       packageJson,
@@ -178,7 +224,6 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
         ...unimported.skipped,
       ]),
       packagesLeftOut: Array.map(files.packages, (leftOut) => leftOut.dir),
-      installation: unimported.installation,
       sources: {
         imports: unimported.imports,
         unreadable: [...files.unreadable, ...own.unreadable, ...hoisted.unreadable],
@@ -190,12 +235,6 @@ const analyzeProject = (options: CliOptions): Effect.Effect<void, FileError | Ru
     ),
     Effect.tap(({ packagesLeftOut }) =>
       Effect.forEach(packagesLeftOut, (dir) => Console.error(MESSAGES.PACKAGE_LEFT_OUT(dir))),
-    ),
-    Effect.tap(({ installation }) =>
-      Installation.$match(installation, {
-        Installed: () => Effect.void,
-        NotInstalled: () => Console.error(MESSAGES.NOT_INSTALLED(options.rootDir)),
-      }),
     ),
     Effect.tap(({ sources }) =>
       Effect.forEach(sources.unreadable, (error) => Console.error(formatSkippedSource(error))),

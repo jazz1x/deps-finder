@@ -5,17 +5,21 @@ import { CliConfig, type CliError, CliOutput, Command, GlobalFlag } from 'effect
 import { depsFinder } from './cli/command.js';
 import { exitCodeOf } from './cli/exit-code.js';
 import { stdoutColours } from './cli/terminal.js';
-import type { FileError, RunOutcome } from './domain/errors.js';
+import { MESSAGES } from './constants/messages.js';
+import type { FileError, RunFailure, RunOutcome } from './domain/errors.js';
 import { formatFileError } from './reporters/error-reporter.js';
 import { readJsonFile } from './utils/file-reader.js';
 
 const readVersion = readJsonFile(Schema.Struct({ version: Schema.String }));
 
-const reportFailure = (error: FileError | RunOutcome | CliError.CliError): Effect.Effect<void> =>
+const reportFailure = (
+  error: FileError | RunOutcome | RunFailure | CliError.CliError,
+): Effect.Effect<void> =>
   Match.value(error).pipe(
     Match.tag('FileNotFound', 'ReadFailed', 'ParseFailed', (e) =>
       Console.error(formatFileError(e)),
     ),
+    Match.tag('InstallRequired', (e) => Console.error(MESSAGES.INSTALL_REQUIRED(e.root))),
     Match.orElse(() => Effect.void),
   );
 
