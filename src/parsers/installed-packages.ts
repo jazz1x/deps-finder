@@ -39,36 +39,37 @@ const installedPackage =
     ]),
   });
 
+type Located = readonly [PackageName, string];
+
 // Node resolves a package from the nearest node_modules above the importing directory.
-const readInstalled =
+const locate =
   (nodeModules: ReadonlyArray<string>) =>
-  (name: PackageName): Gathered<readonly [PackageName, InstalledPackage]> =>
+  (name: PackageName): Option.Option<Located> =>
     pipe(
       Array.findFirst(nodeModules, (dir) =>
         Option.liftPredicate(path.join(dir, name, 'package.json'), existsSync),
       ),
-      Option.match({
-        onNone: (): Gathered<readonly [PackageName, InstalledPackage]> => ({
-          found: [],
-          skipped: [],
-        }),
-        onSome: (manifest) =>
-          gatherOptional(
-            Result.map(readJsonFile(InstalledManifest)(manifest), (file) => [
-              [name, installedPackage(manifest, name)(file)] as const,
-            ]),
-          ),
-      }),
+      Option.map((manifest) => [name, manifest] as const),
     );
 
-// A node_modules above that resolves none of the declared packages belongs to something else.
-// With nothing declared, nothing is missing.
+const readInstalled = ([name, manifest]: Located): Gathered<
+  readonly [PackageName, InstalledPackage]
+> =>
+  gatherOptional(
+    Result.map(readJsonFile(InstalledManifest)(manifest), (file) => [
+      [name, installedPackage(manifest, name)(file)] as const,
+    ]),
+  );
+
+// A node_modules above that holds none of the declared packages belongs to something else.
+// A manifest that does not parse is still an install. With nothing declared, nothing is missing.
 const installationOf = (
   names: ReadonlyArray<PackageName>,
+  located: ReadonlyArray<Located>,
   found: ReadonlyArray<readonly [PackageName, InstalledPackage]>,
 ): Installation =>
-  Match.value({ names, found }).pipe(
-    Match.when({ names: Array.isReadonlyArrayNonEmpty, found: Array.isReadonlyArrayEmpty }, () =>
+  Match.value({ names, located }).pipe(
+    Match.when({ names: Array.isReadonlyArrayNonEmpty, located: Array.isReadonlyArrayEmpty }, () =>
       Installation.NotInstalled(),
     ),
     Match.orElse(() => Installation.Installed({ packages: Record.fromEntries(found) })),
@@ -81,6 +82,7 @@ export const readInstallation = (
   const nodeModules = Array.map(lineage(path.resolve(rootDir)), (dir) =>
     path.join(dir, 'node_modules'),
   );
-  const read = gatherAll(Array.map(names, readInstalled(nodeModules)));
-  return { installation: installationOf(names, read.found), skipped: read.skipped };
+  const located = Array.getSomes(Array.map(names, locate(nodeModules)));
+  const read = gatherAll(Array.map(located, readInstalled));
+  return { installation: installationOf(names, located, read.found), skipped: read.skipped };
 };

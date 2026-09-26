@@ -811,6 +811,18 @@ describe('CLI e2e (bin/cli.js)', () => {
       expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.INSTALL_REQUIRED('.')}\n` });
     });
 
+    test('an installed package whose manifest does not parse is installed: a warning, then the report', async () => {
+      await writeFiles(tmpDir, {
+        'package.json': { dependencies: { 'left-pad': '1' } },
+        'node_modules/left-pad/package.json': '{bad',
+      });
+
+      const r = await runCli(['--json'], tmpDir);
+      expect(r.stderr).toMatch(/^warning: could not use \S*node_modules\/left-pad\/package\.json \(.*\); the scan went on without it\.\n$/);
+      expect(r.status).toBe(1);
+      expect(JSON.parse(r.stdout).unused).toEqual(['left-pad']);
+    });
+
     test.each([
       ['no section that decides unused', []],
       ['every candidate ignored', ['-a', '-i', 'jest']],
