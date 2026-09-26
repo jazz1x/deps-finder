@@ -811,6 +811,13 @@ describe('CLI e2e (bin/cli.js)', () => {
       expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.INSTALL_REQUIRED('.')}\n` });
     });
 
+    test('without node_modules, a peer-only project decides unused peers under -a and fails', async () => {
+      await writeFiles(tmpDir, { 'package.json': { peerDependencies: { react: '1' } } });
+
+      const r = await runCli(['--json', '-a'], tmpDir);
+      expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.INSTALL_REQUIRED('.')}\n` });
+    });
+
     test.each(['.pnp.cjs', '.pnp.js'])("a Plug'n'Play install (%s above the root) fails with its own line", async (pnp) => {
       await writeFiles(tmpDir, {
         [pnp]: '',
@@ -836,7 +843,7 @@ describe('CLI e2e (bin/cli.js)', () => {
     test.each([
       ['no section that decides unused', []],
       ['every candidate ignored', ['-a', '-i', 'jest']],
-    ])('without node_modules, %s runs as before', async (_, args) => {
+    ])('without node_modules, %s reports with a clean stderr and exit 0', async (_, args) => {
       await writeFiles(tmpDir, {
         'package.json': { devDependencies: { jest: '29' } },
         'src/a.ts': 'export const a = 1;',
