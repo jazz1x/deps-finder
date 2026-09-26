@@ -119,7 +119,7 @@ deps-finder [options] [<root>]
 |------|------|
 | `0` | 이슈 없음 |
 | `1` | 이슈 발견 |
-| `2` | 실행 실패 (잘못된 플래그, `package.json` 없음·손상, unused를 가려야 하는데 의존성이 설치되지 않음, 리포트를 쓰지 못함) |
+| `2` | 실행 실패 (잘못된 플래그, `package.json` 없음·손상, unused를 가려야 하는데 의존성이 설치되지 않았거나 Yarn Plug'n'Play로 설치됨, 리포트를 쓰지 못함) |
 
 ---
 
@@ -245,6 +245,8 @@ walk project ──┤                     ├─→  diff  ──→  unused / 
 ## 정직한 사용 안내
 
 deps-finder는 정적 AST 스캔을 사용하므로 동적 패턴은 보이지 않습니다: `require(variable)`, `import(expr)`, `${}`가 든 템플릿 리터럴, `eval`, 번들러 플러그인이 만드는 가상 모듈, 위에 적은 도구·키 밖에서 설정 파일에 문자열로만 적힌 패키지 등이 그렇습니다. 러너 설정이 엉뚱한 자리를 시험으로 가리키는 경우(Playwright `testDir`, 스크립트로만 돌리는 `codegen.ts`, 시험에서만 import하는 `src/mocks/`)는 production으로 취급합니다. 도구는 과보고보다 누락 보고를 선호하지만, 그래도 오탐은 발생할 수 있습니다. 그럴 때는 `--ignore <pkg>`가 탈출구이며 — 이슈 리포트도 환영합니다.
+
+Yarn Plug'n'Play 설치는 읽지 않습니다. 선언 패키지가 `node_modules`에 하나도 없고 프로젝트나 그 위에 `.pnp.cjs`나 `.pnp.js`가 있으면, unused를 가릴 실행은 설치가 없을 때처럼 오류 한 줄을 내고 종료 코드 `2`로 끝납니다. `.yarnrc.yml`에 `nodeLinker: node-modules`를 두고 `yarn install`을 하면 읽을 수 있습니다.
 
 import 없이 쓰는 패키지라도 위 방법으로 찾지 못하면 unused로 보고됩니다: 다른 CLI가 제공하는 하위 명령(`nuxt storybook`), `bitbucket-pipelines.yml` 같은 CI 파일에서 실행하는 바이너리, 위 도구 어디에도 속하지 않는 확장자 없는 설정 파일(`.swcrc`), 그리고 일부만 설치됐을 때 설치되지 않은 패키지의, 패키지와 이름이 다른 바이너리(`typescript`의 `tsc`)와 설치되지 않은 패키지의 peer가 그렇습니다. `--ignore`로 넘기세요.
 

@@ -32,6 +32,8 @@ export const MESSAGES = {
   REPORT_NOT_WRITTEN: (reason: string) => `error: the report could not be written (${reason}).`,
   INSTALL_REQUIRED: (path: string) =>
     `error: unused dependencies cannot be decided without installed dependencies, and no declared package is installed in a node_modules at or above ${path}; install them first, then run deps-finder again.`,
+  PLUG_AND_PLAY: (path: string) =>
+    `error: unused dependencies cannot be decided for ${path}: its dependencies are installed with Yarn Plug'n'Play, which deps-finder does not read; set nodeLinker: node-modules in .yarnrc.yml and run yarn install to make them readable.`,
 } as const;
 
 export const CLI_TEXT = {

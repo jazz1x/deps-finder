@@ -8,6 +8,7 @@ import {
   type FileError,
   InstallRequired,
   IssuesFound,
+  PlugAndPlayUnread,
   type RunFailure,
   type RunOutcome,
 } from '../domain/errors.js';
@@ -106,24 +107,31 @@ const scriptCommands = (manifest: LayoutManifest): ReadonlyArray<ScriptCommand> 
 const declaredPackages = (packageJson: PackageJson): ReadonlyArray<PackageName> =>
   Array.dedupe(Array.flatMap(DEPENDENCY_TYPES, (section) => packageJson[section]));
 
+const unreadable = (installation: Installation, root: string): Option.Option<RunFailure> =>
+  Installation.$match(installation, {
+    Installed: () => Option.none(),
+    NotInstalled: () => Option.some(InstallRequired({ root })),
+    PlugAndPlay: () => Option.some(PlugAndPlayUnread({ root })),
+  });
+
 // Without an install, peers and binaries are unknown, so nothing can be called unused.
 const requireInstallation = (
   options: CliOptions,
   packageJson: PackageJson,
   installation: Installation,
 ): Effect.Effect<void, RunFailure> =>
-  Installation.$match(installation, {
-    Installed: () => Effect.void,
-    NotInstalled: () =>
-      pipe(
-        unusedCandidates(packageJson, options),
-        ({ unused, unusedPeer }) => [...unused, ...unusedPeer],
-        Array.match({
-          onEmpty: () => Effect.void,
-          onNonEmpty: () => Effect.fail(InstallRequired({ root: options.rootDir })),
+  pipe(
+    unusedCandidates(packageJson, options),
+    ({ unused, unusedPeer }) => [...unused, ...unusedPeer],
+    Array.match({
+      onEmpty: () => Effect.void,
+      onNonEmpty: () =>
+        Option.match(unreadable(installation, options.rootDir), {
+          onNone: () => Effect.void,
+          onSome: Effect.fail,
         }),
-      ),
-  });
+    }),
+  );
 
 // Scripts, git hooks, tool configs and peers use packages that no source file imports.
 const usesWithoutImport = (

@@ -20,6 +20,7 @@ const reportFailure = (
       Console.error(formatFileError(e)),
     ),
     Match.tag('InstallRequired', (e) => Console.error(MESSAGES.INSTALL_REQUIRED(e.root))),
+    Match.tag('PlugAndPlayUnread', (e) => Console.error(MESSAGES.PLUG_AND_PLAY(e.root))),
     Match.orElse(() => Effect.void),
   );
 

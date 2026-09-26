@@ -118,7 +118,7 @@ Unknown flags and flags missing their value are errors, not warnings.
 |------|---------|
 | `0` | No issues |
 | `1` | Issues found |
-| `2` | The run failed (bad flags, missing or malformed `package.json`, dependencies not installed when unused must be decided, a report that could not be written) |
+| `2` | The run failed (bad flags, missing or malformed `package.json`, dependencies not installed, or installed with Yarn Plug'n'Play, when unused must be decided, a report that could not be written) |
 
 ---
 
@@ -244,6 +244,8 @@ Or keep a report without blocking on findings, while still failing when the run 
 ## Honest-use notice
 
 deps-finder uses static AST scanning, so dynamic patterns are invisible to it: `require(variable)`, `import(expr)`, a template literal with `${}`, `eval`, virtual modules from bundler plugins, packages a config names only as a string outside the tools and keys listed above. Test files that a runner config points at from an unusual place (a Playwright `testDir`, a `codegen.ts` run only from a script, `src/mocks/` imported only by tests) are treated as production. The tool prefers under-reporting over over-reporting, but false positives still happen. When one does, `--ignore <pkg>` is the escape valve — and an issue report is welcome.
+
+Yarn Plug'n'Play installs are not read. When nothing declared is in a `node_modules` and a `.pnp.cjs` or `.pnp.js` sits at or above the project, a run that decides unused prints one error and exits `2`, as it does without an install. Set `nodeLinker: node-modules` in `.yarnrc.yml` and run `yarn install` to make the install readable.
 
 A package used without an import is still reported as unused when nothing above finds it: a subcommand another CLI provides (`nuxt storybook`), a binary run from CI files such as `bitbucket-pipelines.yml`, a config file without an extension that no tool above owns (`.swcrc`), and, in a partial install, a binary named unlike its package (`tsc` from `typescript`) when that package is not installed, or a peer of a package that is not installed. Pass it to `--ignore`.
 

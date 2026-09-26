@@ -811,6 +811,16 @@ describe('CLI e2e (bin/cli.js)', () => {
       expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.INSTALL_REQUIRED('.')}\n` });
     });
 
+    test.each(['.pnp.cjs', '.pnp.js'])("a Plug'n'Play install (%s above the root) fails with its own line", async (pnp) => {
+      await writeFiles(tmpDir, {
+        [pnp]: '',
+        'app/package.json': { dependencies: { 'left-pad': '1' } },
+      });
+
+      const r = await runCli(['--json', 'app'], tmpDir);
+      expect(r).toEqual({ status: 2, stdout: '', stderr: `${MESSAGES.PLUG_AND_PLAY('app')}\n` });
+    });
+
     test('an installed package whose manifest does not parse is installed: a warning, then the report', async () => {
       await writeFiles(tmpDir, {
         'package.json': { dependencies: { 'left-pad': '1' } },

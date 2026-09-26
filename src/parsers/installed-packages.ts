@@ -61,16 +61,31 @@ const readInstalled = ([name, manifest]: Located): Gathered<
     ]),
   );
 
+const PLUG_AND_PLAY_MAPS = ['.pnp.cjs', '.pnp.js'];
+
+// Yarn Plug'n'Play installs without node_modules, into a store this does not read.
+const absentFrom = (dirs: ReadonlyArray<string>): Installation =>
+  Option.match(
+    Array.findFirst(dirs, (dir) =>
+      Array.some(PLUG_AND_PLAY_MAPS, (map) => existsSync(path.join(dir, map))),
+    ),
+    {
+      onNone: () => Installation.NotInstalled(),
+      onSome: () => Installation.PlugAndPlay(),
+    },
+  );
+
 // A node_modules above that holds none of the declared packages belongs to something else.
 // A manifest that does not parse is still an install. With nothing declared, nothing is missing.
 const installationOf = (
+  dirs: ReadonlyArray<string>,
   names: ReadonlyArray<PackageName>,
   located: ReadonlyArray<Located>,
   found: ReadonlyArray<readonly [PackageName, InstalledPackage]>,
 ): Installation =>
   Match.value({ names, located }).pipe(
     Match.when({ names: Array.isReadonlyArrayNonEmpty, located: Array.isReadonlyArrayEmpty }, () =>
-      Installation.NotInstalled(),
+      absentFrom(dirs),
     ),
     Match.orElse(() => Installation.Installed({ packages: Record.fromEntries(found) })),
   );
@@ -79,10 +94,12 @@ export const readInstallation = (
   rootDir: string,
   names: ReadonlyArray<PackageName>,
 ): { readonly installation: Installation; readonly skipped: ReadonlyArray<FileError> } => {
-  const nodeModules = Array.map(lineage(path.resolve(rootDir)), (dir) =>
-    path.join(dir, 'node_modules'),
-  );
+  const dirs = lineage(path.resolve(rootDir));
+  const nodeModules = Array.map(dirs, (dir) => path.join(dir, 'node_modules'));
   const located = Array.getSomes(Array.map(names, locate(nodeModules)));
   const read = gatherAll(Array.map(located, readInstalled));
-  return { installation: installationOf(names, located, read.found), skipped: read.skipped };
+  return {
+    installation: installationOf(dirs, names, located, read.found),
+    skipped: read.skipped,
+  };
 };

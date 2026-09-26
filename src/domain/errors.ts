@@ -17,6 +17,7 @@ export const { IssuesFound } = Data.taggedEnum<RunOutcome>();
 
 export type RunFailure = Data.TaggedEnum<{
   InstallRequired: { readonly root: string };
+  PlugAndPlayUnread: { readonly root: string };
 }>;
 
-export const { InstallRequired } = Data.taggedEnum<RunFailure>();
+export const { InstallRequired, PlugAndPlayUnread } = Data.taggedEnum<RunFailure>();
