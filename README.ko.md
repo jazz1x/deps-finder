@@ -119,7 +119,7 @@ deps-finder [options] [<root>]
 |------|------|
 | `0` | 이슈 없음 |
 | `1` | 이슈 발견 |
-| `2` | 실행 실패 (잘못된 플래그, `package.json` 없음·손상, 리포트를 쓰지 못함) |
+| `2` | 실행 실패 (잘못된 플래그, `package.json` 없음·손상, unused를 가려야 하는데 의존성이 설치되지 않음, 리포트를 쓰지 못함) |
 
 ---
 
@@ -140,7 +140,7 @@ walk project ──┤                     ├─→  diff  ──→  unused / 
 6. import 없이 쓰는 패키지를 셉니다. 이것으로 misplaced나 type-only가 되는 패키지는 없습니다.
    - **스크립트가 실행하는 바이너리.** 루트와 검사하는 각 레이아웃 루트의 `package.json` `scripts`, `.husky/`의 git 훅(확장자 없는 파일), lint-staged 명령을 따옴표 밖의 `&&`, `||`, `;`, `|`, `&`, 괄호, 백틱, 줄바꿈으로 나눠 명령마다 봅니다. 그래서 `echo "a; eslint"`는 `echo`만 실행합니다. 앞의 `NAME=value` 대입(`NODE_OPTIONS='--a --b'`도), 셸 키워드(`if`, `then`, `else`, `do`, `{` 등)와 실행기(`npx`, `npm exec`, `pnpm exec`, `pnpm dlx`, `yarn exec`, `yarn dlx`, `bunx`, `bun x`, `cross-env`, `env`, `dotenv … --`)는 건너뛰고, 그다음 낱말을 명령으로 봅니다. `npx`, `npm exec`, `pnpm dlx`, `yarn dlx`, `bunx`, `bun x` 뒤의 그 낱말은 `@버전`을 뗀 패키지 이름이기도 합니다(`npx @biomejs/biome`, `npx prettier@3`). `sh -c '…'`와 `bash -c '…'`는 따옴표 안의 스크립트를 실행합니다. `pnpm`, `yarn`, `bun`(`run`이 있든 없든) 뒤의 낱말이 같은 `package.json`의 스크립트 이름이면 바이너리가 아니라 그 스크립트이고, `npm run`과 `pnpm run`은 스크립트만 실행합니다. 명령은 설치된 `package.json`의 `bin`에 그 이름을 둔 선언 패키지를 사용합니다(문자열 `bin`은 스코프를 뺀 패키지 이름). 패키지는 Node처럼 프로젝트 루트와 그 위의 `node_modules`에서 찾습니다. 설치되지 않은 선언 패키지는 자기 이름, 그리고 스코프를 뺀 이름과 맞춥니다.
    - **peer.** 사용 중이고 설치된 의존성이 `peerDependencies`나 `peerDependenciesMeta`에 둔 선언 패키지는 optional이든 아니든 사용 중이며, 그 패키지가 둔 선언 peer도 이어서 사용 중입니다. 프로덕션 코드가 불러오는 패키지의 peer는 프로덕션에도 설치돼야 하므로 type-only로 보고하지 않습니다.
-   - 선언한 패키지가 있는데 프로젝트나 그 위의 `node_modules`에 설치된 것이 하나도 없으면 바이너리는 이름으로 맞췄고 peer는 보지 않았다고 stderr에 한 번 알립니다.
+   - unused는 knip·depcheck처럼 설치된 것만 보고 가립니다. lockfile은 읽지 않습니다. 선언한 패키지가 있는데 프로젝트나 그 위의 `node_modules`에 설치된 것이 하나도 없으면 바이너리와 peer를 알 수 없으므로, unused를 가릴 실행(`--ignore`를 빼고 검사할 선언 패키지가 하나라도 있는 실행)은 프로젝트 디렉토리를 적은 오류 한 줄만 내고 리포트 없이 종료 코드 `2`로 끝납니다. 의존성을 먼저 설치하세요. `devDependencies`만 있는 프로젝트의 기본 실행처럼 unused를 검사할 것이 없으면 평소대로 돕니다.
    - **도구 설정.** 각 레이아웃 루트에서 아래 파일과 `package.json` 키를 도구마다의 짧은 이름 규칙으로 읽습니다(JSON·YAML은 데이터로, JS·TS는 실행하지 않고 객체 리터럴에서). `.eslintrc`처럼 확장자 없는 rc 파일은 주석을 허용하는 JSON으로 읽고, 안 되면 YAML로 읽습니다. JS·TS에서 인자가 하나인 호출은 그 인자로(`getAbsolutePath('@storybook/addon-a11y')`), 조건식은 그 식이 낼 수 있는 값 모두로 봅니다(`prod ? 'cssnano' : null`, `prod && 'cssnano'`). 파일 안의 객체를 모두 보므로 `overrides`나 중첩된 블록도 셉니다. 여기서 레이아웃 루트에는 `project.json`만 있는 Nx 프로젝트도 들어갑니다.
      - ESLint(`.eslintrc`, `.eslintrc.json`/`.yaml`/`.yml`/`.js`/`.cjs`, `eslintConfig`): `parser`, `plugins`(`react` → `eslint-plugin-react`, `@scope` → `@scope/eslint-plugin`, `@scope/x` → `@scope/eslint-plugin-x`), `extends`(`airbnb/hooks` → `eslint-config-airbnb`, `@scope` → `@scope/eslint-config`, `plugin:x/y` → 플러그인 `x`), `import/no-cycle` 같은 규칙의 플러그인, `settings["import/resolver"]`(`typescript` → `eslint-import-resolver-typescript`). flat `eslint.config.*`는 import로 읽습니다.
      - Babel(`.babelrc*`, `babel.config.*`, `babel`): `presets`와 `plugins`(`@babel/env` → `@babel/preset-env`, `macros` → `babel-plugin-macros`, `module:x` → `x`, `next/babel` → `next`).
@@ -246,7 +246,7 @@ walk project ──┤                     ├─→  diff  ──→  unused / 
 
 deps-finder는 정적 AST 스캔을 사용하므로 동적 패턴은 보이지 않습니다: `require(variable)`, `import(expr)`, `${}`가 든 템플릿 리터럴, `eval`, 번들러 플러그인이 만드는 가상 모듈, 위에 적은 도구·키 밖에서 설정 파일에 문자열로만 적힌 패키지 등이 그렇습니다. 러너 설정이 엉뚱한 자리를 시험으로 가리키는 경우(Playwright `testDir`, 스크립트로만 돌리는 `codegen.ts`, 시험에서만 import하는 `src/mocks/`)는 production으로 취급합니다. 도구는 과보고보다 누락 보고를 선호하지만, 그래도 오탐은 발생할 수 있습니다. 그럴 때는 `--ignore <pkg>`가 탈출구이며 — 이슈 리포트도 환영합니다.
 
-import 없이 쓰는 패키지라도 위 방법으로 찾지 못하면 unused로 보고됩니다: 다른 CLI가 제공하는 하위 명령(`nuxt storybook`), `bitbucket-pipelines.yml` 같은 CI 파일에서 실행하는 바이너리, 위 도구 어디에도 속하지 않는 확장자 없는 설정 파일(`.swcrc`), 그리고 설치된 선언 패키지가 없을 때 패키지와 이름이 다른 바이너리(`typescript`의 `tsc`)와 peer가 그렇습니다. `--ignore`로 넘기세요.
+import 없이 쓰는 패키지라도 위 방법으로 찾지 못하면 unused로 보고됩니다: 다른 CLI가 제공하는 하위 명령(`nuxt storybook`), `bitbucket-pipelines.yml` 같은 CI 파일에서 실행하는 바이너리, 위 도구 어디에도 속하지 않는 확장자 없는 설정 파일(`.swcrc`), 그리고 일부만 설치됐을 때 설치되지 않은 패키지의, 패키지와 이름이 다른 바이너리(`typescript`의 `tsc`)와 설치되지 않은 패키지의 peer가 그렇습니다. `--ignore`로 넘기세요.
 
 `buffer`, `events` 같은 내장 모듈 이름을 접두사 없이 쓰면, 같은 이름으로 선언된 패키지(번들러가 쓰는 npm 폴리필)와 맞춰 봅니다. Node 내장 모듈을 뜻한다면 `node:buffer`처럼 쓰세요.
 
