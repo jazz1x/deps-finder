@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-09-27
 
 Imports are now read by a real parser (oxc) instead of regular expressions, the CLI runs on Effect 4, and the exit code tells a failed run apart from a failed check. A package counts as used wherever the project really uses it: in development files, in types, through a CLI in `scripts`, in tool configs, in Vue, Svelte and Astro components and in stylesheets.
 
