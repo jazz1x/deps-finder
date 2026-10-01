@@ -150,7 +150,7 @@ const npmMembership = (globs: ReadonlyArray<string>): Membership =>
 
 // pnpm hands its negations to the glob's ignore list, so they win wherever they sit.
 const pnpmMembership = (globs: ReadonlyArray<string>): Membership => {
-  const [positives, negations] = Array.partition(
+  const [negations, positives] = Array.partition(
     Array.map(globs, pnpmGlobOf),
     ({ negated, pattern }) => (negated ? Result.succeed(pattern) : Result.fail(pattern)),
   );
@@ -211,7 +211,7 @@ const readPresent = <A>(
   name: string,
   read: (file: string) => Result.Result<A, FileError>,
 ): Gathered<A> => {
-  const [skipped, found] = pipe(
+  const [found, skipped] = pipe(
     entries,
     Array.filter((entry) => !entry.isDirectory() && entry.name === name),
     Array.map((entry) => path.join(directory, entry.name)),
@@ -512,7 +512,7 @@ export const walkProject = (
       Unreadable: ({ error }) => [error],
     }),
   );
-  const [packaged, own] = Array.partition(sources, (source) =>
+  const [own, packaged] = Array.partition(sources, (source) =>
     Option.match(source.package, {
       onNone: () => Result.succeed<Source>({ path: source.path, layoutRoots: source.layoutRoots }),
       onSome: (dir) => Result.fail({ dir, file: source.path }),

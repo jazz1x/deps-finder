@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Console, Effect, Exit, Layer, Match, Schema, pipe } from 'effect';
-import { CliConfig, type CliError, CliOutput, Command, GlobalFlag } from 'effect/unstable/cli';
+import { CliConfig, type CliError, CliOutput, Command, GlobalFlag } from 'effect/cli';
 import { depsFinder } from './cli/command.js';
 import { exitCodeOf } from './cli/exit-code.js';
 import { stdoutColours } from './cli/terminal.js';

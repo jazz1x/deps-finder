@@ -1289,6 +1289,6 @@ const hoistedImportsOf = (leftOut: LeftOut): Result.Result<ParsedSources, FileEr
 export const parseHoistedImports = (
   packages: ReadonlyArray<LeftOut>,
 ): ParsedSources & { readonly skipped: ReadonlyArray<FileError> } => {
-  const [skipped, parsed] = Array.partition(packages, hoistedImportsOf);
+  const [parsed, skipped] = Array.partition(packages, hoistedImportsOf);
   return { ...combined(parsed), skipped };
 };
