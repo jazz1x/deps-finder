@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-10-01
+
+### Fixed
+
+- 1.0.0 did not start: a fresh `npm install` or `bunx` stopped with `ERR_MODULE_NOT_FOUND` under `effect/dist/`. 1.0.0 pinned `effect` and `@effect/platform-node` to `4.0.0-rc.117`, but `@effect/platform-node-shared` takes `^4.0.0-rc.117`, which now resolves to the stable `4.0.0` and pulls a second `effect` that `@effect/platform-node` loads. Both are now on the stable `4.0.0`, so one `effect` is installed.
+
 ## [1.0.0] - 2026-09-27
 
 Imports are now read by a real parser (oxc) instead of regular expressions, the CLI runs on Effect 4, and the exit code tells a failed run apart from a failed check. A package counts as used wherever the project really uses it: in development files, in types, through a CLI in `scripts`, in tool configs, in Vue, Svelte and Astro components and in stylesheets.

@@ -119,13 +119,13 @@ type Loaded = {
 const linkedFrom = (
   file: TsConfigFile,
 ): { readonly linked: Linked; readonly skipped: ReadonlyArray<FileError> } => {
-  const [missingParents, parents] = Array.partition(
+  const [parents, missingParents] = Array.partition(
     Array.map(Array.reverse(extendsOf(file.config)), (specifier) =>
       extendedBy(file.path, specifier),
     ),
     located,
   );
-  const [missingReferences, references] = Array.partition(
+  const [references, missingReferences] = Array.partition(
     Array.map(file.config.references ?? [], (reference) => referencedBy(file.path, reference.path)),
     located,
   );

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { Array, Console, Effect, Option, Record, String, pipe } from 'effect';
-import { Argument, Command, Flag } from 'effect/unstable/cli';
+import { Argument, Command, Flag } from 'effect/cli';
 import { analyzeDependencies, unusedCandidates } from '../analyzers/dependency-analyzer.js';
 import { binaryUses, peerUses } from '../analyzers/implied-usage.js';
 import { CLI_TEXT, MESSAGES } from '../constants/messages.js';
